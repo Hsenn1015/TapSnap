@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../TapSnap.Windows/Recognition/PrivacyRules.cs" Link="PrivacyRules.cs" />
+    <Compile Include="../../TapSnap.Windows/Recognition/AiTextProtection.cs" Link="AiTextProtection.cs" />
+    <Compile Include="../../TapSnap.Windows/Recognition/TesseractCli.cs" Link="TesseractCli.cs" />
+    <Compile Include="../../TapSnap.Windows/Recognition/TableGrid.cs" Link="TableGrid.cs" />
+  </ItemGroup>
+</Project>

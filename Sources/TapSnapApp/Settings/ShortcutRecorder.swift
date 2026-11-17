@@ -1,0 +1,220 @@
+import AppKit
+import Carbon.HIToolbox
+import Combine
+import TapSnapConfig
+import TapSnapSystem
+
+/// 只在设置窗口中的一行处于录制状态时接收按键。
+final class ShortcutRecorder: ObservableObject {
+    enum Input: Equatable {
+        case binding(KeyBinding), cancel, clear, invalid, ignore
+    }
+
+    @Published private(set) var action: ShortcutAction?
+    @Published private(set) var preview = "请按组合键"
+    @Published private(set) var message: String?
+    @Published private(set) var hasError = false
+    private let center: ShortcutCenter
+    private weak var window: NSWindow?
+    private var pendingKey: UInt16?
+    private var pendingBinding: KeyBinding?
+    private var monitor: Any?
+    private var observers: [NSObjectProtocol] = []
+    private var eventTap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
+    private var generation = UUID()
+
+    init(center: ShortcutCenter) { self.center = center }
+
+    func begin(_ action: ShortcutAction) {
+        cancel()
+        self.action = action
+        preview = "请按组合键"
+        message = nil
+        hasError = false
+        window = NSApp?.keyWindow
+        center.beginRecording()
+        // 优先于 Carbon 接收输入，已有 Ctrl+1 被其他应用占用时仍可重新录入。
+        // 未授权时使用应用内监听，不触发新的权限弹窗。
+        if !installEventTap() {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
+                guard let self, self.canReceiveInput else { return event }
+                self.handle(event)
+                return nil
+            }
+        }
+        for name in [NSWindow.didResignKeyNotification, NSWindow.willCloseNotification] {
+            if let window {
+                observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    self?.cancel()
+                })
+            }
+        }
+        observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.cancel()
+        })
+    }
+
+    func cancel() {
+        generation = UUID()
+        removeEventMonitoring()
+        pendingKey = nil
+        pendingBinding = nil
+        action = nil
+        message = nil
+        hasError = false
+        window = nil
+        center.endRecording()
+    }
+
+    func clear(_ action: ShortcutAction) {
+        cancel()
+        message = center.setRecordedBinding(nil, for: action)
+        hasError = message != nil
+        if message == nil { message = "已清除\(action.displayName)快捷键" }
+    }
+
+    func handle(_ event: NSEvent) {
+        guard let action else { return }
+        if event.type == .flagsChanged {
+            if pendingKey == nil {
+                let symbols = Self.modifierSymbols(event.modifierFlags)
+                preview = symbols.isEmpty ? "请按组合键" : symbols + "…"
+            }
+            return
+        }
+        if event.type == .keyUp {
+            guard pendingKey == event.keyCode else { return }
+            pendingKey = nil
+            if let error = center.setRecordedBinding(pendingBinding, for: action) {
+                message = error
+                hasError = true
+            } else {
+                let result = pendingBinding.map { "\(action.displayName)已设为 \($0.displayString)" }
+                    ?? "已清除\(action.displayName)快捷键"
+                cancel()
+                message = result
+                hasError = false
+            }
+            return
+        }
+        switch Self.input(from: event) {
+        case .binding(let binding):
+            pendingKey = event.keyCode
+            pendingBinding = binding
+            preview = binding.displayString
+            message = "松开按键即可保存"
+            hasError = false
+        case .clear:
+            pendingKey = event.keyCode
+            pendingBinding = nil
+            preview = "清除快捷键"
+            message = "松开按键即可清除"
+            hasError = false
+        case .cancel:
+            cancel()
+            message = "已取消，原快捷键保留"
+            hasError = false
+        case .invalid:
+            pendingKey = nil
+            message = "请搭配 ⌘、⌃ 或 ⌥ 使用，也可以单独使用 F1–F20"
+            hasError = true
+        case .ignore: break
+        }
+    }
+
+    static func input(from event: NSEvent) -> Input {
+        guard event.type == .keyDown, !event.isARepeat else { return .ignore }
+        let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        if flags.isEmpty {
+            if event.keyCode == kVK_Escape { return .cancel }
+            if event.keyCode == kVK_Delete || event.keyCode == kVK_ForwardDelete { return .clear }
+        }
+        let functionKeys = [kVK_F1, kVK_F2, kVK_F3, kVK_F4, kVK_F5, kVK_F6, kVK_F7, kVK_F8,
+                            kVK_F9, kVK_F10, kVK_F11, kVK_F12, kVK_F13, kVK_F14, kVK_F15,
+                            kVK_F16, kVK_F17, kVK_F18, kVK_F19, kVK_F20]
+        guard !flags.intersection([.command, .control, .option]).isEmpty
+                || functionKeys.contains(Int(event.keyCode)) else { return .invalid }
+        var modifiers: UInt32 = 0
+        if flags.contains(.command) { modifiers |= GlobalShortcut.Combo.command }
+        if flags.contains(.control) { modifiers |= GlobalShortcut.Combo.control }
+        if flags.contains(.option) { modifiers |= GlobalShortcut.Combo.option }
+        if flags.contains(.shift) { modifiers |= GlobalShortcut.Combo.shift }
+        return .binding(KeyBinding(keyCode: UInt32(event.keyCode), modifiers: modifiers))
+    }
+
+    private static func modifierSymbols(_ flags: NSEvent.ModifierFlags) -> String {
+        let symbols: [(NSEvent.ModifierFlags, String)] = [(.control, "⌃"), (.option, "⌥"), (.shift, "⇧"), (.command, "⌘")]
+        return symbols.filter { flags.contains($0.0) }.map(\.1).joined()
+    }
+
+    private var canReceiveInput: Bool {
+        action != nil && NSApp?.isActive == true && window?.isKeyWindow == true
+    }
+
+    private func installEventTap() -> Bool {
+        guard Permissions.status(of: .accessibility) == .authorized else { return false }
+        let mask = (CGEventMask(1) << CGEventType.keyDown.rawValue)
+            | (CGEventMask(1) << CGEventType.keyUp.rawValue)
+            | (CGEventMask(1) << CGEventType.flagsChanged.rawValue)
+        guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
+                                         options: .defaultTap, eventsOfInterest: mask,
+                                         callback: Self.callback,
+                                         userInfo: Unmanaged.passUnretained(self).toOpaque()) else { return false }
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+            CFMachPortInvalidate(tap)
+            return false
+        }
+        eventTap = tap
+        runLoopSource = source
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        guard CGEvent.tapIsEnabled(tap: tap) else {
+            removeEventMonitoring()
+            return false
+        }
+        return true
+    }
+
+    private static let callback: CGEventTapCallBack = { _, type, event, context in
+        guard let context else { return Unmanaged.passUnretained(event) }
+        let recorder = Unmanaged<ShortcutRecorder>.fromOpaque(context).takeUnretainedValue()
+        let token = recorder.generation
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            DispatchQueue.main.async { [weak recorder] in
+                guard let recorder, recorder.generation == token else { return }
+                recorder.cancel()
+            }
+            return Unmanaged.passUnretained(event)
+        }
+        guard recorder.canReceiveInput, let input = NSEvent(cgEvent: event) else {
+            return Unmanaged.passUnretained(event)
+        }
+        DispatchQueue.main.async { [weak recorder] in
+            guard let recorder, recorder.generation == token, recorder.canReceiveInput else { return }
+            recorder.handle(input)
+        }
+        // 修饰键继续传递，让系统保持正确的按下/抬起状态。
+        return type == .flagsChanged ? Unmanaged.passUnretained(event) : nil
+    }
+
+    private func removeEventMonitoring() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        observers.forEach(NotificationCenter.default.removeObserver)
+        observers.removeAll()
+        if let eventTap { CGEvent.tapEnable(tap: eventTap, enable: false) }
+        if let runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+            CFRunLoopSourceInvalidate(runLoopSource)
+        }
+        if let eventTap { CFMachPortInvalidate(eventTap) }
+        runLoopSource = nil
+        eventTap = nil
+    }
+
+    deinit {
+        removeEventMonitoring()
+        center.endRecording()
+    }
+}

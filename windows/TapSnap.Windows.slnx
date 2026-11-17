@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/Tests/">
+    <Project Path="Tests/ImageFormatTests/ImageFormatTests.csproj" />
+    <Project Path="Tests/LongShotTests/LongShotTests.csproj" />
+    <Project Path="Tests/PrivacyTests/PrivacyTests.csproj" />
+    <Project Path="Tests/SelectionTests/SelectionTests.csproj" />
+  </Folder>
+  <Project Path="TapSnap.Windows/TapSnap.Windows.csproj" />
+</Solution>

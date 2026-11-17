@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TapSnap 长截图回归页</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f5f3ee;color:#243342;font:18px/1.8 system-ui,sans-serif}
+header{position:sticky;top:0;background:#203f45;color:white;padding:12px 32px;z-index:1}
+main{max-width:900px;margin:auto;padding:24px 32px}h1{font-size:32px;line-height:1.3}
+article{padding:20px 24px;margin:0 0 20px;background:white;border-left:5px solid #308779}
+article:nth-child(3n){background:#edf3f6;border-color:#527a9f}h2{font-size:22px;margin:0 0 12px}
+p{margin:0 0 8px}small{color:#6d747b}footer{background:#203f45;color:white;padding:30px;text-align:center}
+</style>
+<header>TapSnap 长截图回归页 · 固定顶部只应出现一次</header>
+<main>
+<h1>从第一行到最后一行，都要完整保留。</h1>
+<p>手工验证：框选正文，缓慢滚动数屏，检查段落编号、文字清晰度与接缝；再把固定顶部纳入选区重试。预览遮住选区时，导出的图片里不应出现预览窗口。</p>
+<div id="sections"></div>
+</main>
+<footer>结束标记 · 第 24 段之后没有其他内容</footer>
+<script>
+const topics = [
+  ['保留原始像素','文字的每一行都应保持清晰，拼接不能缩放整张图片。'],
+  ['查看连续内容','编号需要连续，标题和正文之间不应出现重复、空洞或裁断。'],
+  ['识别固定元素','顶部固定区域保持不动，正文向上移动，两者不能使用同一种位移。'],
+  ['检查预览交互','滚动图片时操作按钮保持可见，复制和保存后仍可继续查看结果。']
+];
+document.querySelector('#sections').innerHTML = Array.from({length:24},(_,i)=>{
+  const [title,body]=topics[i%topics.length];
+  return `<article><h2>${String(i+1).padStart(2,'0')} / ${title}</h2><p>${body}</p><p>本段校验数：${137*(i+1)}。下一段编号是 ${i+2}。内容长度${'略有不同，'.repeat(i%3)}便于区分相似列表。</p><small>TapSnap · 可重复使用的本地测试内容</small></article>`;
+}).join('');
+</script>
+</html>
