@@ -25,6 +25,7 @@ jobs:
       windows: ${{ steps.version.outputs.windows }}
       build: ${{ steps.version.outputs.build }}
       prerelease: ${{ steps.version.outputs.prerelease }}
+      publish_appcast: ${{ github.event_name == 'push' && github.ref_type == 'tag' && steps.version.outputs.prerelease == 'false' && vars.TAPSNAP_UPDATE_PUBLIC_KEY != '' }}
     steps:
       - name: Set package metadata
         id: version
@@ -67,6 +68,8 @@ jobs:
       TAPSNAP_VERSION: ${{ needs.version.outputs.macos }}
       TAPSNAP_BUILD_NUMBER: ${{ needs.version.outputs.build }}
       PACKAGE_LABEL: ${{ needs.version.outputs.label }}
+      TAPSNAP_UPDATE_FEED_URL: ${{ needs.version.outputs.publish_appcast == 'true' && format('{0}/{1}/releases/latest/download/appcast.xml', github.server_url, github.repository) || '' }}
+      TAPSNAP_UPDATE_PUBLIC_KEY: ${{ needs.version.outputs.publish_appcast == 'true' && vars.TAPSNAP_UPDATE_PUBLIC_KEY || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -91,6 +94,10 @@ jobs:
           if [[ -n "$TAPSNAP_VERSION" ]]; then
             test "$(plutil -extract CFBundleShortVersionString raw -o - "$plist")" = "$TAPSNAP_VERSION"
           fi
+          if [[ -n "$TAPSNAP_UPDATE_FEED_URL" ]]; then
+            test "$(plutil -extract SUFeedURL raw -o - "$plist")" = "$TAPSNAP_UPDATE_FEED_URL"
+            test "$(plutil -extract SUPublicEDKey raw -o - "$plist")" = "$TAPSNAP_UPDATE_PUBLIC_KEY"
+          fi
           codesign --verify --deep --strict --verbose=2 "$app"
           staging=$(mktemp -d "$RUNNER_TEMP/tapsnap-dmg.XXXXXX")
           trap 'rm -rf "$staging"' EXIT
@@ -99,10 +106,52 @@ jobs:
           dmg="dist/TapSnap-$PACKAGE_LABEL-macos-arm64.dmg"
           hdiutil create -volname TapSnap -srcfolder "$staging" -fs HFS+ -format UDZO "$dmg"
           hdiutil verify "$dmg"
+      - name: Generate the signed Sparkle update feed
+        if: needs.version.outputs.publish_appcast == 'true'
+        shell: bash
+        env:
+          TAPSNAP_UPDATE_PRIVATE_KEY: ${{ secrets.TAPSNAP_UPDATE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          : "${TAPSNAP_UPDATE_PRIVATE_KEY:?Set the TAPSNAP_UPDATE_PRIVATE_KEY repository secret}"
+          private_key=$TAPSNAP_UPDATE_PRIVATE_KEY
+          unset TAPSNAP_UPDATE_PRIVATE_KEY
+          public_key=$(printf '%s\n' "$private_key" | swift -e '
+            import Foundation
+            import CryptoKit
+            guard let value = readLine(), let seed = Data(base64Encoded: value), seed.count == 32 else {
+                exit(1)
+            }
+            let key = try Curve25519.Signing.PrivateKey(rawRepresentation: seed)
+            print(key.publicKey.rawRepresentation.base64EncodedString())
+          ')
+          if [[ "$public_key" != "$TAPSNAP_UPDATE_PUBLIC_KEY" ]]; then
+            echo "::error::The Sparkle signing key does not match TAPSNAP_UPDATE_PUBLIC_KEY."
+            exit 1
+          fi
+
+          scratch=$(mktemp -d "$RUNNER_TEMP/tapsnap-sparkle.XXXXXX")
+          trap 'rm -rf "$scratch"' EXIT
+          # Match the Sparkle framework version in Package.swift.
+          archive="$scratch/Sparkle-2.10.1.tar.xz"
+          curl --fail --silent --show-error --location --retry 3 -o "$archive" \
+            'https://github.com/sparkle-project/Sparkle/releases/download/2.10.1/Sparkle-2.10.1.tar.xz'
+          printf '%s  %s\n' '1a856d2a9edb8e628de88121d7be04cf0e2167f8641650b78fca00b14244cf27' "$archive" | shasum -a 256 -c
+          tar -xf "$archive" -C "$scratch" ./bin/generate_appcast
+          mkdir "$scratch/updates"
+          cp "dist/TapSnap-$PACKAGE_LABEL-macos-arm64.dmg" "$scratch/updates/"
+          release_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases"
+          printf '%s\n' "$private_key" | "$scratch/bin/generate_appcast" --ed-key-file - \
+            --maximum-deltas 0 --download-url-prefix "$release_url/download/$GITHUB_REF_NAME/" \
+            --link "$release_url/tag/$GITHUB_REF_NAME" "$scratch/updates"
+          test -s "$scratch/updates/appcast.xml"
+          mv "$scratch/updates/appcast.xml" dist/appcast.xml
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos-packages
-          path: dist/*.dmg
+          path: |
+            dist/*.dmg
+            dist/appcast.xml
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -187,6 +236,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
+          PUBLISH_APPCAST: ${{ needs.version.outputs.publish_appcast }}
         working-directory: release
         run: |
           set -euo pipefail
@@ -196,6 +246,9 @@ jobs:
             "TapSnap-$tag-windows-x64.zip"
             "TapSnap-$tag-windows-arm64.zip"
           )
+          if [[ "$PUBLISH_APPCAST" == true ]]; then
+            files+=(appcast.xml)
+          fi
           sha256sum "${files[@]}" > SHA256SUMS.txt
           files+=(SHA256SUMS.txt)
 
@@ -215,4 +268,8 @@ jobs:
             gh release create "$tag" "${flags[@]}" --notes 'macOS 包使用临时签名，未公证。Windows ZIP 内含 .NET 运行时，请解压后打开 TapSnap.exe。'
           fi
           gh release upload "$tag" "${files[@]}" --clobber
-          gh release edit "$tag" --draft=false --verify-tag
+          publish_flags=(--draft=false --verify-tag)
+          if [[ "$PUBLISH_APPCAST" == true ]]; then
+            publish_flags+=(--latest)
+          fi
+          gh release edit "$tag" "${publish_flags[@]}"

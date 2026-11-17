@@ -128,7 +128,11 @@ macOS 菜单栏点「公式识别」，按提示准备 Python 3.12，再在应�
 
 发布时在目标提交创建并推送版本标签，例如 `v0.2.0`。所有构建通过后，流程会把三个安装包和 `SHA256SUMS.txt` 上传到 [GitHub Releases](https://github.com/Hsenn1015/TapSnap/releases)。如用 `v0.2.0-rc.1`，会发布为预发行版。CI 生成的 macOS 包是 ad-hoc 签名且未公证，Sparkle 更新源需单独配置。
 
-配置更新源的 macOS 构建可通过菜单栏「检查更新…」查看新版。自动提醒会等截图、录屏和编辑结束后出现，由用户确认安装。打包时用 `TAPSNAP_UPDATE_FEED_URL` 和 `TAPSNAP_UPDATE_PUBLIC_KEY` 配置 Sparkle，使用 `TAPSNAP_VERSION` 和递增的 `TAPSNAP_BUILD_NUMBER` 标记版本。发布包需要 Sparkle 签名，更新源使用 HTTPS。本机调试支持回环 HTTP。
+配置更新源的 macOS 构建可通过菜单栏「检查更新…」查看新版。自动提醒会等截图、录屏和编辑结束后出现，由用户确认安装。
+
+为仓库设置 Actions 变量 `TAPSNAP_UPDATE_PUBLIC_KEY` 和 Actions Secret `TAPSNAP_UPDATE_PRIVATE_KEY`，分别填入 Sparkle 公钥和当前版 `generate_keys -x` 导出的私钥。配置后，正式版本标签会生成已签名的更新包和 `appcast.xml`，一并发布到 GitHub Releases。应用从最新正式 Release 读取清单。此前未配置更新源的版本需要手动覆盖安装一次。
+
+本机测试可用 `TAPSNAP_UPDATE_FEED_URL` 和 `TAPSNAP_UPDATE_PUBLIC_KEY` 配置回环更新源。使用 `TAPSNAP_VERSION` 和递增的 `TAPSNAP_BUILD_NUMBER` 标记版本。
 
 运行 `swift build` 编译 macOS 源码，`swift test` 跑回归测试。已有 macOS 构建沿用应用标识和配置路径，旧的 `sensnap://` 链接仍可用。
 
