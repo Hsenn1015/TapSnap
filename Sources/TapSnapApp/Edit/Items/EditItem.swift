@@ -33,11 +33,15 @@ struct EditItemStyle: Hashable, Sendable {
     }
 
     enum HandDrawnRoughness: Hashable, Sendable {
-        case subtle, natural, pronounced
+        case subtle, natural, pronounced, expressive
     }
 
-    enum HandDrawnFill: Hashable, Sendable {
-        case hachure, crossHatch, solid
+    enum HandDrawnPen: Hashable, Sendable {
+        case single, sketch, ink
+    }
+
+    enum HandDrawnFill: CaseIterable, Hashable, Sendable {
+        case hachure, crossHatch, zigzag, horizontal, dots, solid
     }
 
     enum StrokePattern: Hashable, Sendable {
@@ -53,6 +57,7 @@ struct EditItemStyle: Hashable, Sendable {
     var fontSize: CGFloat
     var opacity: Double
     var strokeStyle: StrokeStyle = .standard
+    var handDrawnPen: HandDrawnPen = .sketch
     var handDrawnRoughness: HandDrawnRoughness = .natural
     var handDrawnFill: HandDrawnFill = .hachure
     var strokePattern: StrokePattern = .solid
@@ -65,7 +70,9 @@ struct EditItemStyle: Hashable, Sendable {
     var shapeFillColor: RGBAColor {
         if let fillColor { return fillColor }
         var fill = color
-        if shapeFill == .fillAndOutline { fill.alpha *= 0.25 }
+        if shapeFill == .fillAndOutline {
+            fill.alpha *= strokeStyle == .handDrawn && handDrawnFill != .solid ? 0.62 : 0.25
+        }
         return fill
     }
 

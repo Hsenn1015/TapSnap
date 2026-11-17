@@ -59,13 +59,22 @@ struct EditStylePanel: View {
 
             if showsStroke {
                 if kind?.supportsHandDrawn == true, controller.style.strokeStyle == .handDrawn {
+                    LabeledRow("笔触", theme: theme) {
+                        Picker("笔触", selection: $controller.style.handDrawnPen) {
+                            Text("单笔").tag(EditItemStyle.HandDrawnPen.single)
+                            Text("复描").tag(EditItemStyle.HandDrawnPen.sketch)
+                            Text("浓墨").tag(EditItemStyle.HandDrawnPen.ink)
+                        }
+                        .labelsHidden().pickerStyle(.segmented).frame(width: 176)
+                    }
                     LabeledRow("线条起伏", theme: theme) {
                         Picker("线条起伏", selection: $controller.style.handDrawnRoughness) {
                             Text("轻微").tag(EditItemStyle.HandDrawnRoughness.subtle)
                             Text("自然").tag(EditItemStyle.HandDrawnRoughness.natural)
                             Text("明显").tag(EditItemStyle.HandDrawnRoughness.pronounced)
+                            Text("强烈").tag(EditItemStyle.HandDrawnRoughness.expressive)
                         }
-                        .labelsHidden().pickerStyle(.segmented).frame(width: 176)
+                        .labelsHidden().pickerStyle(.segmented).frame(width: 206)
                     }
                 }
                 LabeledRow("线型", theme: theme) {
@@ -168,14 +177,7 @@ struct EditStylePanel: View {
                 .labelsHidden().pickerStyle(.segmented).frame(width: 206)
             }
             if controller.style.strokeStyle == .handDrawn, controller.style.shapeFill != .outline {
-                LabeledRow("填充纹理", theme: theme) {
-                    Picker("填充纹理", selection: $controller.style.handDrawnFill) {
-                        Text("斜线").tag(EditItemStyle.HandDrawnFill.hachure)
-                        Text("交叉线").tag(EditItemStyle.HandDrawnFill.crossHatch)
-                        Text("纯色").tag(EditItemStyle.HandDrawnFill.solid)
-                    }
-                    .labelsHidden().pickerStyle(.segmented).frame(width: 206)
-                }
+                handDrawnFillOptions
             }
             if kind == .rectangle {
                 sizeSlider("圆角", value: $controller.style.cornerRadius, in: 0...40)
@@ -225,6 +227,62 @@ struct EditStylePanel: View {
                 .font(.system(size: 11)).foregroundStyle(theme.token(.mutedForeground))
         default:
             EmptyView()
+        }
+    }
+
+    private var handDrawnFillOptions: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("填充纹理")
+                .font(.system(size: 12))
+                .foregroundStyle(theme.token(.mutedForeground))
+                .padding(.top, 5)
+            Spacer(minLength: 10)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 3), spacing: 4) {
+                ForEach(EditItemStyle.HandDrawnFill.allCases, id: \.self) { pattern in
+                    let isSelected = controller.style.handDrawnFill == pattern
+                    let border = RoundedRectangle(cornerRadius: theme.metrics.radiusSM)
+                    Button {
+                        controller.style.handDrawnFill = pattern
+                    } label: {
+                        VStack(spacing: 2) {
+                            Canvas { context, size in
+                                context.withCGContext { cg in
+                                    let swatch = CGPath(roundedRect: CGRect(origin: .zero, size: size),
+                                                        cornerWidth: 3, cornerHeight: 3, transform: nil)
+                                    HandDrawnStroke.fill(swatch, color: theme.rgb(.foreground).cgColor, width: 2,
+                                                        pattern: pattern, in: cg)
+                                }
+                            }
+                            .frame(width: 40, height: 13)
+                            .accessibilityHidden(true)
+                            Text(fillTitle(pattern))
+                                .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
+                        }
+                        .foregroundStyle(theme.token(.foreground))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
+                        .background(theme.token(isSelected ? .accent : .muted), in: border)
+                        .overlay(border.strokeBorder(theme.token(isSelected ? .foreground : .border),
+                                                     lineWidth: 1))
+                        .contentShape(border)
+                    }
+                    .buttonStyle(SnapPressStyle(scale: 0.95))
+                    .accessibilityLabel("\(fillTitle(pattern))填充")
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                }
+            }
+            .frame(width: 206)
+        }
+    }
+
+    private func fillTitle(_ pattern: EditItemStyle.HandDrawnFill) -> String {
+        switch pattern {
+        case .hachure: return "斜线"
+        case .crossHatch: return "交叉线"
+        case .zigzag: return "折线"
+        case .horizontal: return "横线"
+        case .dots: return "点描"
+        case .solid: return "纯色"
         }
     }
 

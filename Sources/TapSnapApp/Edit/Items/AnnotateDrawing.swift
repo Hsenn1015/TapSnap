@@ -77,9 +77,11 @@ enum AnnotateDrawing {
         if style.shapeFill != .outline {
             var fill = style.shapeFillColor
             fill.alpha *= style.opacity
-            if style.strokeStyle == .handDrawn, style.handDrawnFill != .solid {
-                HandDrawnStroke.hatch(path, color: fill.cgColor, width: style.resolvedLineWidth,
-                                      crossHatched: style.handDrawnFill == .crossHatch, in: context)
+            if style.strokeStyle == .handDrawn {
+                let fillPath = HandDrawnStroke.roughened(path, width: style.resolvedLineWidth,
+                                                       roughness: style.handDrawnRoughness)
+                HandDrawnStroke.fill(fillPath, color: fill.cgColor, width: style.resolvedLineWidth,
+                                    pattern: style.handDrawnFill, in: context)
             } else {
                 context.setFillColor(fill.cgColor)
                 context.addPath(path)

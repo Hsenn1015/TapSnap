@@ -1,52 +1,112 @@
 import CoreGraphics
 import Foundation
 
-/// A deterministic second pass and gently bowed curves imitate a pen on paper.
+/// Derive every trace from the path so drafts, redraws, and exports use the same ink.
 enum HandDrawnStroke {
     static func draw(_ path: CGPath, style: EditItemStyle, in context: CGContext) {
         let width = style.resolvedLineWidth
         let color = style.resolvedColor
+        let pen = style.handDrawnPen
+        let primaryWidth: CGFloat
+        switch pen {
+        case .single: primaryWidth = width * 0.85
+        case .sketch: primaryWidth = width
+        case .ink: primaryWidth = width * 1.45
+        }
+        let primary = roughened(path, width: width, roughness: style.handDrawnRoughness)
         context.setLineJoin(.round)
+        context.setLineWidth(primaryWidth)
 
-        guard style.strokePattern == .solid else {
-            context.addPath(roughened(path, width: width, roughness: style.handDrawnRoughness))
+        guard pen != .single, style.strokePattern == .solid else {
+            context.addPath(primary)
             context.strokePath()
             return
         }
 
         // Composite both traces together so crossings do not become more opaque than the chosen color.
-        let padding = width * 2 + 5
-        context.clip(to: path.boundingBoxOfPath.insetBy(dx: -padding, dy: -padding))
+        let secondary = roughened(path, width: width, roughness: style.handDrawnRoughness, secondTrace: true)
+        let padding = primaryWidth / 2 + 1
+        let inkBounds = primary.boundingBoxOfPath.union(secondary.boundingBoxOfPath)
+        context.clip(to: inkBounds.insetBy(dx: -padding, dy: -padding))
         context.setAlpha(color.alpha)
         context.beginTransparencyLayer(auxiliaryInfo: nil)
         context.setStrokeColor(color.copy(alpha: 1) ?? color)
-        context.setLineWidth(width * 0.9)
-        context.addPath(roughened(path, width: width, roughness: style.handDrawnRoughness))
+        context.addPath(primary)
         context.strokePath()
-        context.setAlpha(0.42)
-        context.setLineWidth(width * 0.62)
-        context.addPath(roughened(path, width: width, roughness: style.handDrawnRoughness, secondTrace: true))
+        context.setAlpha(pen == .ink ? 0.9 : 0.72)
+        context.setLineWidth(width * (pen == .ink ? 1 : 0.76))
+        context.addPath(secondary)
         context.strokePath()
         context.endTransparencyLayer()
     }
 
-    static func hatch(_ path: CGPath, color: CGColor, width: CGFloat, crossHatched: Bool, in context: CGContext) {
+    static func fill(_ path: CGPath, color: CGColor, width: CGFloat, pattern: EditItemStyle.HandDrawnFill,
+                     in context: CGContext) {
         let bounds = path.boundingBoxOfPath
         guard !bounds.isEmpty else { return }
-        let span = bounds.width + bounds.height
-        // Bound the number of strokes for large areas and keep the phase tied to the shape when it moves.
-        let spacing = max(5.5, width * 2, span / 240)
-        let count = Int(ceil(span / spacing))
-        let firstOffset = (span - CGFloat(count - 1) * spacing) / 2
 
         context.saveGState()
+        defer { context.restoreGState() }
+        context.setFillColor(color)
         context.addPath(path)
         context.clip()
+        let span = bounds.width + bounds.height
+        let spacing = max(5.5, width * 1.9, span / 160)
+        // Keep grids bounded on large captures and anchor the pattern to the shape.
+        let gridSpacing = max(spacing, sqrt(bounds.width * bounds.height / 640))
         context.setStrokeColor(color)
-        context.setLineWidth(min(2.2, max(0.65, width * 0.5)))
+        context.setLineWidth(min(3.2, max(1, width * 0.58)))
         context.setLineCap(.round)
+        context.setLineJoin(.round)
         context.setLineDash(phase: 0, lengths: [])
 
+        switch pattern {
+        case .solid:
+            context.fill(bounds.insetBy(dx: -1, dy: -1))
+            return
+        case .dots:
+            let radius = min(2.2, max(1, width * 0.42))
+            let firstRow = min(bounds.midY, bounds.minY + gridSpacing / 2)
+            for (row, y) in stride(from: firstRow, to: bounds.maxY, by: gridSpacing).enumerated() {
+                let offset = min(bounds.width / 2, gridSpacing * (row.isMultiple(of: 2) ? 0.52 : 0.22))
+                for (column, x) in stride(from: bounds.minX + offset, to: bounds.maxX, by: gridSpacing).enumerated() {
+                    let dotRadius = radius * (0.8 + CGFloat((column + row * 2) % 3) * 0.16)
+                    let shift = column.isMultiple(of: 2) ? 0.5 : -0.5
+                    context.addEllipse(in: CGRect(x: x - dotRadius, y: y - dotRadius + shift,
+                                                  width: dotRadius * 2, height: dotRadius * 2))
+                }
+            }
+            context.fillPath()
+            return
+        case .hachure, .crossHatch:
+            addHatching(in: bounds, spacing: spacing, crossHatched: pattern == .crossHatch, to: context)
+        case .horizontal:
+            let firstRow = min(bounds.midY, bounds.minY + spacing / 2)
+            for (row, y) in stride(from: firstRow, to: bounds.maxY, by: spacing).enumerated() {
+                let bow: CGFloat = row.isMultiple(of: 2) ? 1.8 : -1.4
+                context.move(to: CGPoint(x: bounds.minX, y: y))
+                context.addQuadCurve(to: CGPoint(x: bounds.maxX, y: y + bow / 3),
+                                     control: CGPoint(x: bounds.midX, y: y + bow))
+            }
+        case .zigzag:
+            let step = gridSpacing * 0.65
+            let amplitude = min(bounds.height / 3, gridSpacing * 0.27)
+            let firstRow = min(bounds.midY, bounds.minY + gridSpacing / 2)
+            for y in stride(from: firstRow, to: bounds.maxY, by: gridSpacing) {
+                context.move(to: CGPoint(x: bounds.minX - step, y: y + amplitude))
+                for (column, x) in stride(from: bounds.minX, through: bounds.maxX + step, by: step).enumerated() {
+                    let offset = column.isMultiple(of: 2) ? -amplitude : amplitude
+                    context.addLine(to: CGPoint(x: x, y: y + offset))
+                }
+            }
+        }
+        context.strokePath()
+    }
+
+    private static func addHatching(in bounds: CGRect, spacing: CGFloat, crossHatched: Bool, to context: CGContext) {
+        let span = bounds.width + bounds.height
+        let count = Int(ceil(span / spacing))
+        let firstOffset = (span - CGFloat(count - 1) * spacing) / 2
         for line in 0..<count {
             let x = bounds.minX + firstOffset + CGFloat(line) * spacing
             let bow = line.isMultiple(of: 2) ? 1.6 : -1.4
@@ -60,8 +120,6 @@ enum HandDrawnStroke {
                                      control: CGPoint(x: reflected + bounds.height / 2 - bow, y: bounds.midY))
             }
         }
-        context.strokePath()
-        context.restoreGState()
     }
 
     static func roughened(_ path: CGPath, width: CGFloat, roughness: EditItemStyle.HandDrawnRoughness,
@@ -73,14 +131,15 @@ enum HandDrawnStroke {
         path.applyWithBlock { element in
             if element.pointee.type == .closeSubpath { isClosed = true }
         }
-        let sizeLimit = isClosed ? minorDimension * 0.17 : CGFloat.infinity
+        let sizeLimit = isClosed ? minorDimension * 0.2 : CGFloat.infinity
         let roughnessScale: CGFloat
         switch roughness {
-        case .subtle: roughnessScale = 0.48
+        case .subtle: roughnessScale = 0.45
         case .natural: roughnessScale = 1
         case .pronounced: roughnessScale = 1.9
+        case .expressive: roughnessScale = 3.1
         }
-        let naturalAmount = min(3.1, 1.1 + width * 0.38, sizeLimit)
+        let naturalAmount = min(4, 1.5 + width * 0.55)
         let amount = min(naturalAmount * roughnessScale, sizeLimit)
         var randomState: UInt32 = secondTrace ? 81 : 239
         var sourceStart = CGPoint.zero
@@ -98,7 +157,8 @@ enum HandDrawnStroke {
         }
 
         func vertex(_ point: CGPoint) -> CGPoint {
-            secondTrace ? shifted(point, by: amount * 0.75) : point
+            if secondTrace { return shifted(point, by: amount * 0.88) }
+            return isClosed ? shifted(point, by: amount * 0.28) : point
         }
 
         func bowLine(to destination: CGPoint, endingAt endpoint: CGPoint) {

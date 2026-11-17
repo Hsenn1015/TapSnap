@@ -499,6 +499,7 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
         if previousStyle.fontSize != style.fontSize { updatedStyle.fontSize = style.fontSize }
         if previousStyle.opacity != style.opacity { updatedStyle.opacity = style.opacity }
         if previousStyle.strokeStyle != style.strokeStyle { updatedStyle.strokeStyle = style.strokeStyle }
+        if previousStyle.handDrawnPen != style.handDrawnPen { updatedStyle.handDrawnPen = style.handDrawnPen }
         if previousStyle.handDrawnRoughness != style.handDrawnRoughness { updatedStyle.handDrawnRoughness = style.handDrawnRoughness }
         if previousStyle.handDrawnFill != style.handDrawnFill { updatedStyle.handDrawnFill = style.handDrawnFill }
         if previousStyle.strokePattern != style.strokePattern { updatedStyle.strokePattern = style.strokePattern }

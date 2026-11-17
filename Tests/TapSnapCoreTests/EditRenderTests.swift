@@ -86,6 +86,15 @@ final class EditRenderTests: XCTestCase {
         XCTAssertGreaterThan(crossHatch, hachure, "交叉线应有两个方向的笔迹")
         XCTAssertLessThan(crossHatch, 56, "交叉线之间应透出底图")
         XCTAssertEqual(try inkCount(.solid), 56, "纯色应连续填满内部")
+
+        let patterns = EditItemStyle.HandDrawnFill.allCases
+        let textures = try patterns.map { pattern in
+            ellipse.style.handDrawnFill = pattern
+            let image = try document.render()
+            XCTAssertGreaterThan(pixel(image, x: 23, y: 23).0, 250, "每种纹理都应该限制在形状内")
+            return try XCTUnwrap(image.dataProvider?.data) as Data
+        }
+        XCTAssertEqual(Set(textures).count, patterns.count, "每种填充应有不同的纹理")
     }
 
     func testHandDrawnRoughnessProducesDistinctRepeatableStrokes() throws {
@@ -104,8 +113,36 @@ final class EditRenderTests: XCTestCase {
         let subtle = try renderedBytes(.subtle)
         let natural = try renderedBytes(.natural)
         let pronounced = try renderedBytes(.pronounced)
-        XCTAssertEqual(Set([subtle, natural, pronounced]).count, 3)
+        let expressive = try renderedBytes(.expressive)
+        XCTAssertEqual(Set([subtle, natural, pronounced, expressive]).count, 4)
         XCTAssertEqual(try renderedBytes(.natural), natural)
+    }
+
+    func testHandDrawnPensIncreaseCoverageAndPreserveOpacity() throws {
+        let base = solid(width: 180, height: 80, top: (255, 255, 255), bottom: (255, 255, 255))
+        let document = EditDocument(baseImage: base)
+        var style = EditItemStyle(color: .black, lineWidth: 3, opacity: 0.5)
+        style.strokeStyle = .handDrawn
+        let line = LineItem(start: CGPoint(x: 20, y: 40), end: CGPoint(x: 160, y: 40), style: style)
+        document.append(line)
+
+        func darkness(_ pen: EditItemStyle.HandDrawnPen) throws -> Int {
+            line.style.handDrawnPen = pen
+            let image = try document.render()
+            let pixels = try XCTUnwrap(image.dataProvider?.data) as Data
+            let red = (0..<image.height).flatMap { y in
+                (0..<image.width).map { x in pixels[y * image.bytesPerRow + x * 4] }
+            }
+            XCTAssertGreaterThanOrEqual(try XCTUnwrap(red.min()), 126, "复描不能改变设置的不透明度")
+            return red.reduce(0) { $0 + 255 - Int($1) }
+        }
+
+        let single = try darkness(.single)
+        let sketch = try darkness(.sketch)
+        let ink = try darkness(.ink)
+        XCTAssertGreaterThan(single, 0)
+        XCTAssertGreaterThan(sketch, single)
+        XCTAssertGreaterThan(ink, sketch)
     }
 
     func testCropRectShrinksOutput() throws {

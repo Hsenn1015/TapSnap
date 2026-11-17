@@ -137,7 +137,7 @@ final class EditFeatureCompletionTests: XCTestCase {
         XCTAssertEqual(shape.style.strokeStyle, .handDrawn)
     }
 
-    func testHandDrawnRoughnessAndFillAreIndependentlyUndoable() {
+    func testHandDrawnPenRoughnessAndFillAreIndependentlyUndoable() {
         let editor = controller()
         var style = editor.style
         style.strokeStyle = .handDrawn
@@ -146,25 +146,34 @@ final class EditFeatureCompletionTests: XCTestCase {
         editor.add(item)
         settle()
         editor.select(item)
+        XCTAssertEqual(editor.style.handDrawnPen, .sketch)
         XCTAssertEqual(editor.style.handDrawnRoughness, .natural)
         XCTAssertEqual(editor.style.handDrawnFill, .hachure)
 
-        editor.style.handDrawnRoughness = .pronounced
+        editor.style.handDrawnPen = .ink
         settle()
-        editor.style.handDrawnFill = .crossHatch
+        editor.style.handDrawnRoughness = .expressive
         settle()
-        XCTAssertEqual(item.style.handDrawnRoughness, .pronounced)
-        XCTAssertEqual(item.style.handDrawnFill, .crossHatch)
+        editor.style.handDrawnFill = .zigzag
+        settle()
+        XCTAssertEqual(item.style.handDrawnPen, .ink)
+        XCTAssertEqual(item.style.handDrawnRoughness, .expressive)
+        XCTAssertEqual(item.style.handDrawnFill, .zigzag)
 
         editor.perform(.undo)
-        XCTAssertEqual(item.style.handDrawnRoughness, .pronounced)
+        XCTAssertEqual(item.style.handDrawnRoughness, .expressive)
         XCTAssertEqual(item.style.handDrawnFill, .hachure)
         editor.perform(.undo)
         XCTAssertEqual(item.style.handDrawnRoughness, .natural)
+        XCTAssertEqual(item.style.handDrawnPen, .ink)
+        editor.perform(.undo)
+        XCTAssertEqual(item.style.handDrawnPen, .sketch)
         editor.perform(.redo)
         editor.perform(.redo)
-        XCTAssertEqual(editor.style.handDrawnRoughness, .pronounced)
-        XCTAssertEqual(editor.style.handDrawnFill, .crossHatch)
+        editor.perform(.redo)
+        XCTAssertEqual(editor.style.handDrawnPen, .ink)
+        XCTAssertEqual(editor.style.handDrawnRoughness, .expressive)
+        XCTAssertEqual(editor.style.handDrawnFill, .zigzag)
     }
 
     func testLineWidthDragUpdatesSelectedFrameAndUndoesAsOneAction() {

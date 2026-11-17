@@ -139,10 +139,14 @@ final class EditInteractionTests: XCTestCase {
             let (controller, view, window) = fixture(displayScale: scale)
             defer { window.close() }
             controller.perform(.rectangle)
+            controller.style.shapeFill = .fillAndOutline
             let rect = CGRect(x: 26, y: 30, width: 126, height: 74)
             let standard = ShapeItem(kind: .rectangle, bounds: rect, style: controller.style)
             let standardPixels = try reference(standard, view: view, controller: controller)
             controller.style.strokeStyle = .handDrawn
+            controller.style.handDrawnPen = .ink
+            controller.style.handDrawnRoughness = .expressive
+            controller.style.handDrawnFill = .dots
 
             let end = CGPoint(x: rect.maxX, y: rect.maxY)
             try mouse(.leftMouseDown, at: rect.origin, in: view)
@@ -155,6 +159,8 @@ final class EditInteractionTests: XCTestCase {
             try mouse(.leftMouseUp, at: end, in: view)
             let rectangle = try XCTUnwrap(controller.document.items.first as? ShapeItem)
             XCTAssertEqual(rectangle.style.strokeStyle, .handDrawn)
+            XCTAssertEqual(rectangle.style.handDrawnPen, .ink)
+            XCTAssertEqual(rectangle.style.handDrawnFill, .dots)
             controller.clearSelection()
             assertPixelsEqual(try rendered(view), preview, "松手后应保留预览中的手绘笔迹，zoom=\(scale)")
         }
