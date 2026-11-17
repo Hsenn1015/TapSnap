@@ -16,4 +16,4 @@
 
 公式模型从作者 GitHub Release v0.0.1 下载，权重校验值见 `Resources/formula-models.json`。安装脚本核对文件 SHA-256；识别助手开启离线模式并阻断 socket 连接。公式模型不会在 TapSnap 启动时常驻。
 
-本机已安装运行目录：`~/Library/Application Support/com.sensnap.app/formula-runtime`，约 1.2 GiB 磁盘空间。另一台机器需安装 Python 3.12，再运行发布目录的 `Install Formula.command`。安装失败不会修改截图、快捷键或历史设置。
+公式识别运行环境约占 1.2 GiB。安装 Python 3.12 后，再运行发布目录的 `Install Formula.command`。安装失败不会修改截图、快捷键或历史设置。

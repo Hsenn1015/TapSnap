@@ -10,3 +10,43 @@ dist/
 *.xcworkspace/
 xcuserdata/
 DerivedData/
+
+# 本机开发笔记、调试截图和导出
+/Docs/
+/.local/
+/captures/
+/recordings/
+/exports/
+/logs/
+*.log
+*.ips
+*.crash
+*.dmp
+
+# 从本机复制出来的应用配置与历史
+settings.json
+recognition.json
+clipboard-meta.json
+clipboard-history/
+pin-groups.json
+screenshot-presets.json
+/pins/
+AIKeys/
+*.sqlite*
+*.db
+
+# 凭据、签名证书和私钥
+credentials.json
+secrets.json
+id_rsa
+id_ed25519
+*.p12
+*.pfx
+*.p8
+*.pem
+*.key
+*.cer
+*.certSigningRequest
+*.keychain*
+*.mobileprovision
+*.provisionprofile

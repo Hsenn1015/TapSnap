@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Docs/readme/tapsnap-icon.png" alt="TapSnap 应用图标" width="120">
+  <img src="assets/readme/tapsnap-icon.png" alt="TapSnap 应用图标" width="120">
 </p>
 
 <h2 align="center">TapSnap</h2>
@@ -9,10 +9,10 @@
 </p>
 
 <p align="center">
-  <img src="Docs/readme/badge-macos.png" alt="macOS 14+" width="98" height="24">
-  <img src="Docs/readme/badge-windows.png" alt="Windows x64 / ARM64" width="160" height="24">
-  <img src="Docs/readme/badge-swift.png" alt="Swift" width="71" height="24">
-  <img src="Docs/readme/badge-dotnet.png" alt=".NET 10" width="83" height="24">
+  <img src="assets/readme/badge-macos.png" alt="macOS 14+" width="98" height="24">
+  <img src="assets/readme/badge-windows.png" alt="Windows x64 / ARM64" width="160" height="24">
+  <img src="assets/readme/badge-swift.png" alt="Swift" width="71" height="24">
+  <img src="assets/readme/badge-dotnet.png" alt=".NET 10" width="83" height="24">
 </p>
 
 <p align="center">
@@ -24,7 +24,7 @@
   </sub>
 </p>
 
-![TapSnap 功能插画。日程窗口居中展示流光框选和手绘标注，左侧是贴图和滚动长截图，右侧是文字识别、Markdown 和打码，底部是录屏时间轴。](Docs/readme/capture-overview.webp)
+![TapSnap 功能插画。日程窗口居中展示流光框选和手绘标注，左侧是贴图和滚动长截图，右侧是文字识别、Markdown 和打码，底部是录屏时间轴。](assets/readme/capture-overview.webp)
 
 ## 特色功能
 
@@ -43,14 +43,14 @@
 
 ### 录屏时间轴标注
 
-![TapSnap 录屏编辑器演示，在时间轴上调整标注及预览生效范围。](Docs/readme/recording-annotations.gif)
+![TapSnap 录屏编辑器演示，在时间轴上调整标注及预览生效范围。](assets/readme/recording-annotations.gif)
 
 录完可精确裁剪所选片段，也可以拖动时间轴上的标注，让它只在指定时段出现。预览底部可直接点「复制视频」或「复制 GIF」。
 
 <details>
 <summary><strong>展开观看框选与直接复制</strong></summary>
 
-![拖动建立流光选区，底部显示长截图、录屏、编辑等按钮，悬停在勾选按钮上显示复制提示。](Docs/readme/quick-capture.gif)
+![拖动建立流光选区，底部显示长截图、录屏、编辑等按钮，悬停在勾选按钮上显示复制提示。](assets/readme/quick-capture.gif)
 
 </details>
 
@@ -120,4 +120,4 @@ macOS 菜单栏点「公式识别」，按提示准备 Python 3.12，再在应�
 
 </details>
 
-[架构说明](ARCHITECTURE.md) · [滚动长截图](Docs/long-shot-scroll-viewports.md) · [验收记录](Docs/completion-review.md) · [第三方组件](Docs/third-party-components.md)
+[架构说明](ARCHITECTURE.md) · [第三方组件](THIRD_PARTY.md)
