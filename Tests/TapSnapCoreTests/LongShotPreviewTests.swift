@@ -204,11 +204,14 @@ final class LongShotPreviewTests: XCTestCase {
         XCTAssertTrue(canvas.controller === editor)
         XCTAssertFalse(copy.isEnabled)
         XCTAssertTrue(edit.isEnabled)
-        for _ in 0..<100 {
-            if copy.isEnabled { break }
-            try await Task.sleep(nanoseconds: 10_000_000)
+        let deadline = ContinuousClock.now + .seconds(10)
+        while !copy.isEnabled && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
         }
-        XCTAssertTrue(copy.isEnabled)
+        guard copy.isEnabled else {
+            XCTFail("隐私扫描结束后应恢复复制按钮，当前扫描状态：\(editor.privacy.phase)")
+            return
+        }
         editor.add(PrivacyMaskItem(bounds: CGRect(x: 12, y: 120, width: 80, height: 20),
                                    appearance: .init(style: .solid, rgb: 0)))
         XCTAssertTrue(copy.isEnabled)
