@@ -42,16 +42,16 @@
 ## 开源工具对比
 
 | 功能 | TapSnap | [Snow Shot](https://snowshot.top/guides/index.html) | [ShareX](https://getsharex.com/) | [Flameshot](https://flameshot.org/) |
-| --- | --- | --- | --- | --- |
-| 发布平台 | macOS、Windows | macOS、Windows | Windows 正式版，[macOS 和 Linux 预览版](https://getsharex.com/artifacts/) | Linux、macOS、Windows |
-| 截图方式 | 区域、窗口、全屏、延时 | 区域、窗口、显示器、延时 | 区域、窗口、全屏、显示器 | 区域、全屏、延时 |
-| 滚动长截图 | 手动或自动拼接 | 竖向或横向拼接 | 滚动拼接 | — |
-| 标注与打码 | 手绘、自由高亮、隐私检查 | 画笔、高亮、马赛克 | 画笔、高亮、模糊和像素化 | 画笔、高亮、像素化 |
-| 桌面贴图 | 置顶、分组、历史 | 置顶、分组、恢复 | 置顶 | 置顶 |
-| 录屏及后处理 | MP4 / GIF、裁剪、单帧或时段标注 | MP4 / GIF、裁剪、变速 | 录屏、GIF、视频和 GIF 裁剪 | — |
-| 内容识别 | 本机 OCR、表格 CSV、公式 LaTeX | 本机 OCR、表格与公式在线识别 | Windows OCR | — |
+| --- | :---: | :---: | :---: | :---: |
+| 截图标注 | ✅ | ✅ | ✅ | ✅ |
+| 滚动长截图 | ✅ | ✅ | ✅ | — |
+| 桌面贴图 | ✅ | ✅ | ✅ | ✅ |
+| 录屏 / GIF | ✅ | ✅ | ✅ | — |
+| 录屏时段标注 | ✅ | — | — | — |
+| 文字识别 | ✅ | ✅ | ✅ | — |
+| 表格与公式识别 | ✅ | ✅ | — | — |
 
-TapSnap 功能以 macOS 版为例。对比依据为各项目的公开文档，`—` 表示文档未列出对应功能。
+✅ 表示支持，`—` 表示官方文档未列出。TapSnap 以 macOS 版为例。Snow Shot 的表格和公式识别可使用在线服务。
 
 ## 操作演示
 
