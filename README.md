@@ -110,6 +110,10 @@ macOS 菜单栏点「公式识别」，按提示准备 Python 3.12，再在应�
 <details>
 <summary><strong>更新与开发</strong></summary>
 
+推送 `main`、提交面向 `main` 的 PR，或在 [GitHub Actions](https://github.com/MungSmoothie/TapSnap/actions/workflows/build.yml) 手动运行时，会执行 macOS 托管环境回归测试与 Windows 四组回归，并在运行详情的 Artifacts 提供 Apple Silicon DMG 和两种架构的自包含 Windows ZIP。需要实际桌面、系统编码器和识别环境的 macOS 用例可在本机运行 `swift test`。
+
+发布时在目标提交创建并推送版本标签，例如 `v0.2.0`。所有构建通过后，流程会把三个安装包和 `SHA256SUMS.txt` 上传到 [GitHub Releases](https://github.com/MungSmoothie/TapSnap/releases)。如用 `v0.2.0-rc.1`，会发布为预发行版。CI 生成的 macOS 包是 ad-hoc 签名且未公证，Sparkle 更新源需单独配置。
+
 配置更新源的 macOS 构建可通过菜单栏「检查更新…」查看新版。自动提醒会等截图、录屏和编辑结束后出现，由用户确认安装。打包时用 `TAPSNAP_UPDATE_FEED_URL` 和 `TAPSNAP_UPDATE_PUBLIC_KEY` 配置 Sparkle，使用 `TAPSNAP_VERSION` 和递增的 `TAPSNAP_BUILD_NUMBER` 标记版本。发布包需要 Sparkle 签名，更新源使用 HTTPS。本机调试支持回环 HTTP。
 
 运行 `swift build` 编译 macOS 源码，`swift test` 跑回归测试。已有 macOS 构建沿用应用标识和配置路径，旧的 `sensnap://` 链接仍可用。

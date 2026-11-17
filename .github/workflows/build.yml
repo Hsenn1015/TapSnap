@@ -1,0 +1,218 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: '${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}'
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  version:
+    name: Resolve version
+    runs-on: ubuntu-24.04
+    outputs:
+      label: ${{ steps.version.outputs.label }}
+      macos: ${{ steps.version.outputs.macos }}
+      windows: ${{ steps.version.outputs.windows }}
+      build: ${{ steps.version.outputs.build }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - name: Set package metadata
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          label="ci-$GITHUB_RUN_NUMBER"
+          macos=""
+          windows="0.0.0-ci.$GITHUB_RUN_NUMBER"
+          prerelease=false
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            version='^v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))(-[a-zA-Z0-9]+([.-][a-zA-Z0-9]+)*)?$'
+            if [[ ! "$GITHUB_REF_NAME" =~ $version ]]; then
+              echo "::error::Use a version tag such as v0.2.0 or v0.2.0-rc.1."
+              exit 1
+            fi
+            label="$GITHUB_REF_NAME"
+            macos="${BASH_REMATCH[1]}"
+            windows="${GITHUB_REF_NAME#v}"
+            if [[ "$windows" != "$macos" ]]; then
+              prerelease=true
+            fi
+          fi
+          # Continue after the last locally packaged build (5).
+          {
+            echo "label=$label"
+            echo "macos=$macos"
+            echo "windows=$windows"
+            echo "build=$((GITHUB_RUN_NUMBER + 5))"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+
+  macos:
+    name: macOS ARM64
+    needs: version
+    runs-on: macos-26
+    timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
+      TAPSNAP_VERSION: ${{ needs.version.outputs.macos }}
+      TAPSNAP_BUILD_NUMBER: ${{ needs.version.outputs.build }}
+      PACKAGE_LABEL: ${{ needs.version.outputs.label }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test on the hosted runner
+        shell: bash
+        run: |
+          swift --version
+          # These tests require a desktop session or native encoders and recognition hardware.
+          desktop='CaptureModeHandoffTests|ClipboardHistoryPersistenceTests|EditFeatureCompletionTests|EditorDockLayoutTests|GlobalShortcutTests|PrivacyCaptureTests|PrivacyVisualAITests|RecordingClipboardTests|UIRegionDetectorTests'
+          encoder='GifExporterTests|RecordingAnnotationStyleTests|RecordingEnhancementTests|VideoEncoderTests|RecordSessionTests/test(RealEncoder|StaticScreen)'
+          swift test --skip "$desktop|$encoder"
+      - name: Build and verify the DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          Scripts/build-app.sh release
+          app=dist/TapSnap.app
+          plist="$app/Contents/Info.plist"
+          test "$(lipo -archs "$app/Contents/MacOS/TapSnap")" = arm64
+          test "$(plutil -extract CFBundleVersion raw -o - "$plist")" = "$TAPSNAP_BUILD_NUMBER"
+          if [[ -n "$TAPSNAP_VERSION" ]]; then
+            test "$(plutil -extract CFBundleShortVersionString raw -o - "$plist")" = "$TAPSNAP_VERSION"
+          fi
+          codesign --verify --deep --strict --verbose=2 "$app"
+          staging=$(mktemp -d "$RUNNER_TEMP/tapsnap-dmg.XXXXXX")
+          trap 'rm -rf "$staging"' EXIT
+          ditto "$app" "$staging/TapSnap.app"
+          ln -s /Applications "$staging/Applications"
+          dmg="dist/TapSnap-$PACKAGE_LABEL-macos-arm64.dmg"
+          hdiutil create -volname TapSnap -srcfolder "$staging" -fs HFS+ -format UDZO "$dmg"
+          hdiutil verify "$dmg"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-packages
+          path: dist/*.dmg
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  windows:
+    name: Windows x64 and ARM64
+    needs: version
+    runs-on: windows-2025
+    timeout-minutes: 30
+    env:
+      TAPSNAP_VERSION: ${{ needs.version.outputs.windows }}
+      PACKAGE_LABEL: ${{ needs.version.outputs.label }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: 10.0.x
+      - name: Build and run the regression programs
+        shell: pwsh
+        run: |
+          dotnet build windows/TapSnap.Windows.slnx -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($suite in 'SelectionTests', 'LongShotTests', 'PrivacyTests', 'ImageFormatTests') {
+            dotnet run --project "windows/Tests/$suite" -c Release --no-build
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Publish and verify the Windows ZIP files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $architectures = @{ 'x64' = 0x8664; 'arm64' = 0xAA64 }
+          foreach ($arch in 'x64', 'arm64') {
+            $publish = Join-Path $env:RUNNER_TEMP "tapsnap-$arch"
+            dotnet publish windows/TapSnap.Windows -c Release -r "win-$arch" --self-contained true "-p:Version=$env:TAPSNAP_VERSION" -o $publish
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+            $exe = [IO.File]::ReadAllBytes((Join-Path $publish 'TapSnap.exe'))
+            $header = [BitConverter]::ToInt32($exe, 0x3c)
+            if ([BitConverter]::ToUInt16($exe, $header + 4) -ne $architectures[$arch]) {
+              throw "TapSnap.exe architecture does not match $arch."
+            }
+
+            $zip = Join-Path (Resolve-Path dist).Path "TapSnap-$($env:PACKAGE_LABEL)-windows-$arch.zip"
+            [IO.Compression.ZipFile]::CreateFromDirectory($publish, $zip)
+            $archive = [IO.Compression.ZipFile]::OpenRead($zip)
+            try {
+              $entries = $archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') }
+              foreach ($file in 'TapSnap.exe', 'hostfxr.dll', 'tessdata/eng.traineddata', 'tessdata/chi_sim.traineddata', 'Recognition/Install-Formula.ps1', 'Recognition/KaTeX/katex.js') {
+                if ($file -notin $entries) { throw "$file is missing from $zip." }
+              }
+            } finally {
+              $archive.Dispose()
+            }
+          }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-packages
+          path: dist/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: [version, macos, windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: '*-packages'
+          path: release
+          merge-multiple: true
+      - name: Publish verified packages and checksums
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        working-directory: release
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          files=(
+            "TapSnap-$tag-macos-arm64.dmg"
+            "TapSnap-$tag-windows-x64.zip"
+            "TapSnap-$tag-windows-arm64.zip"
+          )
+          sha256sum "${files[@]}" > SHA256SUMS.txt
+          files+=(SHA256SUMS.txt)
+
+          if state=$(gh release view "$tag" --json isDraft --jq .isDraft); then
+            if [[ "$state" == false ]]; then
+              assets=$(gh release view "$tag" --json assets --jq '.assets[].name')
+              for file in "${files[@]}"; do
+                grep -Fxq -- "$file" <<< "$assets"
+              done
+              exit 0
+            fi
+          else
+            flags=(--draft --verify-tag --generate-notes --title "TapSnap $tag")
+            if [[ "$PRERELEASE" == true ]]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "$tag" "${flags[@]}" --notes 'macOS 包使用临时签名，未公证。Windows ZIP 内含 .NET 运行时，请解压后打开 TapSnap.exe。'
+          fi
+          gh release upload "$tag" "${files[@]}" --clobber
+          gh release edit "$tag" --draft=false --verify-tag
