@@ -17,7 +17,8 @@
 
 <p align="center">
   <sub>
-    <a href="#特色功能">特色功能</a> ·
+    <a href="#功能介绍">功能介绍</a> ·
+    <a href="#开源工具对比">开源工具对比</a> ·
     <a href="#操作演示">操作演示</a> ·
     <a href="#安装与构建">安装与构建</a> ·
     <a href="#使用指南">使用指南</a>
@@ -26,31 +27,44 @@
 
 ![TapSnap 功能插画。日程窗口居中展示流光框选和手绘标注，左侧是贴图和滚动长截图，右侧是文字识别、Markdown 和打码，底部是录屏时间轴。](assets/readme/capture-overview.webp)
 
-## 特色功能
+## 功能介绍
 
-| 操作 | TapSnap 能做什么 |
-| --- | --- |
-| **框选后直接操作** | macOS 下可吸附窗口或控件。框选后，底部工具栏可直接复制、贴图、标注，也能转入长截图或录屏。 |
-| **手绘标注与自由高亮** | 画手绘箭头和形状，调整线条起伏与填充纹理。高亮笔可沿文字或任意路径涂画。 |
-| **长截图与贴图** | 连续滚动时拼接正文，固定区域只保留一次。长图完成后可继续编辑。贴图可置顶、分组、调整透明度与鼠标穿透。 |
-| **给视频按时间标注** | 为单帧或一段时间添加箭头、文字、打码等标注。拖动时间条调整生效范围，成品可复制或保存为 MP4 或 GIF。 |
-| **识别文字、表格与公式** | OCR 结果可按原图行、段落或 Markdown 查看，表格可复制为 CSV。公式识别提供可编辑的 LaTeX 和公式预览。 |
-| **截图隐私打码** | 本机规则识别敏感文字、二维码和人脸。遮盖可移动、缩放、改样式，确认后随截图一起输出。 |
+- **截图与框选** 支持区域、窗口、全屏和延时截图。macOS 版可吸附到窗口或控件，框选后可直接复制、贴图、标注，也可切换到长截图或录屏。
+- **滚动长截图** 手动或自动滚动拼接正文，固定区域只保留一次。长图完成后可继续编辑、复制、保存或贴图。
+- **标注与高亮** 可添加箭头、形状、文字、序号和马赛克。手绘样式支持调整线条起伏与填充纹理，高亮笔可沿任意路径涂画。
+- **贴图与剪贴板历史** 把截图或剪贴板图片固定在桌面上，支持置顶、分组、调节透明度和鼠标穿透，也可从历史记录找回图片。
+- **录屏与编辑** 支持录制选定区域，录完可以裁剪、逐帧预览，并在单帧或指定时段加上箭头、文字或打码。可直接复制视频或 GIF，也可保存为 MP4 或 GIF。
+- **文字、表格与公式识别** 文字可按原始行、段落或 Markdown 查看，表格可复制为 CSV。安装公式识别组件后，可以预览、编辑和复制 LaTeX。
+- **隐私检查** 截图时可在本机检查敏感文字、二维码和人脸。复制、保存或贴图前可以调整遮盖范围与样式，确认后随图片一起输出。
 
-功能展示以 macOS 版为主。Windows 的操作和支持范围见 [Windows 版说明](windows/README.md)。
+列表与演示以 macOS 版为例。Windows 的操作和支持范围见 [Windows 版说明](windows/README.md)。
+
+## 开源工具对比
+
+| 功能 | TapSnap | [Snow Shot](https://snowshot.top/guides/index.html) | [ShareX](https://getsharex.com/) | [Flameshot](https://flameshot.org/) |
+| --- | --- | --- | --- | --- |
+| 发布平台 | macOS、Windows | macOS、Windows | Windows 正式版，[macOS 和 Linux 预览版](https://getsharex.com/artifacts/) | Linux、macOS、Windows |
+| 截图方式 | 区域、窗口、全屏、延时 | 区域、窗口、显示器、延时 | 区域、窗口、全屏、显示器 | 区域、全屏、延时 |
+| 滚动长截图 | 手动或自动拼接 | 竖向或横向拼接 | 滚动拼接 | — |
+| 标注与打码 | 手绘、自由高亮、隐私检查 | 画笔、高亮、马赛克 | 画笔、高亮、模糊和像素化 | 画笔、高亮、像素化 |
+| 桌面贴图 | 置顶、分组、历史 | 置顶、分组、恢复 | 置顶 | 置顶 |
+| 录屏及后处理 | MP4 / GIF、裁剪、单帧或时段标注 | MP4 / GIF、裁剪、变速 | 录屏、GIF、视频和 GIF 裁剪 | — |
+| 内容识别 | 本机 OCR、表格 CSV、公式 LaTeX | 本机 OCR、表格与公式在线识别 | Windows OCR | — |
+
+TapSnap 功能以 macOS 版为例。对比依据为各项目的公开文档，`—` 表示文档未列出对应功能。
 
 ## 操作演示
 
 ### 录屏时间轴标注
 
-![TapSnap 录屏编辑器演示，在时间轴上调整标注及预览生效范围。](assets/readme/recording-annotations.gif)
+![TapSnap 浅色录屏预览。为示例发布看板添加箭头，拖动时间轴上的标注末端调整显示时段。](assets/readme/recording-annotations.gif)
 
 录完可精确裁剪所选片段，也可以拖动时间轴上的标注，让它只在指定时段出现。预览底部可直接点「复制视频」或「复制 GIF」。
 
 <details>
 <summary><strong>展开观看框选与直接复制</strong></summary>
 
-![拖动建立流光选区，底部显示长截图、录屏、编辑等按钮，悬停在勾选按钮上显示复制提示。](assets/readme/quick-capture.gif)
+![在浅色发布看板上拖出流光选区，悬停在底部工具栏的勾选按钮上查看复制提示。](assets/readme/quick-capture.gif)
 
 </details>
 
@@ -110,9 +124,9 @@ macOS 菜单栏点「公式识别」，按提示准备 Python 3.12，再在应�
 <details>
 <summary><strong>更新与开发</strong></summary>
 
-推送 `main`、提交面向 `main` 的 PR，或在 [GitHub Actions](https://github.com/MungSmoothie/TapSnap/actions/workflows/build.yml) 手动运行时，会执行 macOS 托管环境回归测试与 Windows 四组回归，并在运行详情的 Artifacts 提供 Apple Silicon DMG 和两种架构的自包含 Windows ZIP。需要实际桌面、系统编码器和识别环境的 macOS 用例可在本机运行 `swift test`。
+推送 `main`、提交面向 `main` 的 PR，或在 [GitHub Actions](https://github.com/Hsenn1015/TapSnap/actions/workflows/build.yml) 手动运行时，会执行 macOS 托管环境回归测试与 Windows 四组回归，并在运行详情的 Artifacts 提供 Apple Silicon DMG 和两种架构的自包含 Windows ZIP。需要实际桌面、系统编码器和识别环境的 macOS 用例可在本机运行 `swift test`。
 
-发布时在目标提交创建并推送版本标签，例如 `v0.2.0`。所有构建通过后，流程会把三个安装包和 `SHA256SUMS.txt` 上传到 [GitHub Releases](https://github.com/MungSmoothie/TapSnap/releases)。如用 `v0.2.0-rc.1`，会发布为预发行版。CI 生成的 macOS 包是 ad-hoc 签名且未公证，Sparkle 更新源需单独配置。
+发布时在目标提交创建并推送版本标签，例如 `v0.2.0`。所有构建通过后，流程会把三个安装包和 `SHA256SUMS.txt` 上传到 [GitHub Releases](https://github.com/Hsenn1015/TapSnap/releases)。如用 `v0.2.0-rc.1`，会发布为预发行版。CI 生成的 macOS 包是 ad-hoc 签名且未公证，Sparkle 更新源需单独配置。
 
 配置更新源的 macOS 构建可通过菜单栏「检查更新…」查看新版。自动提醒会等截图、录屏和编辑结束后出现，由用户确认安装。打包时用 `TAPSNAP_UPDATE_FEED_URL` 和 `TAPSNAP_UPDATE_PUBLIC_KEY` 配置 Sparkle，使用 `TAPSNAP_VERSION` 和递增的 `TAPSNAP_BUILD_NUMBER` 标记版本。发布包需要 Sparkle 签名，更新源使用 HTTPS。本机调试支持回环 HTTP。
 
