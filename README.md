@@ -1,14 +1,30 @@
-<img src="Docs/readme/tapsnap-icon.png" alt="TapSnap 应用图标" width="72">
+<p align="center">
+  <img src="Docs/readme/tapsnap-icon.png" alt="TapSnap 应用图标" width="120">
+</p>
 
-# TapSnap
+<h2 align="center">TapSnap</h2>
 
-macOS 与 Windows 的桌面截图、贴图和录屏工具。框选后就能复制、贴图或转入录屏，也可以给截图和视频加标注。
+<p align="center">
+  <sub>macOS 与 Windows 的截图、贴图、标注和录屏工具。</sub>
+</p>
 
-[特色功能](#特色功能) · [操作演示](#操作演示) · [安装与构建](#安装与构建) · [使用指南](#使用指南)
+<p align="center">
+  <img src="Docs/readme/badge-macos.png" alt="macOS 14+" width="98" height="24">
+  <img src="Docs/readme/badge-windows.png" alt="Windows x64 / ARM64" width="160" height="24">
+  <img src="Docs/readme/badge-swift.png" alt="Swift" width="71" height="24">
+  <img src="Docs/readme/badge-dotnet.png" alt=".NET 10" width="83" height="24">
+</p>
 
-![TapSnap macOS 框选界面。深色工作面板中显示青紫粉流光选框，下方是标注、长截图、录屏和确认工具。](Docs/readme/capture-hero.png)
+<p align="center">
+  <sub>
+    <a href="#特色功能">特色功能</a> ·
+    <a href="#操作演示">操作演示</a> ·
+    <a href="#安装与构建">安装与构建</a> ·
+    <a href="#使用指南">使用指南</a>
+  </sub>
+</p>
 
-*TapSnap macOS 框选界面，示例工作面板使用合成数据。*
+![TapSnap 功能插画。日程窗口居中展示流光框选和手绘标注，左侧是贴图和滚动长截图，右侧是文字识别、Markdown 和打码，底部是录屏时间轴。](Docs/readme/capture-overview.webp)
 
 ## 特色功能
 
