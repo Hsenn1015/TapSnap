@@ -307,8 +307,19 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
     @objc private func showAbout() {
         let alert = NSAlert()
         alert.messageText = "TapSnap \(AppInfo.version)"
-        alert.informativeText = "截图、贴图、录屏与标注工具。\nBundle ID：\(AppPaths.bundleIdentifier)"
-        alert.addButton(withTitle: "好")
+        alert.informativeText = """
+            TapSnap 是一款桌面截图、贴图和录屏工具，支持滚动长截图、手绘标注、文字识别和隐私打码。
+
+            主要功能
+            • 截图 · 区域、窗口、全屏和滚动长截图
+            • 贴图 · 将截图或剪贴板图片固定在桌面
+            • 手绘标注 · 箭头、形状和自由高亮
+            • 录屏编辑 · 裁剪、按时段标注、复制视频或 GIF
+            • 内容识别 · 提取文字、表格和公式
+            • 隐私打码 · 检查并遮盖截图里的敏感信息
+
+            """
+        alert.addButton(withTitle: "关闭")
         alert.runModal()
     }
 

@@ -97,6 +97,7 @@ jobs:
           if [[ -n "$TAPSNAP_UPDATE_FEED_URL" ]]; then
             test "$(plutil -extract SUFeedURL raw -o - "$plist")" = "$TAPSNAP_UPDATE_FEED_URL"
             test "$(plutil -extract SUPublicEDKey raw -o - "$plist")" = "$TAPSNAP_UPDATE_PUBLIC_KEY"
+            test "$(plutil -extract SUEnableDownloaderService raw -o - "$plist")" = true
           fi
           codesign --verify --deep --strict --verbose=2 "$app"
           staging=$(mktemp -d "$RUNNER_TEMP/tapsnap-dmg.XXXXXX")

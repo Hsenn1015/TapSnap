@@ -1,0 +1,15 @@
+--- a/Downloader/SPUDownloader.m
++++ b/Downloader/SPUDownloader.m
+@@ -9,2 +9,4 @@
+ #import "SPUDownloader.h"
++#import "TSUpdateURLProtocol.h"
++#import <CFNetwork/CFNetwork.h>
+ #import "SPUDownloaderDelegate.h"
+@@ -83,3 +85,6 @@
++    NSURLSessionConfiguration *configuration = NSURLSessionConfiguration.defaultSessionConfiguration;
++    NSDictionary *settings = CFBridgingRelease(CFNetworkCopySystemProxySettings());
++    request = [TSUpdateURLProtocol prepareRequest:request configuration:configuration proxySettings:settings];
+     _downloadSession = [NSURLSession
+-        sessionWithConfiguration:[NSURLSessionConfiguration defaultSessionConfiguration]
++        sessionWithConfiguration:configuration
+         delegate:self

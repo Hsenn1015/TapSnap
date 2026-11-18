@@ -51,6 +51,8 @@ if [[ -n "$UPDATE_FEED" ]]; then
   /usr/bin/plutil -insert SUPublicEDKey -string "$UPDATE_KEY" "$PLIST"
   if [[ "$UPDATE_FEED" =~ $LOOPBACK_FEED ]]; then
     /usr/bin/plutil -insert NSAppTransportSecurity -xml '<dict><key>NSAllowsLocalNetworking</key><true/></dict>' "$PLIST"
+  else
+    /usr/bin/plutil -insert SUEnableDownloaderService -bool true "$PLIST"
   fi
 fi
 
@@ -93,7 +95,7 @@ fi
 # 由内向外签名，保留 Sparkle 下载服务的权限与辅助程序的 Hardened Runtime。
 SPARKLE_VERSION="$SPARKLE/Versions/Current"
 codesign --force --sign "$IDENTITY" --options runtime "$SPARKLE_VERSION/XPCServices/Installer.xpc"
-codesign --force --sign "$IDENTITY" --options runtime --preserve-metadata=entitlements "$SPARKLE_VERSION/XPCServices/Downloader.xpc"
+bash "$ROOT/Scripts/build-update-downloader.sh" "$SPARKLE_VERSION/XPCServices/Downloader.xpc" "$IDENTITY"
 codesign --force --sign "$IDENTITY" --options runtime "$SPARKLE_VERSION/Autoupdate"
 codesign --force --sign "$IDENTITY" --options runtime "$SPARKLE_VERSION/Updater.app"
 codesign --force --sign "$IDENTITY" --options runtime "$SPARKLE"

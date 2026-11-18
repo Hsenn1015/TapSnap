@@ -17,3 +17,7 @@
 公式模型从作者 GitHub Release v0.0.1 下载，权重校验值见 `Resources/formula-models.json`。安装脚本核对文件 SHA-256；识别助手开启离线模式并阻断 socket 连接。公式模型不会在 TapSnap 启动时常驻。
 
 公式识别运行环境约占 1.2 GiB。安装 Python 3.12 后，再运行发布目录的 `Install Formula.command`。安装失败不会修改截图、快捷键或历史设置。
+
+## macOS 应用更新
+
+TapSnap 使用 Sparkle 2.10.1 验证和安装更新。`Vendor/Sparkle/Downloader-2.10.1.tar.gz` 收录了上游 Downloader 目标的 7 个实现文件、所需头文件和许可证。打包时应用同目录的 `update-session.patch`，将 TapSnap 的网络策略接入 Downloader。源码子集的 SHA-256 为 `71a1fcaf1f0032c2cc1f38a7ea4a93a885a7880af6d6bd26e777de2c2f3959c3`。[上游源码](https://github.com/sparkle-project/Sparkle/tree/2.10.1)

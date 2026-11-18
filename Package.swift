@@ -13,6 +13,7 @@ let package = Package(
         .library(name: "TapSnapCore", targets: ["TapSnapCore"]),
     ],
     targets: [
+        .target(name: "TapSnapUpdateNetwork", linkerSettings: [.linkedFramework("CFNetwork")]),
         .binaryTarget(
             name: "Sparkle",
             url: "https://github.com/sparkle-project/Sparkle/releases/download/2.10.1/Sparkle-for-Swift-Package-Manager.zip",
@@ -214,7 +215,7 @@ let package = Package(
         ),
 
         .testTarget(name: "TapSnapCoreTests",
-                    dependencies: ["TapSnapCore", "TapSnapTheme", "TapSnapSystem", "TapSnapScreen", "TapSnapConfig", "TapSnapStitching", "TapSnapMedia", "TapSnapToast", "TapSnapPrivacy", "TapSnapApp"],
+                    dependencies: ["TapSnapCore", "TapSnapTheme", "TapSnapSystem", "TapSnapScreen", "TapSnapConfig", "TapSnapStitching", "TapSnapMedia", "TapSnapToast", "TapSnapPrivacy", "TapSnapApp", "TapSnapUpdateNetwork"],
                     swiftSettings: swiftSettings),
     ]
 )
