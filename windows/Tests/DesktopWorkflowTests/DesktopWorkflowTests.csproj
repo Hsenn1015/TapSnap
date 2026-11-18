@@ -9,6 +9,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../TapSnap.Windows/TapSnap.Windows.csproj" />
+    <Resource Include="../../TapSnap.Windows/TapSnap.ico" Link="TapSnap.ico" />
     <Compile Include="../ImageFormatTests/GifFixture.cs" Link="GifFixture.cs" />
   </ItemGroup>
 </Project>

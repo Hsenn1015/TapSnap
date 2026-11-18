@@ -23,7 +23,6 @@ internal static class Program
     private static int Main(string[] args)
     {
         if (args.Length != 3) throw new ArgumentException("Expected v0.2.3 TapSnap.dll, fixture artwork and output folder.");
-        Application.ResourceAssembly = typeof(EditorWindow).Assembly;
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         app.Startup += async (_, _) =>
         {
