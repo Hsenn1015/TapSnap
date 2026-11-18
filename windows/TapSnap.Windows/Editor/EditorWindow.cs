@@ -50,6 +50,7 @@ public sealed partial class EditorWindow : Window
     private AnnotationTool? tool;
     private int selected = -1;
     private Rect? crop;
+    private double cropRatio;
     private bool scanning;
     private Popup? stylePopup;
     private TextBox? inline;
@@ -66,6 +67,7 @@ public sealed partial class EditorWindow : Window
     private Rect? originalCrop;
     private Guid? focusedCandidate;
     private readonly List<Rect> knownPrivacyBounds = new();
+    private readonly List<Rect> ignoredPrivacyBounds = new();
     private bool showStatus;
     private int laidOutSlots;
     private bool longShotLayout;
@@ -82,7 +84,32 @@ public sealed partial class EditorWindow : Window
         }
     }
 
-    private sealed record DocumentState(Annotation[] Items, Rect? Crop, PendingRedaction[] Candidates);
+    private sealed record DocumentState(Annotation[] Items, Rect? Crop, PendingRedaction[] Candidates, Rect[] Ignored);
+    internal sealed record Draft(BitmapSource Image, DateTime CapturedAt, Annotation[] Items, Rect? Crop);
+    internal DateTime CapturedAt { get; set; } = DateTime.Now;
+    internal event Action? ProtectOriginal;
+    internal event Action<BitmapSource>? ReviewedOutput;
+    private bool privacyReviewRequired;
+    internal bool LocalScanCompleted { get; set; }
+
+    internal Draft SaveDraft()
+    {
+        FinishText(save: true);
+        return new Draft(source, CapturedAt, items.ToArray(), crop);
+    }
+
+    internal void RestoreDraft(Draft document)
+    {
+        Restore(new DocumentState(document.Items, document.Crop, [], []));
+        RefreshSurface();
+    }
+
+    internal void BeginPrivacyReview(bool startsLocalScan = true)
+    {
+        privacyReviewRequired = true;
+        if (startsLocalScan) LocalScanCompleted = false;
+        ProtectOriginal?.Invoke();
+    }
 
     public EditorWindow(BitmapSource image, Action<BitmapSource> copy, Action<BitmapSource> save,
                         Action<BitmapSource> pin, Action startLongShot, Action startRecording,
@@ -400,6 +427,7 @@ public sealed partial class EditorWindow : Window
             Rect clipped = Rect.Intersect(bounds, canvas.ImageRect);
             if (!IsArea(clipped) || candidates.Any(item => SamePrivacyRegion(item.Bounds, clipped)) ||
                 knownPrivacyBounds.Any(old => SamePrivacyRegion(old, clipped))) continue;
+            knownPrivacyBounds.Add(clipped);
             candidates.Add(new PendingRedaction(Guid.NewGuid(), label, clipped));
         }
         RefreshSurface();
@@ -412,13 +440,36 @@ public sealed partial class EditorWindow : Window
         return IsArea(overlap) && overlap.Width * overlap.Height >= 0.8 * Math.Max(a.Width * a.Height, b.Width * b.Height);
     }
 
-    private void Export(Action<BitmapSource> output, bool close = false, bool includeCrop = true)
+    private void Export(Action<BitmapSource> output, bool close = false, bool includeCrop = true, bool forReview = false)
     {
         if (scanning) return;
+        if (!forReview && privacyReviewRequired)
+        {
+            var visible = includeCrop ? crop ?? canvas.ImageRect : canvas.ImageRect;
+            foreach (var known in knownPrivacyBounds)
+            {
+                var area = Rect.Intersect(known, visible);
+                if (!IsArea(area) || ignoredPrivacyBounds.Contains(known) ||
+                    items.Any(i => i.IsPrivacyMask && i.Bounds.Contains(area)) ||
+                    candidates.Any(c => SamePrivacyRegion(c.Bounds, known))) continue;
+                candidates.Add(new PendingRedaction(Guid.NewGuid(), "重新检查遮盖", known));
+            }
+            if (candidates.Any(c => IsArea(Rect.Intersect(c.Bounds, visible))))
+            {
+                RefreshSurface();
+                ShowReview();
+                return;
+            }
+            if (!LocalScanCompleted && MessageBox.Show(this, "本机扫描未完成。已手动检查并继续输出？", "隐私复查",
+                    MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.Cancel) != MessageBoxResult.OK) return;
+        }
         FinishText(save: true);
         try
         {
-            output(canvas.Render(includeCrop));
+            var image = canvas.Render(includeCrop);
+            if (!forReview && includeCrop && (privacyReviewRequired || items.Any(i => i.IsPrivacyMask)))
+                ReviewedOutput?.Invoke(image);
+            output(image);
             if (close) Close();
         }
         catch (Exception exception)
@@ -516,7 +567,8 @@ public sealed partial class EditorWindow : Window
             cropDraft = null;
             if (!canvas.CaptureMouse()) EndDrag();
         }
-        else if (args.ClickCount == 2 && hit >= 0 && items[hit].Tool is AnnotationTool.Text or AnnotationTool.Watermark)
+        else if (args.ClickCount == 2 && hit >= 0 && (items[hit].Tool == AnnotationTool.Text ||
+                 items[hit].Tool == AnnotationTool.Watermark && items[hit].Style.Watermark == WatermarkContent.Text))
         {
             CancelDrag();
             Select(hit);
@@ -620,7 +672,17 @@ public sealed partial class EditorWindow : Window
             AnnotationStyle style = CurrentStyle(kind);
             Rect bounds = dragged ? new Rect(down, point) : new Rect(down, new Size(220, Math.Max(40, style.FontSize * 2.2)));
             bounds = Rect.Intersect(bounds, canvas.ImageRect);
-            if (IsArea(bounds)) BeginText(FromRect(kind, bounds, style), -1);
+            if (IsArea(bounds))
+            {
+                var mark = FromRect(kind, bounds, style) with { CapturedAt = CapturedAt };
+                if (kind == AnnotationTool.Text || style.Watermark == WatermarkContent.Text) BeginText(mark, -1);
+                else if (style.Watermark != WatermarkContent.Image || style.Logo != null) Add(mark);
+                else if (Images.OpenImage(pngOnly: true) is { } logo)
+                {
+                    styles[kind] = style with { Logo = logo };
+                    Add(mark with { Style = styles[kind] });
+                }
+            }
         }
         else if (dragged && tool is AnnotationTool current && CreateDraft(current, point) is Annotation item)
         {
@@ -642,13 +704,21 @@ public sealed partial class EditorWindow : Window
     private Rect CropAt(Point anchor, Point pointer)
     {
         if (originalCrop is not Rect initial)
-            return new Rect(Clamp(anchor), Clamp(pointer));
+            return FitCrop(new Rect(Clamp(anchor), Clamp(pointer)), Math.Sign(pointer.X - anchor.X), Math.Sign(pointer.Y - anchor.Y));
         Vector delta = pointer - anchor;
         Rect image = canvas.ImageRect;
         if (resizeHandle is AnnotationHandle handle)
-            return Rect.Intersect(image, handle.Resize(initial, delta));
+            return FitCrop(Rect.Intersect(image, handle.Resize(initial, delta)), handle.X, handle.Y);
         return new Rect(Math.Clamp(initial.X + delta.X, image.Left, image.Right - initial.Width),
             Math.Clamp(initial.Y + delta.Y, image.Top, image.Bottom - initial.Height), initial.Width, initial.Height);
+    }
+
+    private Rect FitCrop(Rect bounds, int x, int y)
+    {
+        if (cropRatio == 0 || bounds.IsEmpty) return bounds;
+        double width = Math.Min(bounds.Width, bounds.Height * cropRatio), height = width / cropRatio;
+        return new Rect(bounds.Left + (bounds.Width - width) * (1 - x) / 2,
+            bounds.Top + (bounds.Height - height) * (1 - y) / 2, width, height);
     }
 
     private void BeginTransform(Point point, int hit, AnnotationHandle? handle = null)
@@ -714,6 +784,7 @@ public sealed partial class EditorWindow : Window
 
     private void Add(Annotation item)
     {
+        if (item.IsPrivacyMask) ProtectOriginal?.Invoke();
         Remember();
         items.Add(item);
         selected = items.Count - 1;
@@ -773,7 +844,7 @@ public sealed partial class EditorWindow : Window
     private static Annotation FromRect(AnnotationTool kind, Rect rect, AnnotationStyle style)
         => new(kind, new[] { rect.TopLeft, rect.BottomRight }, style);
 
-    private DocumentState Snapshot() => new(items.ToArray(), crop, candidates.ToArray());
+    private DocumentState Snapshot() => new(items.ToArray(), crop, candidates.ToArray(), ignoredPrivacyBounds.ToArray());
 
     private void Remember(DocumentState? state = null)
     {
@@ -787,6 +858,8 @@ public sealed partial class EditorWindow : Window
         items.AddRange(state.Items);
         candidates.Clear();
         candidates.AddRange(state.Candidates);
+        ignoredPrivacyBounds.Clear();
+        ignoredPrivacyBounds.AddRange(state.Ignored);
         crop = state.Crop;
         selected = -1;
     }
@@ -911,7 +984,7 @@ public sealed partial class EditorWindow : Window
             double height = Math.Max(item.Bounds.Height, input.ExtentHeight / canvas.Scale + 6);
             Rect bounds = item.Bounds;
             bounds.Height = Math.Min(height, canvas.ImageRect.Bottom - bounds.Y);
-            Annotation edited = FromRect(item.Tool, bounds, item.Style) with { Text = input.Text };
+            Annotation edited = FromRect(item.Tool, bounds, item.Style) with { Text = input.Text, CapturedAt = item.CapturedAt };
             if (index < 0) Add(edited);
             else { Remember(); items[index] = edited; }
         }
@@ -1003,6 +1076,7 @@ public sealed partial class EditorWindow : Window
                 Remember();
                 candidates.Remove(candidate);
                 knownPrivacyBounds.Add(candidate.Bounds);
+                ignoredPrivacyBounds.Add(candidate.Bounds);
                 if (focusedCandidate == candidate.Id) focusedCandidate = null;
                 RefreshSurface();
                 RemoveRow();

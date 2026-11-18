@@ -27,6 +27,8 @@ public enum ActionKind: String, Codable, CaseIterable, Sendable {
     case edit
     case crop
     case save
+    case exportImage
+    case combineImages
     case copy
     case pin
     case ocr
@@ -65,6 +67,8 @@ public enum ActionKind: String, Codable, CaseIterable, Sendable {
         case .edit: return .edit
         case .crop: return .crop
         case .save: return .save
+        case .exportImage: return .save
+        case .combineImages: return .copy
         case .copy: return .copy
         case .pin: return .pin
         case .ocr: return .ocr
@@ -84,12 +88,17 @@ public enum ActionKind: String, Codable, CaseIterable, Sendable {
     }
 
     public var title: String {
-        self == .formula ? "公式识别" : icon.accessibilityLabel
+        switch self {
+        case .formula: return "公式识别"
+        case .exportImage: return "导出…"
+        case .combineImages: return "追加一张图片…"
+        default: return icon.accessibilityLabel
+        }
     }
 
     public var exportsImage: Bool {
         switch self {
-        case .save, .copy, .pin, .ocr, .translate, .qrCode, .tableRecognize, .formula, .print, .confirm:
+        case .save, .exportImage, .combineImages, .copy, .pin, .ocr, .translate, .qrCode, .tableRecognize, .formula, .print, .confirm:
             return true
         default:
             return false

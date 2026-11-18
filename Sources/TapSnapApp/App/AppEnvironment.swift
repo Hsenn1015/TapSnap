@@ -13,6 +13,7 @@ import TapSnapSystem
 import TapSnapTheme
 import TapSnapToast
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// 依赖容器。
 ///
@@ -28,6 +29,7 @@ final class AppEnvironment {
     let ocr: OCRService
     let stitcher: FrameStitcher
     let pinGroups: PinGroupManager
+    private let selectScreenshotFile: (ImageFormat, URL) -> URL?
 
     @MainActor lazy var toastPresenter = ToastPresenter(center: toast, theme: { [weak self] in self?.theme ?? .dark })
     lazy var captureCoordinator = CaptureCoordinator(environment: self)
@@ -46,7 +48,8 @@ final class AppEnvironment {
     let clipboardHistory = ClipboardHistory()
     lazy var clipboardPanel = ClipboardHistoryPanel(
         history: clipboardHistory,
-        theme: { [unowned self] in self.theme }
+        theme: { [unowned self] in self.theme },
+        editImage: { [unowned self] image in self.openEditor(image: image, scale: 1) }
     )
     lazy var pinGroupsPanel = PinGroupsPanel(
         groups: pinGroups,
@@ -56,6 +59,8 @@ final class AppEnvironment {
 
     /// 当前打开的编辑窗口（关掉后置 nil）。
     private var editor: EditController?
+    private(set) var recentScreenshot: EditDocument?
+    private var recentSourceID: UUID?
     private var settingsWindow: NSWindow?
     private var settingsAppearanceObservation: AnyCancellable?
 
@@ -64,8 +69,10 @@ final class AppEnvironment {
         editor != nil || captureCoordinator.isCaptureActive || record.isRecordingOrEditing || longShot.hasActiveSession
     }
 
-    init(config: ConfigStore = .shared) {
+    init(config: ConfigStore = .shared,
+         selectScreenshotFile: @escaping (ImageFormat, URL) -> URL? = AppEnvironment.showSavePanel) {
         self.config = config
+        self.selectScreenshotFile = selectScreenshotFile
         self.palette = ColorPaletteStore()
         self.toast = ToastCenter.shared
         self.capture = ScreenCaptureService()
@@ -125,8 +132,8 @@ final class AppEnvironment {
 
     func openEditor(image: CGImage, scale: CGFloat, captureRect: CGRect? = nil, captureScreen: ScreenDescriptor? = nil,
                     outputOptions: ScreenshotOutputOptions? = nil, forcePrivacy: Bool = false, reviewedAction: ActionKind? = nil,
-                    initialAction: ActionKind? = nil) {
-        let requiresPrivacyReview = forcePrivacy || reviewedAction == .copy || reviewedAction == .save
+                    initialAction: ActionKind? = nil, restoring document: EditDocument? = nil) {
+        let requiresPrivacyReview = forcePrivacy || config.settings.privacy.enabled || reviewedAction == .copy || reviewedAction == .save
             || reviewedAction == .print || reviewedAction == .qrCode
         let controller = EditController(
             environment: self,
@@ -138,9 +145,44 @@ final class AppEnvironment {
             outputOptions: outputOptions,
             scanPrivacyOnOpen: forcePrivacy || config.settings.privacy.enabled,
             requiresPrivacyReview: requiresPrivacyReview,
-            reviewedAction: reviewedAction
+            reviewedAction: reviewedAction, restoring: document
         )
         presentEditor(controller, initialAction: initialAction)
+    }
+
+    func rememberCapture(_ document: EditDocument, privateCapture: Bool) {
+        recentSourceID = document.id
+        recentScreenshot = privateCapture ? nil : document
+    }
+
+    func protectOriginal(_ document: EditDocument) {
+        if recentSourceID == document.id { recentScreenshot = nil }
+    }
+
+    func rememberReviewedImage(_ image: CGImage, from document: EditDocument) {
+        guard recentSourceID == document.id, recentScreenshot !== document else { return }
+        recentScreenshot = EditDocument(baseImage: image, scale: document.scale, capturedAt: document.capturedAt)
+    }
+
+    func editRecentScreenshot() {
+        guard let document = recentScreenshot else { toast.info("还没有可编辑的最近截图"); return }
+        if editor?.document === document { editor?.bringForward(); return }
+        recentSourceID = document.id
+        openEditor(image: document.baseImage, scale: document.scale, restoring: document)
+    }
+
+    func editImageFile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { openEditor(image: try ImageCodec.decode(Data(contentsOf: url)), scale: 1) }
+        catch { toast.error("无法打开图片：\(error.localizedDescription)") }
+    }
+
+    func editClipboardImage() {
+        guard let image = pinTransfer.image(from: .general) else { toast.info("剪贴板里没有图片"); return }
+        openEditor(image: image, scale: 1)
     }
 
     func presentEditor(_ controller: EditController, initialAction: ActionKind? = nil) {
@@ -152,13 +194,33 @@ final class AppEnvironment {
         if let initialAction, !initialAction.isAnnotationTool { controller.perform(initialAction) }
     }
 
+    func chooseScreenshotDestination(format: ImageFormat) -> URL? {
+        selectScreenshotFile(format, URL(fileURLWithPath: config.settings.capture.saveDirectory, isDirectory: true))
+    }
+
+    private static func showSavePanel(format: ImageFormat, directory: URL) -> URL? {
+        let panel = NSSavePanel()
+        panel.directoryURL = directory
+        panel.allowedContentTypes = [UTType(format.uti) ?? .image]
+        panel.nameFieldStringValue = "\(ImageCodec.defaultFileName()).\(format.fileExtension)"
+        NSApp.activate(ignoringOtherApps: true)
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+
     @discardableResult
-    func saveScreenshot(_ image: CGImage, formatOverride: String? = nil) -> Bool {
+    func saveScreenshot(_ image: CGImage, formatOverride: String? = nil, chooseLocation: Bool = false) -> Bool {
         let settings = config.settings.capture
         let format = ImageFormat(fileExtension: formatOverride ?? settings.saveFormat) ?? .png
+        let directory = URL(fileURLWithPath: settings.saveDirectory, isDirectory: true)
         do {
-            let url = try ImageCodec.write(image, to: URL(fileURLWithPath: settings.saveDirectory),
-                                           format: format, quality: settings.jpegQuality)
+            let url: URL
+            if chooseLocation {
+                guard let destination = chooseScreenshotDestination(format: format) else { return false }
+                url = destination
+                try ImageCodec.encode(image, as: format, quality: settings.jpegQuality).write(to: url, options: .atomic)
+            } else {
+                url = try ImageCodec.write(image, to: directory, format: format, quality: settings.jpegQuality)
+            }
             toast.success("已保存到 \(url.lastPathComponent)")
             return true
         } catch {

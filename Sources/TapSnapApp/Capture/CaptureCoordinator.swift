@@ -114,6 +114,31 @@ final class CaptureCoordinator {
             let view = SelectionOverlayView(frame: CGRect(origin: .zero, size: screen.frame.size))
             view.screenImage = session?.frame(for: screen)?.image
             view.selectsWindows = session?.mode == .window
+            if screens.count > 1, !view.selectsWindows, outcome != .longShot, outcome != .record,
+               let desktop = Geometry.boundingBox(of: screens.map(\.frame)) {
+                func local(_ rect: CGRect, on display: ScreenDescriptor) -> CGRect {
+                    CGRect(x: rect.minX - display.frame.minX, y: display.frame.maxY - rect.maxY,
+                           width: rect.width, height: rect.height)
+                }
+                view.desktopDragBounds = local(desktop, on: screen)
+                view.onSelectionChange = { [weak self] selection, pointer, dragging in
+                    guard let self, self.session?.id == id else { return }
+                    let global = selection.map {
+                        CGRect(x: screen.frame.minX + $0.minX, y: screen.frame.maxY - $0.maxY, width: $0.width, height: $0.height)
+                    }
+                    let cursor = CGPoint(x: screen.frame.minX + pointer.x, y: screen.frame.maxY - pointer.y)
+                    let toolbarIndex = screens.firstIndex { $0.frame.contains(cursor) }
+                    let scale = global.flatMap { rect in screens.filter { $0.frame.intersects(rect) }.map(\.scale).max() }
+                    for (i, peer) in self.overlayViews.enumerated() {
+                        peer.selectionScale = scale
+                        let rect = global.flatMap { area in
+                            screens[i].id == screen.id || !area.intersection(screens[i].frame).isEmpty
+                                ? local(area, on: screens[i]) : nil
+                        }
+                        peer.synchronizeSelection(rect, showToolbar: !dragging && (toolbarIndex.map { $0 == i } ?? (screens[i].id == screen.id)))
+                    }
+                }
+            }
             view.windowRegions = windows.compactMap { Self.viewRect(for: $0.bounds, on: screen) }
             if !view.selectsWindows {
                 view.accessibilitySnapLookup = { point in
@@ -273,14 +298,19 @@ final class CaptureCoordinator {
             self.playShutterIfNeeded(for: outcome)
         }
         let checksPrivacy = forcePrivacy || environment.config.settings.privacy.enabled
+        let document = EditDocument(baseImage: cropped, scale: session.outputScale,
+                                    capturedAt: session.frame(for: screen)?.timestamp ?? session.startedAt)
+        if outcome != .longShot && outcome != .record {
+            environment.rememberCapture(document, privateCapture: checksPrivacy)
+        }
         // 打印和二维码识别由编辑器执行。需要检查时，把它们留给复核后的确认操作。
         let editorExport = initialAction.flatMap { $0.exportsImage ? $0 : nil }
         let reviewedAction = checksPrivacy ? Self.reviewedAction(for: outcome) ?? editorExport : nil
         if outcome == .edit || reviewedAction != nil {
-            environment.openEditor(image: cropped, scale: screen.scale, captureRect: globalRect, captureScreen: screen,
+            environment.openEditor(image: cropped, scale: document.scale, captureRect: globalRect, captureScreen: screen,
                                    outputOptions: outcome == .edit || outcome == .save ? session.outputOptions : nil,
                                    forcePrivacy: forcePrivacy, reviewedAction: reviewedAction,
-                                   initialAction: reviewedAction == nil ? initialAction : nil)
+                                   initialAction: reviewedAction == nil ? initialAction : nil, restoring: document)
             return
         }
         switch outcome {
@@ -289,9 +319,12 @@ final class CaptureCoordinator {
         case .copy:
             environment.pinTransfer.copy(cropped)
         case .pin:
-            environment.pinGroups.show(cropped, scale: screen.scale)
+            environment.pinGroups.show(cropped, scale: document.scale)
         case .save:
-            environment.saveScreenshot(cropped, formatOverride: session.outputOptions?.format)
+            if !environment.saveScreenshot(cropped, formatOverride: session.outputOptions?.format, chooseLocation: true) {
+                environment.openEditor(image: cropped, scale: document.scale, captureRect: globalRect, captureScreen: screen,
+                                       outputOptions: session.outputOptions, restoring: document)
+            }
         case .ocr:
             environment.ocrCoordinator.recognize(cropped)
         case .translate:
@@ -341,6 +374,11 @@ final class CaptureCoordinator {
             return
         }
         guard session == nil else { return }
+        if !screen.frame.contains(rect), ScreenLayout.current().contains(where: { $0.id != screen.id && $0.frame.intersects(rect) }) {
+            environment.toast.info("请在一块屏幕内选择滚动或录制区域")
+            start(outcome, outputOptions: outputOptions, forcePrivacy: forcePrivacy)
+            return
+        }
         let clipped = rect.intersection(screen.frame)
         guard !clipped.isNull, clipped.width >= 2, clipped.height >= 2 else {
             environment.toast.warning("原选区已不在当前屏幕，请重新框选")

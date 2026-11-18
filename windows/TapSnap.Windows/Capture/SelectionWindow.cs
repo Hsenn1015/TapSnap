@@ -18,8 +18,11 @@ using DrawingPoint = System.Drawing.Point;
 
 namespace TapSnap.Windows;
 
-internal enum CaptureAction { Edit, Copy, Pin, LongShot, Record, Privacy, Text, Barcode, Table, Translation, Formula }
-internal sealed record Selection(BitmapSource Image, DrawingRect ScreenRegion, CaptureAction Action);
+internal enum CaptureAction { Edit, Copy, Save, Pin, LongShot, Record, Privacy, Text, Barcode, Table, Translation, Formula }
+internal sealed record Selection(BitmapSource Image, DrawingRect ScreenRegion, CaptureAction Action)
+{
+    public DateTime CapturedAt { get; init; } = DateTime.Now;
+}
 
 internal sealed class SelectionWindow : Window
 {
@@ -46,6 +49,8 @@ internal sealed class SelectionWindow : Window
     private IntPtr selectedWindow;
     private int handle = -1;
     private bool locked;
+    private bool showsToolbar = true;
+    private bool CanSpan => !windowsOnly && action is not (CaptureAction.LongShot or CaptureAction.Record);
     private bool closed;
     private int snapGeneration;
 
@@ -86,7 +91,10 @@ internal sealed class SelectionWindow : Window
             buttons.Children.Add(Choice("录屏", "用当前选区开始录屏", CaptureAction.Record));
         }
         if (action == CaptureAction.Edit)
+        {
             buttons.Children.Add(Choice("复制", "复制当前选区", CaptureAction.Copy));
+            buttons.Children.Add(Choice("保存…", "选择文件名和保存位置", CaptureAction.Save));
+        }
         buttons.Children.Add(Choice(action switch
         {
             CaptureAction.Record => "开始录屏",
@@ -141,16 +149,17 @@ internal sealed class SelectionWindow : Window
             region = original;
             original = null;
             locked = region.HasValue;
-            Update();
+            PublishSelection();
         };
         canvas.MouseLeave += (_, _) => { lens.Visibility = Visibility.Collapsed; };
         PreviewKeyDown += (_, e) =>
         {
             if (e.Key == Key.Escape) { e.Handled = true; session.End(); }
-            if (e.Key != Key.Enter || start.HasValue || session.Finishing) return;
+            bool copy = action == CaptureAction.Edit && e.Key == Key.C && Keyboard.Modifiers == ModifierKeys.Control;
+            if ((!copy && e.Key != Key.Enter) || start.HasValue || session.Finishing) return;
             e.Handled = true;
-            if (region.HasValue) _ = Finish(action);
-            else session.End();
+            if (region.HasValue) _ = Finish(copy ? CaptureAction.Copy : action);
+            else if (!copy) session.End();
         };
     }
 
@@ -165,6 +174,8 @@ internal sealed class SelectionWindow : Window
     {
         public readonly DispatcherFrame Frame = new();
         public readonly List<SelectionWindow> Windows = [];
+        public DrawingRect Bounds;
+        public readonly DateTime CapturedAt = DateTime.Now;
         public Selection? Result;
         public bool Finishing;
         public bool Ended;
@@ -192,6 +203,8 @@ internal sealed class SelectionWindow : Window
     {
         var session = new CaptureSession();
         var screens = Desktop.Monitors();
+        if (screens.Count == 0) return null;
+        session.Bounds = screens.Select(screen => screen.Bounds).Aggregate(DrawingRect.Union);
         var images = Desktop.CaptureDesktop(screens.Select(screen => screen.Bounds).ToArray(), settings.HideDesktopIcons);
         try
         {
@@ -218,6 +231,7 @@ internal sealed class SelectionWindow : Window
         Activate();
         Keyboard.Focus(this);
         session.ClearOthers(this);
+        showsToolbar = true;
         snapGeneration++;
         var pointer = Desktop.Cursor;
         if (args.ClickCount == 2 && locked && region?.Contains(pointer) == true)
@@ -260,7 +274,7 @@ internal sealed class SelectionWindow : Window
         if (start is { } origin)
         {
             UpdateDrag(origin, pointer);
-            Update();
+            PublishSelection();
         }
         else if (windowsOnly && !locked)
         {
@@ -313,20 +327,37 @@ internal sealed class SelectionWindow : Window
         else
         {
             locked = region.HasValue;
-            Update();
+            PublishSelection();
+        }
+    }
+
+    private void PublishSelection()
+    {
+        if (!CanSpan) { Update(); return; }
+        var owner = session.Windows.FirstOrDefault(w => w.monitor.Contains(Desktop.Cursor)) ?? this;
+        foreach (var window in session.Windows)
+        {
+            if (window != this)
+            {
+                window.region = region is { } rect && window.monitor.IntersectsWith(rect) ? rect : null;
+                window.locked = locked && window.region.HasValue;
+            }
+            window.showsToolbar = window == owner;
+            window.Update();
         }
     }
 
     private void UpdateDrag(DrawingPoint origin, DrawingPoint pointer)
     {
+        var bounds = CanSpan ? session.Bounds : monitor;
         if (original is { } initial)
         {
             int dx = pointer.X - origin.X, dy = pointer.Y - origin.Y;
-            region = handle >= 0 ? SelectionGeometry.Resize(initial, monitor, handle, dx, dy)
-                : SelectionGeometry.Move(initial, monitor, dx, dy);
+            region = handle >= 0 ? SelectionGeometry.Resize(initial, bounds, handle, dx, dy)
+                : SelectionGeometry.Move(initial, bounds, dx, dy);
             return;
         }
-        region = SelectionGeometry.Create(origin, pointer, monitor);
+        region = SelectionGeometry.Create(origin, pointer, bounds);
     }
 
     private static DrawingRect? ElementAt(IntPtr window, DrawingPoint point, DrawingRect bounds)
@@ -416,19 +447,24 @@ internal sealed class SelectionWindow : Window
         }
 
         var rect = new Rect(Local(new DrawingPoint(r.Left, r.Top)), Local(new DrawingPoint(r.Right, r.Bottom)));
-        var rim = SelectionBorder.Outline(rect, full);
+        var rim = Outline(r);
         shade.Data = new CombinedGeometry(GeometryCombineMode.Exclude, new RectangleGeometry(full), new RectangleGeometry(rect));
         border.Update(rim, locked && !windowsOnly);
         dimensions.Text = $"{r.Width:N0} × {r.Height:N0}";
         if (rim.IsEmpty) rim = rect;
-        if (settings.ShowSelectionSize)
+        if (settings.ShowSelectionSize && showsToolbar)
         {
             tag.Visibility = Visibility.Visible;
             tag.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             Canvas.SetLeft(tag, ClampPosition(rim.Left, ActualWidth, tag.DesiredSize.Width));
             Canvas.SetTop(tag, ClampPosition(rim.Top - 24, ActualHeight, tag.DesiredSize.Height));
         }
-        if (!locked) return;
+        if (!locked || !showsToolbar) return;
+        foreach (Button button in buttons.Children)
+            if (button.Tag is CaptureAction.LongShot or CaptureAction.Record && action is CaptureAction.Edit or CaptureAction.Privacy)
+                button.Visibility = monitor.Contains(r) ? Visibility.Visible : Visibility.Collapsed;
+        rim.Intersect(full);
+        if (rim.IsEmpty) return;
         toolbar.Visibility = Visibility.Visible;
         buttons.MaxWidth = Math.Max(1, ActualWidth - 28);
         toolbar.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
@@ -464,14 +500,26 @@ internal sealed class SelectionWindow : Window
                 image = native is not null && native.PixelWidth == rect.Width && native.PixelHeight == rect.Height
                     ? native : Desktop.CaptureWindow(selectedWindow, rect);
             }
-            else
+            else if (monitor.Contains(rect))
             {
                 var area = SelectionGeometry.OffsetToImage(rect, monitor);
                 var crop = new CroppedBitmap(screenshot, new Int32Rect(area.X, area.Y, area.Width, area.Height));
                 crop.Freeze();
                 image = crop;
             }
-            session.Result = new Selection(image, rect, act);
+            else
+            {
+                var visual = new DrawingVisual();
+                using (var drawing = visual.RenderOpen())
+                    foreach (var window in session.Windows.Where(w => w.monitor.IntersectsWith(rect)))
+                        drawing.DrawImage(window.screenshot, new Rect(window.monitor.X - rect.X, window.monitor.Y - rect.Y,
+                            window.monitor.Width, window.monitor.Height));
+                var combined = new RenderTargetBitmap(rect.Width, rect.Height, 96, 96, PixelFormats.Pbgra32);
+                combined.Render(visual);
+                combined.Freeze();
+                image = combined;
+            }
+            session.Result = new Selection(image, rect, act) { CapturedAt = session.CapturedAt };
         }
         catch (Exception error)
         {
@@ -483,9 +531,13 @@ internal sealed class SelectionWindow : Window
     private Point Local(DrawingPoint p) => new((p.X - monitor.X) * ActualWidth / monitor.Width,
         (p.Y - monitor.Y) * ActualHeight / monitor.Height);
 
-    private Rect Outline(DrawingRect r) => SelectionBorder.Outline(
-        new Rect(Local(new DrawingPoint(r.Left, r.Top)), Local(new DrawingPoint(r.Right, r.Bottom))),
-        new Rect(0, 0, ActualWidth, ActualHeight));
+    private Rect Outline(DrawingRect r)
+    {
+        var rect = new Rect(Local(new DrawingPoint(r.Left, r.Top)), Local(new DrawingPoint(r.Right, r.Bottom)));
+        if (monitor.Contains(r)) return SelectionBorder.Outline(rect, new Rect(0, 0, ActualWidth, ActualHeight));
+        rect.Inflate(8, 8);
+        return rect;
+    }
 
     private static double ClampPosition(double value, double extent, double size) =>
         Math.Clamp(value, 8, Math.Max(8, extent - size - 8));
@@ -497,7 +549,7 @@ internal sealed class SelectionWindow : Window
         {
             Content = title, Width = 64, Height = 32, Margin = new Thickness(2, 0, 2, 0),
             Foreground = Brushes.White, FontSize = 12, FontWeight = primary ? FontWeights.SemiBold : FontWeights.Normal,
-            ToolTip = help, Cursor = Cursors.Hand, Focusable = false,
+            ToolTip = help, Cursor = Cursors.Hand, Focusable = false, Tag = act,
             Background = primary ? SelectionBorder.BrushFor(0x007aff) : Brushes.Transparent,
             RenderTransform = scale, RenderTransformOrigin = new Point(.5, .5)
         };

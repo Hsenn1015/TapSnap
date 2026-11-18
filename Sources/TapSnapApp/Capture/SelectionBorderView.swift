@@ -9,7 +9,8 @@ final class SelectionBorderView: NSView {
 
     /// 外框留出呼吸间距；屏幕边缘处收紧，保持边线可见。
     static func outlineRect(for selection: CGRect, in bounds: CGRect) -> CGRect {
-        selection.insetBy(dx: -8, dy: -8).intersection(bounds.insetBy(dx: 5, dy: 5))
+        let outline = selection.insetBy(dx: -8, dy: -8)
+        return bounds.contains(selection) ? outline.intersection(bounds.insetBy(dx: 5, dy: 5)) : outline
     }
 
     var selectionRect: CGRect? { didSet { updateBorder() } }

@@ -9,11 +9,13 @@ import SwiftUI
 final class ClipboardHistoryPanel {
     private let history: ClipboardHistory
     private let theme: () -> Theme
+    private let editImage: (CGImage) -> Void
     private var window: NSWindow?
 
-    init(history: ClipboardHistory, theme: @escaping () -> Theme) {
+    init(history: ClipboardHistory, theme: @escaping () -> Theme, editImage: @escaping (CGImage) -> Void) {
         self.history = history
         self.theme = theme
+        self.editImage = editImage
     }
 
     func toggle() {
@@ -29,6 +31,10 @@ final class ClipboardHistoryPanel {
             onPick: { [weak self] entry in
                 self?.history.activate(entry)
                 self?.close()
+            },
+            onEdit: { [weak self] image in
+                self?.close()
+                self?.editImage(image)
             },
             onClose: { [weak self] in self?.close() }
         )
@@ -88,7 +94,9 @@ struct ClipboardHistoryView: View {
     @ObservedObject var history: ClipboardHistory
     let theme: Theme
     let onPick: (ClipboardHistory.Entry) -> Void
+    let onEdit: (CGImage) -> Void
     let onClose: () -> Void
+    @State private var filter = ClipboardHistory.Filter.all
 
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -98,17 +106,30 @@ struct ClipboardHistoryView: View {
 
     var body: some View {
         let frame = RoundedRectangle(cornerRadius: 16, style: .continuous)
+        let entries = history.entries.filter(filter.includes)
         VStack(spacing: 0) {
             header
             Divider()
+            Picker("类型", selection: $filter) {
+                ForEach(ClipboardHistory.Filter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 9)
+            .padding(.top, 8)
             Group {
-                if history.entries.isEmpty {
+                if entries.isEmpty {
                     empty
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 3) {
-                            ForEach(history.entries) { entry in
-                                row(entry)
+                            ForEach(entries) { entry in
+                                HStack(spacing: 2) {
+                                    row(entry)
+                                    if case .image(let image) = entry.content {
+                                        headerButton("编辑图片", icon: "pencil") { onEdit(image) }
+                                    }
+                                }
                             }
                         }
                         .padding(6)
@@ -204,7 +225,7 @@ struct ClipboardHistoryView: View {
     private var empty: some View {
         VStack(spacing: 8) {
             glyph("clipboard", tint: theme.token(.mutedForeground))
-            Text("还没有记录")
+            Text(filter == .all ? "还没有记录" : "还没有\(filter.rawValue)记录")
                 .font(.system(size: 13, weight: .semibold))
             Text("复制的文字和图片会出现在这里")
                 .font(.system(size: 12))

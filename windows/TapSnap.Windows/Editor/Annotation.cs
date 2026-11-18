@@ -19,6 +19,7 @@ internal enum ShapeFill { Outline, Fill, Both }
 internal enum ArrowHead { Solid, Hollow, Open }
 internal enum MaskStyle { Frosted, Erase, Mosaic, Graphite, Mist, Stripes, Solid }
 internal enum NumberStyle { Arabic, Circled, Uppercase, Lowercase }
+internal enum WatermarkContent { Text, Date, DateTime, Image }
 
 internal sealed record AnnotationStyle
 {
@@ -49,10 +50,12 @@ internal sealed record AnnotationStyle
     public bool NumberOutlined { get; init; }
     public double Angle { get; init; } = -20;
     public bool Tiled { get; init; }
+    public WatermarkContent Watermark { get; init; }
+    public BitmapSource? Logo { get; init; }
 }
 
 internal sealed record Annotation(AnnotationTool Tool, IReadOnlyList<Point> Points, AnnotationStyle Style,
-                                  string Text = "", int Number = 0)
+                                  string Text = "", int Number = 0, DateTime CapturedAt = default)
 {
     public bool IsPrivacyMask => Tool == AnnotationTool.Privacy || Tool == AnnotationTool.Mosaic && Style.Mask is not null;
 
@@ -298,8 +301,22 @@ internal static class AnnotationDrawing
     private static void DrawWatermark(DrawingContext context, Annotation item, Brush ink)
     {
         Rect bounds = item.Bounds;
-        FormattedText text = Text(item, item.Text, ink);
         Point center = Center(bounds);
+        if (item.Style.Watermark == WatermarkContent.Image)
+        {
+            if (item.Style.Logo is not { } logo) return;
+            double scale = Math.Min(bounds.Width / logo.PixelWidth, bounds.Height / logo.PixelHeight);
+            double width = scale * logo.PixelWidth, height = scale * logo.PixelHeight;
+            context.DrawImage(logo, new Rect(center.X - width / 2, center.Y - height / 2, width, height));
+            return;
+        }
+        var label = item.Style.Watermark switch
+        {
+            WatermarkContent.Date => item.CapturedAt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            WatermarkContent.DateTime => item.CapturedAt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+            _ => item.Text
+        };
+        FormattedText text = Text(item, label, ink);
         context.PushClip(new RectangleGeometry(bounds));
         context.PushTransform(new RotateTransform(item.Style.Angle, center.X, center.Y));
         if (item.Style.Tiled)

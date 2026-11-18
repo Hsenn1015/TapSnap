@@ -212,7 +212,14 @@ final class PrivacyCaptureTests: XCTestCase {
             $0.privacy[.email] = .review
             $0.privacy.appearance = .init(style: .solid, rgb: 0)
         }
-        let editor = EditController(environment: AppEnvironment(config: config), image: image, scale: 1,
+        var fileRequests = 0
+        let env = AppEnvironment(config: config) { format, directory in
+            fileRequests += 1
+            XCTAssertEqual(format, .png)
+            XCTAssertEqual(directory.path, temp.path)
+            return directory.appendingPathComponent("已复查.png")
+        }
+        let editor = EditController(environment: env, image: image, scale: 1,
                                     style: EditItemStyle(), requiresPrivacyReview: true)
         editor.present()
         defer { editor.close() }
@@ -241,11 +248,13 @@ final class PrivacyCaptureTests: XCTestCase {
         editor.perform(.save)
         XCTAssertTrue(editor.privacy.showsSuggestions)
         XCTAssertEqual(editor.privacySuggestions, findings)
+        XCTAssertEqual(fileRequests, 0)
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: temp.path).allSatisfy { !$0.hasSuffix(".png") })
 
         editor.privacy.showsSuggestions = false
         selectAlertButton("全部打码并保存")
         editor.perform(.save)
+        XCTAssertEqual(fileRequests, 1)
         XCTAssertTrue(editor.privacySuggestions.isEmpty)
         let url = try XCTUnwrap(FileManager.default.contentsOfDirectory(at: temp, includingPropertiesForKeys: nil)
             .first { $0.pathExtension == "png" })

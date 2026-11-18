@@ -52,6 +52,9 @@ internal sealed class TapSnapHost : IDisposable
     private LongShotWindow? longShot;
     private RecordingWindow? recording;
     private RecordingPreview? recent;
+    private EditorWindow.Draft? recentScreenshot;
+    private EditorWindow? recentEditor;
+    private long captureSequence;
     private bool selecting;
     private bool exiting;
 
@@ -92,6 +95,14 @@ internal sealed class TapSnapHost : IDisposable
         Add("全屏截图", () => Capture(Desktop.CursorMonitor));
         Add("截图预设…", ShowPresets);
         Add("延时截图（3 秒）", DelayCapture);
+        Add("编辑最近截图", EditRecentScreenshot);
+        Add("编辑剪贴板图片", () =>
+        {
+            if (Images.ClipboardImage() is { } image) EditImage(image);
+            else if (Clipboard.GetFileDropList() is { Count: > 0 } paths && File.Exists(paths[0])) EditImage(Images.Read(paths[0]!));
+            else Info("剪贴板中没有图片。");
+        });
+        Add("打开图片…", () => { if (Images.OpenImage() is { } image) EditImage(image); });
         Shortcut("clipboardPin");
         Separator();
         Shortcut("longShot");
@@ -198,6 +209,13 @@ internal sealed class TapSnapHost : IDisposable
     private void Complete(Selection shot, CapturePreset? preset = null)
     {
         bool autoPrivacy = RecognitionService.ShouldScanAutomatically;
+        if (shot.Action is not (CaptureAction.LongShot or CaptureAction.Record))
+        {
+            ++captureSequence;
+            recentEditor = null;
+            recentScreenshot = autoPrivacy || shot.Action == CaptureAction.Privacy ? null :
+                new EditorWindow.Draft(shot.Image, shot.CapturedAt, [], null);
+        }
         if (settings.ShutterSound && shot.Action is not (CaptureAction.LongShot or CaptureAction.Record))
             SystemSounds.Asterisk.Play();
         void Recognize(RecognitionMode mode)
@@ -207,22 +225,31 @@ internal sealed class TapSnapHost : IDisposable
                 {
                     CaptureAction.Text => "文字识别", CaptureAction.Barcode => "二维码／条码", CaptureAction.Table => "表格识别",
                     CaptureAction.Translation => "翻译", CaptureAction.Formula => "公式识别", _ => "完成"
-                });
+                }, captureID: captureSequence, capturedAt: shot.CapturedAt);
             else RecognitionService.OpenResult(shot.Image, mode);
         }
         switch (shot.Action)
         {
             case CaptureAction.Edit:
             case CaptureAction.Privacy:
-                OpenEditor(shot.Image, shot.ScreenRegion, shot.Action == CaptureAction.Privacy || autoPrivacy, preset: preset);
+                OpenEditor(shot.Image, shot.ScreenRegion, shot.Action == CaptureAction.Privacy || autoPrivacy, preset: preset,
+                    captureID: captureSequence, capturedAt: shot.CapturedAt);
                 break;
             case CaptureAction.Copy:
-                if (autoPrivacy) OpenEditor(shot.Image, shot.ScreenRegion, true, CopyImage, completionTitle: "复制");
+                if (autoPrivacy) OpenEditor(shot.Image, shot.ScreenRegion, true, CopyImage, completionTitle: "复制",
+                    captureID: captureSequence, capturedAt: shot.CapturedAt);
                 else CopyImage(shot.Image);
                 break;
             case CaptureAction.Pin:
-                if (autoPrivacy) OpenEditor(shot.Image, shot.ScreenRegion, true, pins.Add, completionTitle: "贴图");
+                if (autoPrivacy) OpenEditor(shot.Image, shot.ScreenRegion, true, pins.Add, completionTitle: "贴图",
+                    captureID: captureSequence, capturedAt: shot.CapturedAt);
                 else pins.Add(shot.Image);
+                break;
+            case CaptureAction.Save:
+                if (autoPrivacy || !Images.SaveWithDialog(shot.Image, settings.OutputFolder, preset?.SaveFormat ?? settings.SaveFormat))
+                    OpenEditor(shot.Image, shot.ScreenRegion, autoPrivacy, preset: preset,
+                        completionTitle: autoPrivacy ? "保存…" : null, captureID: captureSequence, capturedAt: shot.CapturedAt,
+                        saveOnConfirm: autoPrivacy);
                 break;
             case CaptureAction.LongShot: StartLongShot(shot.ScreenRegion); break;
             case CaptureAction.Record: StartRecording(shot.ScreenRegion); break;
@@ -234,8 +261,19 @@ internal sealed class TapSnapHost : IDisposable
         }
     }
 
+    private void EditImage(BitmapSource image) => OpenEditor(image, null, RecognitionService.ShouldScanAutomatically);
+
+    private void EditRecentScreenshot()
+    {
+        if (recentScreenshot == null) { Info("还没有可编辑的最近截图。"); return; }
+        if (recentEditor is { IsVisible: true }) { recentEditor.Activate(); return; }
+        OpenEditor(recentScreenshot.Image, null, RecognitionService.ShouldScanAutomatically, captureID: ++captureSequence,
+            capturedAt: recentScreenshot.CapturedAt, restoring: recentScreenshot);
+    }
+
     private void OpenEditor(BitmapSource image, DrawingRect? region, bool scan, Action<BitmapSource>? reviewedOutput = null,
-        CapturePreset? preset = null, string? completionTitle = null, bool longImage = false)
+        CapturePreset? preset = null, string? completionTitle = null, bool longImage = false, long? captureID = null,
+        DateTime? capturedAt = null, EditorWindow.Draft? restoring = null, bool saveOnConfirm = false)
     {
         EditorWindow editor = null!;
         void Transfer(Action<DrawingRect> run, CaptureAction fallback)
@@ -245,19 +283,47 @@ internal sealed class TapSnapHost : IDisposable
                 var crop = editor.PixelCrop;
                 var selected = new DrawingRect(r.X + crop.X, r.Y + crop.Y, crop.Width, crop.Height);
                 editor.Close();
-                _ = app.Dispatcher.BeginInvoke(() => { Desktop.Flush(); Invoke(() => run(selected)); }, DispatcherPriority.Background);
+                _ = app.Dispatcher.BeginInvoke(() =>
+                {
+                    Desktop.Flush();
+                    if (Desktop.Monitors().Any(m => m.Bounds.Contains(selected))) Invoke(() => run(selected));
+                    else Select(fallback);
+                }, DispatcherPriority.Background);
             }
             else { editor.Close(); Select(fallback); }
         }
         editor = new EditorWindow(image, i => Invoke(() => CopyImage(i)),
-            i => Invoke(() => { if (Images.SaveWithDialog(i)) toast.Show("已保存"); }),
+            i => Invoke(() => { if (Images.SaveWithDialog(i, settings.OutputFolder, preset?.SaveFormat ?? settings.SaveFormat)) toast.Show("已保存"); }),
             i => Invoke(() => pins.Add(i)), () => Transfer(StartLongShot, CaptureAction.LongShot),
             () => Transfer(StartRecording, CaptureAction.Record), i => Scan(editor, i), settings.DarkTheme,
             settings.DefaultLineWidth, settings.DefaultFontSize, settings.DefaultMosaicBlockSize, settings.AutoMosaicFaces);
+        editor.CapturedAt = capturedAt ?? DateTime.Now;
+        if (restoring != null) editor.RestoreDraft(restoring);
+        if (captureID.HasValue)
+        {
+            bool protectedDraft = scan;
+            recentEditor = editor;
+            editor.ProtectOriginal += () =>
+            {
+                protectedDraft = true;
+                if (captureID == captureSequence) { recentScreenshot = null; recentEditor = null; }
+            };
+            editor.ReviewedOutput += output =>
+            {
+                if (captureID == captureSequence && protectedDraft)
+                    recentScreenshot = new EditorWindow.Draft(output, editor.CapturedAt, [], null);
+            };
+            editor.Closing += (_, _) =>
+            {
+                if (captureID == captureSequence && !protectedDraft) recentScreenshot = editor.SaveDraft();
+                if (recentEditor == editor) recentEditor = null;
+            };
+        }
         editor.SetCompletionAction(output =>
         {
             try
             {
+                if (saveOnConfirm) return Images.SaveWithDialog(output, settings.OutputFolder, preset?.SaveFormat ?? settings.SaveFormat);
                 if (reviewedOutput is not null) reviewedOutput(output);
                 else if (settings.CopyAfterConfirm) Images.Copy(output);
                 if (reviewedOutput is null && (preset?.AutoSave ?? settings.SaveAfterConfirm))
@@ -273,6 +339,12 @@ internal sealed class TapSnapHost : IDisposable
             catch (Exception error) { Info(error.Message, error: true); return false; }
         }, completionTitle);
         if (region is { } source) editor.AnchorToCapture(source, scan);
+        editor.RegisterOutput("导出…", i => ImageOutputWindow.Export(editor, i, settings.OutputFolder, preset?.SaveFormat ?? settings.SaveFormat));
+        editor.RegisterOutput("追加一张图片…", i =>
+        {
+            if (Images.OpenImage() is { } second && ImageOutputWindow.Combine(editor, i, second) is { } combined)
+                OpenEditor(combined, null, scan || editor.LocalScanCompleted || RecognitionService.ShouldScanAutomatically);
+        });
         foreach (var (title, kind) in new[]
         {
             ("文字识别", RecognitionMode.Text), ("二维码／条码", RecognitionMode.Barcode),
@@ -304,18 +376,27 @@ internal sealed class TapSnapHost : IDisposable
         if (privacyScans.TryGetValue(editor, out var pending)) pending.Cancel();
     }
 
-    private void Scan(EditorWindow editor, BitmapSource image) =>
+    private void Scan(EditorWindow editor, BitmapSource image)
+    {
+        if (privacyScans.ContainsKey(editor)) return;
+        editor.BeginPrivacyReview();
         RunPrivacyScan(editor, "隐私扫描失败", async (update, token) =>
         {
             update.Report("正在扫描图片…");
             var matches = await RecognitionService.ScanPrivacyAsync(image, token);
             ApplyPrivacyMatches(editor, matches, 0, 0);
+            if (!token.IsCancellationRequested) editor.LocalScanCompleted = true;
         });
+    }
 
-    private void ScanAi(EditorWindow editor, BitmapSource image, Int32Rect crop, bool visual) =>
+    private void ScanAi(EditorWindow editor, BitmapSource image, Int32Rect crop, bool visual)
+    {
+        if (privacyScans.ContainsKey(editor)) return;
+        editor.BeginPrivacyReview(startsLocalScan: false);
         RunPrivacyScan(editor, "AI 补查失败", (update, token) =>
             RecognitionService.ScanPrivacyWithAiAsync(image, visual, editor,
                 matches => ApplyPrivacyMatches(editor, matches, crop.X, crop.Y), update, token));
+    }
 
     private async void RunPrivacyScan(EditorWindow editor, string title, Func<IProgress<string>, CancellationToken, Task> run)
     {
@@ -397,7 +478,7 @@ internal sealed class TapSnapHost : IDisposable
     private void ToggleHistory()
     {
         if (clipboardWindow != null) { clipboardWindow.Close(); return; }
-        clipboardWindow = new ClipboardHistoryWindow(history, settings.DarkTheme);
+        clipboardWindow = new ClipboardHistoryWindow(history, EditImage, settings.DarkTheme);
         clipboardWindow.Closed += (_, _) => clipboardWindow = null;
         clipboardWindow.Show();
     }

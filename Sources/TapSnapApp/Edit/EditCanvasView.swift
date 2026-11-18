@@ -28,6 +28,11 @@ struct EditCanvasView: View {
         let theme: Theme = config.settings.appearance.useDarkTheme ? .dark : .light
         GeometryReader { proxy in
             VStack(spacing: 0) {
+                if controller.isCropping {
+                    Picker("裁剪比例", selection: $controller.cropAspect) {
+                        ForEach(EditController.CropAspect.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }.pickerStyle(.menu).fixedSize().padding(.vertical, 3)
+                }
                 if privacy.phase != .idle {
                     PrivacyStatusView(controller: controller, privacy: privacy, theme: theme, locate: { rect in
                         controller.onLocatePrivacyFinding?(rect)
@@ -49,11 +54,15 @@ struct EditCanvasView: View {
         }
         .background(Self.chromeColor(for: theme).color)
         .onChange(of: theme.isDark) { _, _ in controller.updateWindowAppearance() }
+        .sheet(item: $controller.imageOutput) { request in
+            EditorImageOutputView(controller: controller, request: request)
+        }
     }
 
     private func toolbar(_ theme: Theme, width: CGFloat) -> some View {
         ActionsBarView(
             theme: theme,
+            model: ActionsBarModel(overflow: [.exportImage, .combineImages] + ActionsBarModel.defaultOverflow),
             selectedTool: controller.activeItemKind.flatMap(EditItemFactory.action(for:)) ?? controller.selectedTool,
             canUndo: controller.canUndo,
             canRedo: controller.canRedo,
@@ -485,7 +494,8 @@ final class EditItemLayerView: NSView {
             }
             controller.noteDocumentChanged()
         case .cropping(let start):
-            let rect = Self.rect(from: start, to: point)
+            let area = Self.rect(from: start, to: point).intersection(CGRect(origin: .zero, size: controller.document.canvasSize))
+            let rect = area.isEmpty ? .zero : controller.cropAspect.fit(area, anchoredAt: start)
             controller.updateCropRect(rect.width > 4 && rect.height > 4 ? rect : nil)
         case .erasing:
             erase(at: point)

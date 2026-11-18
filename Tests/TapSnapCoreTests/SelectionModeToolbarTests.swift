@@ -159,6 +159,8 @@ final class SelectionModeToolbarTests: XCTestCase {
         window.contentView = view
         view.onQuickAction = { _, _ in XCTFail("悬停不能触发快捷操作") }
         view.quickToolbarToolTip = { $0 == .record ? "录制 ⇧⌘R" : $0.title }
+        // 此用例直接向视图发送悬停事件，避免实体鼠标的进出事件覆盖测试位置。
+        window.ignoresMouseEvents = true
         window.orderFrontRegardless()
         defer { window.orderOut(nil) }
         try drag(view, from: CGPoint(x: 100, y: 160), to: CGPoint(x: 460, y: 360))

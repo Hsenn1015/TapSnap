@@ -71,6 +71,10 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
         menu.addItem(menuItem("延时截图（3 秒）", action: #selector(startDelayedCapture), key: ""))
         menu.addItem(shortcutMenuItem("贴图（剪贴板）", action: #selector(pinFromClipboard), shortcut: .pinFromClipboard))
         menu.addItem(.separator())
+        menu.addItem(menuItem("编辑最近截图", action: #selector(editRecentScreenshot)))
+        menu.addItem(menuItem("编辑剪贴板图片", action: #selector(editClipboardImage)))
+        menu.addItem(menuItem("打开图片…", action: #selector(editImageFile)))
+        menu.addItem(.separator())
         menu.addItem(shortcutMenuItem("长截图", action: #selector(startLongShot), shortcut: .longShot))
         menu.addItem(shortcutMenuItem("屏幕录制", action: #selector(startRecording), shortcut: .recordScreen))
         menu.addItem(menuItem("最近录制…", action: #selector(showLastRecording), key: ""))
@@ -105,6 +109,7 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(editRecentScreenshot) { return environment.recentScreenshot != nil }
         if menuItem.action == #selector(checkForUpdates) { return updater?.canCheckForUpdates == true }
         return true
     }
@@ -194,6 +199,9 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
     }
 
     @objc private func startPrivacyCapture() { environment.captureCoordinator.start(.edit, forcePrivacy: true) }
+    @objc private func editRecentScreenshot() { environment.editRecentScreenshot() }
+    @objc private func editClipboardImage() { environment.editClipboardImage() }
+    @objc private func editImageFile() { environment.editImageFile() }
     @objc private func startWindowCapture() { environment.captureCoordinator.start(.edit, mode: .window) }
     @objc private func startFullScreenCapture() { environment.captureCoordinator.start(.edit, mode: .fullScreen) }
     @objc private func showScreenshotPresets() { environment.screenshotPresets.show() }

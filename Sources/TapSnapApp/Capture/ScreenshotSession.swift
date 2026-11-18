@@ -57,6 +57,11 @@ struct ScreenshotSession {
         frames.first { $0.screen.id == screen.id }
     }
 
+    var outputScale: CGFloat {
+        guard let rect = selectionRect else { return targetScreen?.scale ?? 1 }
+        return frames.filter { !$0.screen.frame.intersection(rect).isEmpty }.map(\.screen.scale).max() ?? 1
+    }
+
     /// 三种捕获方式共用框选结果；视图左下坐标转换成屏幕全局左上坐标。
     mutating func select(viewRect: CGRect, on screen: ScreenDescriptor) {
         let flipped = viewRect.flippedVertically(in: CGRect(origin: .zero, size: screen.frame.size))
@@ -71,9 +76,25 @@ struct ScreenshotSession {
               let frame = frame(for: screen)
         else { return nil }
 
-        let localRect = Geometry.localRect(rect, in: screen.frame)
-        let snapped = localRect.snapped(to: screen.scale)
-        return ImageCrop.crop(frame.image, to: snapped, scale: screen.scale)
+        if screen.frame.contains(rect) || frames.count == 1 {
+            let local = Geometry.localRect(rect, in: screen.frame).snapped(to: screen.scale)
+            return ImageCrop.crop(frame.image, to: local, scale: screen.scale)
+        }
+        let scale = outputScale
+        let width = Int((rect.width * scale).rounded()), height = Int((rect.height * scale).rounded())
+        guard width > 0, height > 0,
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        // Every display uses the same destination grid, including displays above or left of the primary.
+        context.clear(CGRect(x: 0, y: 0, width: width, height: height))
+        for frame in frames where !frame.screen.frame.intersection(rect).isEmpty {
+            let bounds = frame.screen.frame
+            let x = ((bounds.minX - rect.minX) * scale).rounded()
+            let y = ((rect.maxY - bounds.maxY) * scale).rounded()
+            context.draw(frame.image, in: CGRect(x: x, y: y, width: bounds.width * scale, height: bounds.height * scale))
+        }
+        return context.makeImage()
     }
 }
 

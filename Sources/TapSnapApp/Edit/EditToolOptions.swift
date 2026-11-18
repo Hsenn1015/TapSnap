@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import TapSnapPrivacy
 
@@ -10,6 +11,10 @@ struct EditToolOptions: Equatable {
     var serialFormat: SerialItem.Format = .numeric
     var magnifierZoom: CGFloat = 2
     var watermarkText = "TapSnap"
+    var watermarkKind: WatermarkItem.Content = .text
+    var watermarkIncludesTime = true
+    var watermarkImage: CGImage?
+    var captureDate = Date.distantPast
     var watermarkAngle: Double = -30
     var watermarkTiled = true
     var privacyAppearance = PrivacyMaskAppearance()
@@ -25,6 +30,9 @@ struct EditToolOptions: Equatable {
         if let item = item as? MagnifierItem { magnifierZoom = item.zoom }
         if let item = item as? PrivacyMaskItem { privacyAppearance = item.appearance }
         if let item = item as? WatermarkItem {
+            watermarkKind = item.content
+            watermarkIncludesTime = item.includesTime
+            watermarkImage = item.logo
             watermarkText = item.text
             watermarkAngle = item.angle
             watermarkTiled = item.isTiled
@@ -42,6 +50,9 @@ struct EditToolOptions: Equatable {
         if let item = item as? MagnifierItem { item.zoom = magnifierZoom }
         if let item = item as? PrivacyMaskItem { item.appearance = privacyAppearance }
         if let item = item as? WatermarkItem {
+            item.content = watermarkKind
+            item.includesTime = watermarkIncludesTime
+            item.logo = watermarkImage
             item.text = watermarkText
             item.angle = watermarkAngle
             item.isTiled = watermarkTiled

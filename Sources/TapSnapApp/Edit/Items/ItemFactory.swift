@@ -44,12 +44,16 @@ enum EditItemFactory {
         case .magnifier:
             return MagnifierItem(bounds: CGRect(origin: start, size: CGSize(width: 100, height: 100)), style: style, zoom: options.magnifierZoom)
         case .watermark:
+            guard options.watermarkKind != .image || options.watermarkImage != nil else { return nil }
             let dragged = CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
                                  width: abs(end.x - start.x), height: abs(end.y - start.y))
             let bounds = dragged.width > 4 && dragged.height > 4
                 ? dragged : CGRect(origin: start, size: CGSize(width: 200, height: 60))
-            return WatermarkItem(text: options.watermarkText, bounds: bounds, style: style,
-                                 angle: options.watermarkAngle, isTiled: options.watermarkTiled)
+            let item = WatermarkItem(text: options.watermarkText, bounds: bounds, style: style,
+                                     angle: options.watermarkAngle, isTiled: options.watermarkTiled,
+                                     capturedAt: options.captureDate)
+            options.apply(to: item)
+            return item
         case .pathTag:
             return PathTagItem(points: [start, end], style: style)
         case .polygon:

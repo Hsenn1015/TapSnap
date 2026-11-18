@@ -164,6 +164,8 @@ final class PrivacyMaskItem: EditItem {
 
 /// 保存标注图元、底图和裁剪范围的文档。
 final class EditDocument {
+    let id = UUID()
+    let capturedAt: Date
     let baseImage: CGImage
     let scale: CGFloat
     private(set) var items: [any EditItem]
@@ -172,7 +174,8 @@ final class EditDocument {
     /// 裁剪框（画布坐标），nil 表示不裁剪。
     var cropRect: CGRect?
 
-    init(baseImage: CGImage, scale: CGFloat = 1, items: [any EditItem] = []) {
+    init(baseImage: CGImage, scale: CGFloat = 1, items: [any EditItem] = [], capturedAt: Date = Date()) {
+        self.capturedAt = capturedAt
         self.baseImage = baseImage
         self.scale = scale
         self.items = items

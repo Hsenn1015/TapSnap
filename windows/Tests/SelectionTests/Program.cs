@@ -9,7 +9,17 @@ Check(SelectionGeometry.Create(new(-1400, 260), new(-1900, 10), leftMonitor) == 
 Check(SelectionGeometry.OffsetToImage(selected, leftMonitor) == new Rectangle(660, 190, 500, 250),
     "左侧扩展屏负坐标转换成抓屏像素");
 Check(SelectionGeometry.Create(new(-45, 360), new(700, 260), leftMonitor) == new Rectangle(-45, 260, 45, 100),
-    "越过屏幕边界时选区保持在起始显示器");
+    "限定单屏的滚动截图和录屏保留屏幕内选区");
+var desktop = Rectangle.Union(leftMonitor, rightMonitor);
+var across = Rectangle.FromLTRB(-45, 260, 700, 360);
+Check(SelectionGeometry.Create(new(-45, 360), new(700, 260), desktop) == across &&
+      SelectionGeometry.Create(new(700, 260), new(-45, 360), desktop) == across, "左右屏双向拖动得到同一物理像素选区");
+var above = new Rectangle(300, -1440, 2560, 1440);
+var vertical = Rectangle.Union(above, rightMonitor);
+Check(SelectionGeometry.Create(new(400, -80), new(520, 100), vertical) == Rectangle.FromLTRB(400, -80, 520, 100),
+    "从上屏拖到下屏保留接缝两侧的像素");
+Check(SelectionGeometry.Move(across, desktop, -650, 15).Width == across.Width &&
+      SelectionGeometry.Resize(across, desktop, 7, -70, 0).Left == -115, "跨屏选区可继续移动和调整边缘");
 Check(SelectionGeometry.Create(new(12, 13), new(12, 13), rightMonitor) is null,
     "单击不创建占位选区");
 Check(SelectionGeometry.Move(selected, leftMonitor, -1000, -1000) == new Rectangle(-2560, -180, 500, 250),

@@ -21,6 +21,17 @@ final class ClipboardHistory: ObservableObject {
         }
     }
 
+    enum Filter: String, CaseIterable {
+        case all = "全部", images = "图片", text = "文字"
+
+        func includes(_ entry: Entry) -> Bool {
+            switch (self, entry.content) {
+            case (.all, _), (.images, .image), (.text, .text): return true
+            default: return false
+            }
+        }
+    }
+
     private struct SavedEntry: Codable {
         let id: UUID
         let date: Date

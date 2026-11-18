@@ -8,6 +8,24 @@ namespace TapSnap.Windows;
 
 internal static class Images
 {
+    public static BitmapSource? ClipboardImage()
+    {
+        if (Clipboard.GetData("PNG") is MemoryStream png)
+        {
+            try { png.Position = 0; return Decode(png); }
+            catch (Exception error) when (error is IOException or NotSupportedException or ArgumentException) { }
+        }
+        return Clipboard.GetImage();
+    }
+
+    public static BitmapSource? OpenImage(bool pngOnly = false)
+    {
+        var dialog = new OpenFileDialog { Filter = pngOnly ? "PNG 图片|*.png" :
+            "图片|*.png;*.jpg;*.jpeg;*.webp;*.avif;*.heic;*.tif;*.tiff;*.bmp;*.gif" };
+        if (dialog.ShowDialog() != true) return null;
+        try { return Read(dialog.FileName); }
+        catch (Exception error) { MessageBox.Show(error.Message, "无法打开图片"); return null; }
+    }
     public static void Copy(BitmapSource image)
     {
         var data = new DataObject();
@@ -18,7 +36,7 @@ internal static class Images
         Clipboard.SetDataObject(data, true);
     }
 
-    public static bool SaveWithDialog(BitmapSource image)
+    public static bool SaveWithDialog(BitmapSource image, string? directory = null, string format = "png")
     {
         var picker = new SaveFileDialog
         {
@@ -26,6 +44,8 @@ internal static class Images
             Filter = "PNG 图片|*.png|JPEG 图片|*.jpg|WebP 图片|*.webp|AVIF 图片|*.avif|HEIC 图片|*.heic|TIFF 图片|*.tiff|BMP 图片|*.bmp|GIF 图片|*.gif",
             AddExtension = true
         };
+        picker.FilterIndex = Math.Max(1, Array.IndexOf(Settings.SaveFormats, format) + 1);
+        if (Directory.Exists(directory)) picker.InitialDirectory = directory;
         if (picker.ShowDialog() != true) return false;
         try { Save(image, picker.FileName); return true; }
         catch (NotSupportedException ex)

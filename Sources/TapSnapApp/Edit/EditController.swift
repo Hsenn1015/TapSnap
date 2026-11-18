@@ -3,6 +3,7 @@ import Combine
 import Foundation
 import TapSnapActionsBar
 import TapSnapCore
+import TapSnapImageIO
 import TapSnapOCR
 import TapSnapPalette
 import TapSnapPrivacy
@@ -24,6 +25,7 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
     @Published var canRedo = false
     /// 文档内容每变一次就 +1，画布靠它刷新（`EditDocument` 是引用类型，自己不会发通知）。
     @Published private(set) var revision = 0
+    @Published var imageOutput: EditorImageOutput?
     @Published private(set) var textEditingItem: TextItem?
     /// 由画布输入框提交输入法组合文字后结束编辑。
     var onFinishTextEditing: ((Bool) -> Void)?
@@ -55,6 +57,7 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
     private let outputOptions: ScreenshotOutputOptions?
     private let scanPrivacyOnOpen: Bool
     private let requiresPrivacyReview: Bool
+    private var manuallyReviewedOutput = false
     let reviewedAction: ActionKind?
     private var syncingAppearance = false
     private var styleAdjustment: (item: any EditItem, original: AppearanceState)?
@@ -63,12 +66,15 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
     init(environment: AppEnvironment, image: CGImage, scale: CGFloat, style: EditItemStyle,
          captureRect: CGRect? = nil, captureScreen: ScreenDescriptor? = nil,
          outputOptions: ScreenshotOutputOptions? = nil, scanPrivacyOnOpen: Bool = false,
-         requiresPrivacyReview: Bool = false, reviewedAction: ActionKind? = nil, scrollsLongImage: Bool = false) {
+         requiresPrivacyReview: Bool = false, reviewedAction: ActionKind? = nil, scrollsLongImage: Bool = false,
+         restoring document: EditDocument? = nil) {
         self.environment = environment
         self.scrollsLongImage = scrollsLongImage
-        self.document = EditDocument(baseImage: image, scale: scale)
+        let document = document ?? EditDocument(baseImage: image, scale: scale)
+        self.document = document
         self.style = style
         var options = EditToolOptions()
+        options.captureDate = document.capturedAt
         options.mosaicBlockSize = environment.config.settings.annotate.mosaicBlockSize
         options.magnifierZoom = environment.config.settings.annotate.magnifierZoom
         options.privacyAppearance = environment.config.settings.privacy.appearance
@@ -101,6 +107,11 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
             guard let self, event.window === self.window else { return event }
             return self.handleKeyEvent(event) ? nil : event
         }
+    }
+
+    func bringForward() {
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     func makeWindow() -> NSWindow {
@@ -230,7 +241,7 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     func close() {
-        requestFinishTextEditing(commit: false)
+        requestFinishTextEditing()
         privacy.cancel()
         cancelMosaicDetection()
         removeKeyMonitor()
@@ -239,7 +250,7 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        requestFinishTextEditing(commit: false)
+        requestFinishTextEditing()
         privacy.cancel()
         cancelMosaicDetection()
         removeKeyMonitor()
@@ -259,6 +270,7 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
 
     /// 画布上画完一笔后调用：文字要补输入，其余直接入栈。
     func add(_ item: any EditItem) {
+        if item.privacyMask != nil { environment.protectOriginal(document) }
         if let text = item as? TextItem {
             beginTextEditing(text, isNew: true)
             return
@@ -455,11 +467,35 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
 
     /// 裁剪模式：画布上拖出一个框，按 ⏎ 应用、⎋ 退出。
     @Published private(set) var isCropping = false
+    enum CropAspect: String, CaseIterable {
+        case free = "自由", square = "1:1", classic = "4:3", wide = "16:9", portrait = "9:16"
+
+        func fit(_ bounds: CGRect, anchoredAt point: CGPoint? = nil) -> CGRect {
+            let ratio: CGFloat
+            switch self {
+            case .free: return bounds
+            case .square: ratio = 1
+            case .classic: ratio = 4 / 3
+            case .wide: ratio = 16 / 9
+            case .portrait: ratio = 9 / 16
+            }
+            let width = min(bounds.width, bounds.height * ratio), height = width / ratio
+            let x = point.map { $0.x <= bounds.midX ? bounds.minX : bounds.maxX - width } ?? (bounds.midX - width / 2)
+            let y = point.map { $0.y <= bounds.midY ? bounds.minY : bounds.maxY - height } ?? (bounds.midY - height / 2)
+            return CGRect(x: x, y: y, width: width, height: height)
+        }
+    }
+    @Published var cropAspect: CropAspect = .free {
+        didSet {
+            guard cropAspect != .free, isCropping else { return }
+            updateCropRect(cropAspect.fit(document.cropRect ?? CGRect(origin: .zero, size: document.canvasSize)))
+        }
+    }
 
     func toggleCrop() {
         isCropping.toggle()
         if isCropping {
-            document.cropRect = nil
+            document.cropRect = cropAspect == .free ? nil : cropAspect.fit(CGRect(origin: .zero, size: document.canvasSize))
             selectedTool = nil
         }
         revision += 1
@@ -617,6 +653,7 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
         let settings = environment.config.settings.capture
         let autoCopy = settings.autoCopyToClipboard
         let autoSave = outputOptions?.autoSave ?? settings.autoSaveToFile
+        defer { manuallyReviewedOutput = false }
         if effectiveAction.exportsImage {
             guard outputReady() else { return }
             let title = effectiveAction == .confirm
@@ -644,7 +681,16 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
         case .copy:
             if copyToPasteboard(), action == .confirm { close() }
         case .save:
-            if save(), action == .confirm { close() }
+            if save(chooseLocation: true), action == .confirm { close() }
+        case .exportImage:
+            if let image = renderedImage() { imageOutput = .export(image) }
+        case .combineImages:
+            guard let first = renderedImage() else { return }
+            let picker = NSOpenPanel()
+            picker.allowedContentTypes = [.image]
+            guard picker.runModal() == .OK, let url = picker.url else { return }
+            do { imageOutput = .combine(first, try ImageCodec.decode(Data(contentsOf: url))) }
+            catch { environment.toast.error("图片读取失败：\(error.localizedDescription)") }
         case .print:
             printImage()
         case .pin:
@@ -669,6 +715,11 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
                                                             forcePrivacy: action == .longShot && privacy.phase != .idle)
         default: break
         }
+    }
+
+    func editCombinedImage(_ image: CGImage) {
+        imageOutput = nil
+        environment.openEditor(image: image, scale: 1, forcePrivacy: requiresPrivacyReview || privacy.phase != .idle)
     }
 
     /// 两套坐标都以左上角为原点；按原始选区比例映射，兼容缩放后的编辑图。
@@ -707,6 +758,7 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     private func startPrivacyScan(_ modelScan: PrivacyEditing.ModelScan? = nil) {
+        environment.protectOriginal(document)
         if privacy.phase == .idle, captureRect != nil, let window, let visible = window.screen?.visibleFrame {
             // Make room above the canvas when the status row first appears.
             var frame = window.frame
@@ -799,6 +851,7 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
             return false
         }
         applyAllPrivacySuggestions()
+        manuallyReviewedOutput = true
         return true
     }
 
@@ -806,7 +859,14 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
         guard outputReady() else { return nil }
         guard !requiresPrivacyReview || privacySuggestions.isEmpty else { return nil }
         requestFinishTextEditing()
-        do { return try document.render() }
+        do {
+            let image = try document.render()
+            if manuallyReviewedOutput || (privacy.hasCompletedLocalScan && privacySuggestions.isEmpty) ||
+                (privacy.phase == .idle && !document.privacyPixelBounds.isEmpty) {
+                environment.rememberReviewedImage(image, from: document)
+            }
+            return image
+        }
         catch { environment.toast.error("渲染失败：\(error.localizedDescription)"); return nil }
     }
 
@@ -817,9 +877,9 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     @discardableResult
-    private func save() -> Bool {
+    private func save(chooseLocation: Bool = false) -> Bool {
         guard let image = renderedImage() else { return false }
-        return environment.saveScreenshot(image, formatOverride: outputOptions?.format)
+        return environment.saveScreenshot(image, formatOverride: outputOptions?.format, chooseLocation: chooseLocation)
     }
 
     /// 打印当前合成结果。

@@ -1,11 +1,13 @@
 import AppKit
 import TapSnapActionsBar
 import TapSnapCore
+import TapSnapImageIO
 import TapSnapPalette
 import TapSnapPrivacy
 import TapSnapTheme
 import TapSnapUI
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// 从对应的标注工具打开。
 struct EditStylePanel: View {
@@ -215,14 +217,36 @@ struct EditStylePanel: View {
                 }
             }
         case .watermark:
-            TextField("水印文字", text: $controller.toolOptions.watermarkText)
-                .textFieldStyle(.roundedBorder)
-            sizeSlider("字号", value: $controller.style.fontSize, in: 8...96)
-            HStack {
-                Text("角度 \(Int(controller.toolOptions.watermarkAngle))°")
-                Slider(value: $controller.toolOptions.watermarkAngle, in: -90...90, step: 5)
+            Picker("水印内容", selection: $controller.toolOptions.watermarkKind) {
+                Text("文字").tag(WatermarkItem.Content.text)
+                Text("时间").tag(WatermarkItem.Content.timestamp)
+                Text("图片").tag(WatermarkItem.Content.image)
+            }.pickerStyle(.segmented)
+            if controller.toolOptions.watermarkKind == .image {
+                Button(controller.toolOptions.watermarkImage == nil ? "选择 PNG 图片…" : "更换 PNG 图片…") {
+                    let panel = NSOpenPanel()
+                    panel.allowedContentTypes = [.png]
+                    guard panel.runModal() == .OK, let url = panel.url else { return }
+                    do { controller.toolOptions.watermarkImage = try ImageCodec.decode(Data(contentsOf: url)) }
+                    catch { NSAlert(error: error).runModal() }
+                }
+            } else {
+                if controller.toolOptions.watermarkKind == .text {
+                    TextField("水印文字", text: $controller.toolOptions.watermarkText)
+                        .textFieldStyle(.roundedBorder)
+                } else {
+                    Picker("时间格式", selection: $controller.toolOptions.watermarkIncludesTime) {
+                        Text("日期和时间").tag(true)
+                        Text("仅日期").tag(false)
+                    }
+                }
+                sizeSlider("字号", value: $controller.style.fontSize, in: 8...96)
+                HStack {
+                    Text("角度 \(Int(controller.toolOptions.watermarkAngle))°")
+                    Slider(value: $controller.toolOptions.watermarkAngle, in: -90...90, step: 5)
+                }
+                Toggle("平铺水印", isOn: $controller.toolOptions.watermarkTiled)
             }
-            Toggle("平铺水印", isOn: $controller.toolOptions.watermarkTiled)
             Text("单击添加，或拖动设置水印覆盖范围。")
                 .font(.system(size: 11)).foregroundStyle(theme.token(.mutedForeground))
         default:

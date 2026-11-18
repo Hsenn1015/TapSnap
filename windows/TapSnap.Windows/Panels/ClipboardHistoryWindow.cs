@@ -86,7 +86,7 @@ internal sealed class ClipboardHistory : IDisposable
         {
             var id = Guid.NewGuid();
             ClipboardEntry? entry = null;
-            if (Clipboard.GetImage() is { } image && (long)image.PixelWidth * image.PixelHeight <= 32_000_000)
+            if (Images.ClipboardImage() is { } image && (long)image.PixelWidth * image.PixelHeight <= 32_000_000)
             {
                 Directory.CreateDirectory(folder);
                 string name = id + ".png";
@@ -139,10 +139,14 @@ internal sealed class ClipboardHistoryWindow : Window
     private readonly StackPanel rows = new();
     private readonly TextBlock count = new() { FontSize = 11, VerticalAlignment = VerticalAlignment.Center };
     private readonly Button clear;
+    private readonly Action<BitmapSource> editImage;
+    private readonly ComboBox filter = new() { ItemsSource = new[] { "全部", "图片", "文字" },
+        SelectedIndex = 0, Margin = new Thickness(9, 5, 9, 3) };
 
-    public ClipboardHistoryWindow(ClipboardHistory history, bool dark = false)
+    public ClipboardHistoryWindow(ClipboardHistory history, Action<BitmapSource> editImage, bool dark = false)
     {
         this.history = history;
+        this.editImage = editImage;
         palette = SnapPalette.For(dark);
         Foreground = palette.Foreground;
         Title = "剪贴板历史";
@@ -187,6 +191,10 @@ internal sealed class ClipboardHistoryWindow : Window
         header.Children.Add(grip);
         DockPanel.SetDock(header, Dock.Top);
         layout.Children.Add(header);
+        AutomationProperties.SetName(filter, "剪贴板分类");
+        DockPanel.SetDock(filter, Dock.Top);
+        layout.Children.Add(filter);
+        filter.SelectionChanged += (_, _) => Refresh();
 
         var footer = new DockPanel { Height = 34, Margin = new Thickness(13, 0, 13, 0) };
         var capacity = new TextBlock { Text = "最多 50 条", FontSize = 11,
@@ -283,11 +291,13 @@ internal sealed class ClipboardHistoryWindow : Window
 
     private void Refresh()
     {
-        count.Text = history.Entries.Count.ToString();
+        var visible = history.Entries.Where(e => filter.SelectedIndex switch
+            { 1 => e.ImagePath != null, 2 => e.ImagePath == null, _ => true }).ToList();
+        count.Text = visible.Count.ToString();
         AutomationProperties.SetName(count, $"{count.Text} 条记录");
         clear.IsEnabled = history.Entries.Count > 0;
         rows.Children.Clear();
-        if (history.Entries.Count == 0)
+        if (visible.Count == 0)
         {
             var empty = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(10, 120, 10, 0) };
             empty.Children.Add(GlyphTile("clipboard", palette.Muted));
@@ -298,7 +308,7 @@ internal sealed class ClipboardHistoryWindow : Window
                 HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 5, 0, 0) });
             rows.Children.Add(empty);
         }
-        foreach (var entry in history.Entries)
+        foreach (var entry in visible)
         {
             var row = new DockPanel { Margin = new Thickness(7), MinHeight = 29, LastChildFill = true };
             var stamp = new TextBlock { Text = entry.Date.ToString("HH:mm:ss"), FontSize = 10, Foreground = palette.Muted,
@@ -328,7 +338,21 @@ internal sealed class ClipboardHistoryWindow : Window
             };
             AutomationProperties.SetHelpText(button, "复制这条记录");
             button.Click += (_, _) => { history.Activate(entry); Close(); };
-            rows.Children.Add(button);
+            var actions = new DockPanel();
+            if (entry.ImagePath != null)
+            {
+                var edit = new Button { Content = "编辑", VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(2, 0, 6, 0), ToolTip = "编辑这张图片" };
+                edit.Click += (_, _) =>
+                {
+                    try { var image = history.Image(entry); Close(); editImage(image); }
+                    catch (Exception error) { MessageBox.Show(error.Message, "无法打开图片"); }
+                };
+                DockPanel.SetDock(edit, Dock.Right);
+                actions.Children.Add(edit);
+            }
+            actions.Children.Add(button);
+            rows.Children.Add(actions);
         }
     }
 }

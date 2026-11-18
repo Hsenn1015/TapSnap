@@ -18,9 +18,7 @@ final class PinTransfer {
     func pinFromPasteboard() {
         let pasteboard = NSPasteboard.general
 
-        guard let data = imageData(from: pasteboard),
-              let image = try? ImageCodec.decode(data)
-        else {
+        guard let image = image(from: pasteboard) else {
             environment.toast.warning("剪贴板里没有图片")
             return
         }
@@ -55,11 +53,13 @@ final class PinTransfer {
         pasteboard.setString(text, forType: .string)
     }
 
-    private func imageData(from pasteboard: NSPasteboard) -> Data? {
-        if let data = pasteboard.data(forType: .png) { return data }
-        if let data = pasteboard.data(forType: .tiff) { return data }
-        if let urls = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL] {
-            return urls.first.flatMap { try? Data(contentsOf: $0) }
+    func image(from pasteboard: NSPasteboard) -> CGImage? {
+        for type in [NSPasteboard.PasteboardType.png, .tiff] {
+            if let data = pasteboard.data(forType: type), let image = try? ImageCodec.decode(data) { return image }
+        }
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL],
+           let url = urls.first, url.isFileURL, let data = try? Data(contentsOf: url) {
+            return try? ImageCodec.decode(data)
         }
         return nil
     }

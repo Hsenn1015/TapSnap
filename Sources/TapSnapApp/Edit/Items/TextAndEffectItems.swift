@@ -464,6 +464,7 @@ final class MagnifierItem: EditItem {
 ///
 /// 在选定区域内支持旋转、透明度、居中或平铺。
 final class WatermarkItem: EditItem {
+    enum Content { case text, timestamp, image }
     let id = UUID()
     let kind: EditItemKind = .watermark
     var style: EditItemStyle
@@ -471,8 +472,22 @@ final class WatermarkItem: EditItem {
     var text: String
     var angle: Double
     var isTiled: Bool
+    var content: Content = .text
+    var logo: CGImage?
+    var includesTime = true
+    let capturedAt: Date
 
-    init(text: String, bounds: CGRect, style: EditItemStyle = EditItemStyle(), angle: Double = -30, isTiled: Bool = true) {
+    var displayText: String {
+        guard content == .timestamp else { return text }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = includesTime ? "yyyy-MM-dd HH:mm:ss" : "yyyy-MM-dd"
+        return formatter.string(from: capturedAt)
+    }
+
+    init(text: String, bounds: CGRect, style: EditItemStyle = EditItemStyle(), angle: Double = -30, isTiled: Bool = true,
+         capturedAt: Date = Date()) {
+        self.capturedAt = capturedAt
         self.text = text
         self.bounds = bounds
         self.style = style
@@ -481,9 +496,24 @@ final class WatermarkItem: EditItem {
     }
 
     func draw(in context: CGContext, scale: CGFloat) {
-        guard !text.isEmpty, bounds.width > 0, bounds.height > 0 else { return }
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        if content == .image {
+            guard let logo else { return }
+            let factor = min(bounds.width / CGFloat(logo.width), bounds.height / CGFloat(logo.height))
+            let size = CGSize(width: CGFloat(logo.width) * factor, height: CGFloat(logo.height) * factor)
+            context.saveGState()
+            context.translateBy(x: bounds.midX, y: bounds.midY)
+            context.scaleBy(x: 1, y: -1)
+            context.setAlpha(style.opacity)
+            context.interpolationQuality = .high
+            context.draw(logo, in: CGRect(x: -size.width / 2, y: -size.height / 2, width: size.width, height: size.height))
+            context.restoreGState()
+            return
+        }
+        let label = displayText
+        guard !label.isEmpty else { return }
         let attributed = AnnotateDrawing.attributedText(
-            text,
+            label,
             fontSize: max(8, style.fontSize),
             color: style.resolvedColor,
             bold: false

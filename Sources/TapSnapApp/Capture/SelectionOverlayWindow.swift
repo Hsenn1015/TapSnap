@@ -56,6 +56,12 @@ final class SelectionOverlayView: NSView {
     var onLongShot: ((CGRect) -> Void)? { didSet { updateBar() } }
     var onRecord: ((CGRect) -> Void)? { didSet { updateBar() } }
     var onQuickAction: ((ActionKind, CGRect) -> Void)? { didSet { updateBar() } }
+    var desktopDragBounds: CGRect?
+    var selectionScale: CGFloat?
+    var onSelectionChange: ((CGRect?, CGPoint, Bool) -> Void)?
+    private var receivingSelection = false
+    private var displaysToolbar = true
+    private var dragBounds: CGRect { desktopDragBounds ?? bounds }
     var quickToolbarTheme: Theme = .dark { didSet { updateBar() } }
     var quickToolbarToolTip: (ActionKind) -> String = { $0.title } { didSet { hideQuickToolbarTip() } }
     var quickConfirmationCopies = true { didSet { updateBar() } }
@@ -104,9 +110,18 @@ final class SelectionOverlayView: NSView {
         didSet {
             borderView.selectionRect = selection
             updateBar()
+            if !receivingSelection { onSelectionChange?(selection, cursor, isDragging) }
         }
     }
     private var cursor: CGPoint = .zero
+
+    func synchronizeSelection(_ rect: CGRect?, showToolbar: Bool) {
+        receivingSelection = true
+        displaysToolbar = showToolbar
+        if selection != rect { selection = rect } else { updateBar() }
+        receivingSelection = false
+        needsDisplay = true
+    }
     private var dragDistance: CGFloat = 0
     private let borderView = SelectionBorderView(frame: .zero)
     private let controlsView = SelectionControlsView(frame: .zero)
@@ -326,9 +341,9 @@ final class SelectionOverlayView: NSView {
 
         switch mode {
         case .creating(let anchor):
-            selection = Self.rect(from: anchor, to: point)
+            selection = Self.rect(from: anchor, to: point).intersection(dragBounds)
         case .moving(let start, let rect):
-            selection = Self.clamp(rect.offsetBy(dx: point.x - start.x, dy: point.y - start.y), to: bounds)
+            selection = Self.clamp(rect.offsetBy(dx: point.x - start.x, dy: point.y - start.y), to: dragBounds)
         case .resizing(let handle, let rect):
             let outline = SelectionBorderView.outlineRect(for: rect, in: bounds)
             var edgePoint = point
@@ -342,7 +357,7 @@ final class SelectionOverlayView: NSView {
             case .bottomLeft, .bottom, .bottomRight: edgePoint.y += rect.minY - outline.minY
             default: break
             }
-            selection = Self.clamp(Self.resized(rect, handle: handle, to: edgePoint), to: bounds)
+            selection = Self.clamp(Self.resized(rect, handle: handle, to: edgePoint), to: dragBounds)
         case .idle:
             return
         }
@@ -352,6 +367,7 @@ final class SelectionOverlayView: NSView {
     override func mouseUp(with event: NSEvent) {
         guard pendingAction == nil else { return }
         let point = convert(event.locationInWindow, from: nil)
+        cursor = point
         if let pressed = pressedBarButton {
             pressedBarButton = nil
             if barButton(at: point) == pressed {
@@ -367,12 +383,13 @@ final class SelectionOverlayView: NSView {
             if max(dragDistance, anchor.distance(to: point)) < 4 {
                 selection = pressedSnap
             } else {
-                let rect = Self.rect(from: anchor, to: point).intersection(bounds)
+                let rect = Self.rect(from: anchor, to: point).intersection(dragBounds)
                 selection = rect.width >= 2 && rect.height >= 2 ? rect : nil
             }
             pressedSnap = nil
         }
         mode = .idle
+        onSelectionChange?(selection, cursor, false)
         setBarHover(barButton(at: point))
         needsDisplay = true
     }
@@ -433,7 +450,8 @@ final class SelectionOverlayView: NSView {
     }
 
     func performQuickAction(_ action: ActionKind) {
-        guard pendingAction == nil, let onQuickAction, let selection, quickToolbarLayout() != nil else { return }
+        guard pendingAction == nil, let onQuickAction, let selection, !isDragging,
+              quickToolbarLayout() != nil || (action == .copy && !displaysToolbar) else { return }
         switch action {
         case .cancel: performBarAction(.cancel)
         case .confirm where !quickConfirmationCopies: performBarAction(.confirm)
@@ -488,7 +506,7 @@ final class SelectionOverlayView: NSView {
             return
         }
 
-        if showsSizeLabel {
+        if showsSizeLabel, selection.intersects(bounds) {
             sizeLabel(selection, context: context)
         }
         if isDragging {
@@ -531,7 +549,7 @@ final class SelectionOverlayView: NSView {
 
     private func sizeLabel(_ selection: CGRect, context: CGContext) {
         guard let image = screenImage else { return }
-        let scale = CGFloat(image.width) / max(1, bounds.width)
+        let scale = selectionScale ?? CGFloat(image.width) / max(1, bounds.width)
         let text = "\(Int((selection.width * scale).rounded())) × \(Int((selection.height * scale).rounded()))"
         let measured = measure(text, fontSize: 11, color: .white)
         let outline = SelectionBorderView.outlineRect(for: selection, in: bounds)
@@ -637,16 +655,20 @@ final class SelectionOverlayView: NSView {
     }
 
     func quickToolbarLayout() -> (background: CGRect, actions: ActionsBarLayout)? {
-        guard onQuickAction != nil, !isDragging, (!selectsWindows || lockedWindowSelection),
+        guard displaysToolbar, onQuickAction != nil, !isDragging, (!selectsWindows || lockedWindowSelection),
               let selected = selection, selected.width >= 1, selected.height >= 1 else { return nil }
-        let selection = SelectionBorderView.outlineRect(for: selected, in: bounds)
+        let selection = SelectionBorderView.outlineRect(for: selected, in: bounds).intersection(bounds)
         let area = barBounds.insetBy(dx: 8, dy: 8)
         let thickness = quickToolbarTheme.metrics.toolbarHeight
         let gap: CGFloat = 8 // 超过描边外侧的手柄命中范围。
         // 小选区也给常用输出按钮留够空间，窄屏再收纳低频工具。
         let widthLimit = min(area.width, max(selection.width, thickness * 9))
-        let model = quickConfirmationCopies ? Self.copyConfirmationDockModel : Self.dockModel
-        let fixedModes = Set(Self.captureModes)
+        var model = quickConfirmationCopies ? Self.copyConfirmationDockModel : Self.dockModel
+        let fixedModes: Set<ActionKind> = bounds.contains(selected) ? Set(Self.captureModes) : []
+        if fixedModes.isEmpty {
+            model.outputActions.removeAll(where: Self.captureModes.contains)
+            model.overflow.removeAll(where: Self.captureModes.contains)
+        }
         var actions = model.layout(availableWidth: widthLimit, priorityOutputs: Self.dockPriority,
                                    fixedOutputs: quickConfirmationCopies ? fixedModes.union([.edit]) : fixedModes,
                                    showsHistory: false)
@@ -664,7 +686,7 @@ final class SelectionOverlayView: NSView {
     }
 
     func barLayout() -> (background: CGRect, buttons: [(action: BarButton, rect: CGRect)], primaryAction: BarButton)? {
-        guard onQuickAction == nil, !isDragging, (!selectsWindows || lockedWindowSelection),
+        guard displaysToolbar, onQuickAction == nil, !isDragging, (!selectsWindows || lockedWindowSelection),
               let selected = selection, selected.width >= 1, selected.height >= 1 else { return nil }
         let selection = SelectionBorderView.outlineRect(for: selected, in: bounds)
         var actions: [BarButton] = [.cancel]
@@ -890,8 +912,8 @@ final class SelectionOverlayView: NSView {
         var result = rect
         result.size.width = min(result.width, bounds.width)
         result.size.height = min(result.height, bounds.height)
-        result.origin.x = min(max(0, result.minX), bounds.width - result.width)
-        result.origin.y = min(max(0, result.minY), bounds.height - result.height)
+        result.origin.x = min(max(bounds.minX, result.minX), bounds.maxX - result.width)
+        result.origin.y = min(max(bounds.minY, result.minY), bounds.maxY - result.height)
         return result
     }
 

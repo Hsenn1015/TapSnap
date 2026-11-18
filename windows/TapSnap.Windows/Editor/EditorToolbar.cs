@@ -53,7 +53,7 @@ public sealed partial class EditorWindow
         var actions = new List<DockTool>
         {
             Tool("隐私打码", "shield", AnnotationTool.Privacy, priority: 2),
-            Tool("裁剪", "⌗", AnnotationTool.Crop, false, 3),
+            Tool("裁剪", "⌗", AnnotationTool.Crop, priority: 3),
             new("贴图", "pin", () => Export(pin), Export: true, Priority: 3),
             new("复制", "▢", () => Export(copy), Export: true),
             new("保存", "↓", () => Export(save), Export: true),
@@ -68,7 +68,7 @@ public sealed partial class EditorWindow
         }
         overflow.Add(new DockTool("长截图", "↕", () => SwitchCapture(startLongShot)));
         overflow.Add(new DockTool("录屏", "●", () => SwitchCapture(startRecording)));
-        overflow.Add(Tool("文字水印", "水", AnnotationTool.Watermark));
+        overflow.Add(Tool("水印", "水", AnnotationTool.Watermark));
         overflow.Add(Tool("路径标签", "⌁", AnnotationTool.PathTag));
 
         var visible = tools.Concat(actions).OrderBy(item => item.Priority).Take(Math.Max(0, slots - 5)).ToHashSet();
@@ -209,6 +209,7 @@ public sealed partial class EditorWindow
         if (stylePopup is not null) stylePopup.IsOpen = false;
         if (entry.Export && scanning) return;
         entry.Run();
+        if (entry.Tool == AnnotationTool.Crop && tool != AnnotationTool.Crop) return;
         if (entry.Options && entry.Tool is AnnotationTool kind && !close) ShowOptions(anchor, kind, entry.Title);
     }
 
@@ -294,6 +295,23 @@ public sealed partial class EditorWindow
             Child = box,
             Tag = kind
         };
+        if (kind == AnnotationTool.Crop)
+        {
+            stack.Children.Add(Segments(new[] { (0d, "自由"), (1d, "1:1"), (4d / 3, "4:3"), (16d / 9, "16:9"), (9d / 16, "9:16") },
+                cropRatio, value =>
+                {
+                    cropRatio = value;
+                    if (value > 0)
+                    {
+                        Remember();
+                        crop = FitCrop(crop ?? canvas.ImageRect, 0, 0);
+                        RefreshSurface();
+                    }
+                    stylePopup.IsOpen = false;
+                }));
+            stylePopup.IsOpen = true;
+            return;
+        }
 
         void Range(string title, double low, double high, double value, Func<AnnotationStyle, double, AnnotationStyle> change, double step = 1)
         {
@@ -426,6 +444,13 @@ public sealed partial class EditorWindow
         }
         if (kind == AnnotationTool.Watermark)
         {
+            Choice("水印内容", style.Watermark, new[] { (WatermarkContent.Text, "文字"), (WatermarkContent.DateTime, "日期和时间"),
+                (WatermarkContent.Date, "仅日期"), (WatermarkContent.Image, "图片") }, (last, value) => last with { Watermark = value });
+            stack.Children.Add(OptionAction("选择 PNG 图片…", () =>
+            {
+                if (Images.OpenImage(pngOnly: true) is { } logo)
+                    SetStyle(kind, target, last => last with { Watermark = WatermarkContent.Image, Logo = logo });
+            }, closePopup: true));
             Range("角度", -90, 90, style.Angle, (last, value) => last with { Angle = value }, step: 5);
             Flag("平铺", style.Tiled, (last, value) => last with { Tiled = value });
         }
@@ -463,13 +488,13 @@ public sealed partial class EditorWindow
                 var choices = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 0),
                     Visibility = Visibility.Collapsed };
                 if (scanCroppedImage is not null)
-                    choices.Children.Add(OptionAction("图片定位", () => Export(image => scanCroppedImage(image, PixelCrop)), closePopup: true));
+                    choices.Children.Add(OptionAction("图片定位", () => Export(image => scanCroppedImage(image, PixelCrop), forReview: true), closePopup: true));
                 else if (scanImage is not null)
-                    choices.Children.Add(OptionAction("图片定位", () => Export(scanImage, includeCrop: false), closePopup: true));
+                    choices.Children.Add(OptionAction("图片定位", () => Export(scanImage, includeCrop: false, forReview: true), closePopup: true));
                 if (scanCroppedText is not null)
-                    choices.Children.Add(OptionAction("仅文字", () => Export(image => scanCroppedText(image, PixelCrop)), closePopup: true));
+                    choices.Children.Add(OptionAction("仅文字", () => Export(image => scanCroppedText(image, PixelCrop), forReview: true), closePopup: true));
                 else if (scanText is not null)
-                    choices.Children.Add(OptionAction("仅文字", () => Export(scanText, includeCrop: false), closePopup: true));
+                    choices.Children.Add(OptionAction("仅文字", () => Export(scanText, includeCrop: false, forReview: true), closePopup: true));
                 ai.Click += (_, _) =>
                 {
                     if (!configured)
