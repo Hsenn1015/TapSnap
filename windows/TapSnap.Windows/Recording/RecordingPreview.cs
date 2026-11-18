@@ -2,6 +2,7 @@ using System;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -9,6 +10,7 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Win32;
 
@@ -24,6 +26,9 @@ internal sealed partial class RecordingPreview : IDisposable
     private Window? window;
     private Task<string>? preparation;
     private Task? exporting;
+    private Task<BitmapSource[]>? thumbnails;
+    private RecordingMark[] marks = [];
+    private double trimStart, trimEnd;
 
     public RecordingPreview(RecordingFrames frames, TimeSpan duration, int videoRate, string? audio)
     {
@@ -31,21 +36,22 @@ internal sealed partial class RecordingPreview : IDisposable
         this.duration = duration;
         this.videoRate = videoRate;
         this.audio = audio;
+        trimEnd = duration.TotalSeconds;
     }
 
     public void Show()
     {
         if (lifetime.IsCancellationRequested) return;
         if (window != null) { window.Activate(); return; }
-        double full = duration.TotalSeconds, from = 0, to = full;
-        double minimum = Math.Min(full, 1d / 60);
-        bool opened = false, playing = false, updating = false, closed = false, seeking = false;
+        double full = duration.TotalSeconds, from = trimStart, to = trimEnd, head = from;
+        double minimum = Math.Min(full, 1d / videoRate);
+        bool opened = false, playing = false, autoplay = true, closed = false;
         CancellationTokenSource? export = null;
 
         var panel = new Window
         {
-            Title = "录屏预览", Width = 720, Height = 630, WindowStartupLocation = WindowStartupLocation.CenterScreen,
-            MinWidth = 520, MinHeight = 440, Topmost = true
+            Title = "录屏预览", Width = 800, Height = 650, WindowStartupLocation = WindowStartupLocation.CenterScreen,
+            MinWidth = 550, MinHeight = 530, Topmost = true
         };
         SnapTheme.StyleWindow(panel);
         var palette = SnapPalette.For(SnapTheme.IsDark);
@@ -68,7 +74,12 @@ internal sealed partial class RecordingPreview : IDisposable
         };
         var scene = new Grid();
         var poster = new Image { Stretch = Stretch.Uniform };
-        using (var handle = frames.Open()) poster.Source = frames.Read(handle, 0);
+        BitmapSource reference;
+        using (var handle = frames.Open()) reference = frames.Read(handle, 0);
+        poster.Source = reference;
+        var ink = new RecordingMarkupEditor(reference, marks, full, videoRate, palette);
+        var timeline = new RecordingTimeline(full, videoRate, palette);
+        int posterIndex = 0;
         media.Visibility = Visibility.Hidden;
         var transport = new DockPanel { Margin = new Thickness(9, 4, 9, 5), Background = Brushes.Black };
         DockPanel.SetDock(transport, Dock.Bottom);
@@ -76,106 +87,124 @@ internal sealed partial class RecordingPreview : IDisposable
         video.Children.Add(scene);
         scene.Children.Add(poster);
         scene.Children.Add(media);
+        scene.Children.Add(ink);
 
         var time = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(20) };
         var play = new Button { Content = "▶", Margin = new Thickness(3), Padding = new Thickness(9, 4, 9, 4) };
-        play.Click += (_, _) => SetPlaying(!playing);
         play.IsEnabled = false;
         play.ToolTip = "播放／暂停";
         var volume = new Slider { Width = 64, Minimum = 0, Maximum = 1, Value = media.Volume, Margin = new Thickness(8, 2, 0, 2) };
         volume.ValueChanged += (_, _) => media.Volume = volume.Value;
         AutomationProperties.SetName(volume, "音量");
-        var position = new Slider { Minimum = 0, Maximum = full, IsMoveToPointEnabled = true, IsEnabled = false };
-        AutomationProperties.SetName(position, "播放进度");
-        transport.Children.Add(play);
+        var previousFrame = ToolbarGlyph.CreateButton("上一帧", "◀", palette);
+        var nextFrame = ToolbarGlyph.CreateButton("下一帧", "▶", palette);
+        var clock = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Foreground = Brushes.White,
+            Margin = new Thickness(8, 0, 0, 0), FontFamily = new FontFamily("Consolas") };
+        AutomationProperties.SetName(clock, "当前播放时间");
+        play.Click += (_, _) => SetPlaying(!playing);
+        previousFrame.Click += (_, _) => Step(-1);
+        nextFrame.Click += (_, _) => Step(1);
         DockPanel.SetDock(volume, Dock.Right);
         transport.Children.Add(volume);
-        transport.Children.Add(position);
+        transport.Children.Add(previousFrame);
+        transport.Children.Add(play);
+        transport.Children.Add(nextFrame);
+        transport.Children.Add(clock);
+        controls.Children.Add(ink.Controls);
+        var timelineScroll = new ScrollViewer { Content = timeline, MaxHeight = 114,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        controls.Children.Add(timelineScroll);
 
+        void SetHead(double value, bool showStill)
+        {
+            head = Math.Clamp(value, from, to);
+            double visible = head >= to ? Math.Max(from, (Math.Ceiling(to * videoRate - 1e-7) - 1) / videoRate) : head;
+            ink.SetTime(visible, to);
+            timeline.Playhead(head);
+            clock.Text = $"{head:0.000} / {full:0.000} s";
+            if (!showStill) return;
+            int index = frames.IndexAt(Math.Floor(visible * videoRate + 1e-7) / videoRate);
+            if (index != posterIndex)
+            {
+                using var handle = frames.Open();
+                poster.Source = frames.ReadFrame(handle, index, Math.Max(960, (int)Math.Ceiling(scene.ActualWidth *
+                    VisualTreeHelper.GetDpi(scene).DpiScaleX)));
+                posterIndex = index;
+            }
+            media.Visibility = Visibility.Hidden;
+            poster.Visibility = Visibility.Visible;
+        }
         void SetPlaying(bool value)
         {
+            autoplay = value;
             if (!opened) return;
+            if (value == playing) return;
             playing = value;
-            play.Content = playing ? "Ⅱ" : "▶";
-            if (playing)
+            play.Content = value ? "Ⅱ" : "▶";
+            if (value)
             {
-                if (media.Position.TotalSeconds < from || media.Position.TotalSeconds >= to)
-                    media.Position = TimeSpan.FromSeconds(from);
+                if (head >= to) SetHead(from, false);
+                media.Position = TimeSpan.FromSeconds(head);
+                media.Visibility = Visibility.Visible;
+                poster.Visibility = Visibility.Collapsed;
                 media.Play();
                 time.Start();
             }
-            else { time.Stop(); media.Pause(); }
+            else
+            {
+                time.Stop();
+                media.Pause();
+                SetHead(media.Position.TotalSeconds, true);
+            }
         }
-
-        void UpdatePosition()
+        void Seek(double seconds)
         {
-            if (seeking) return;
+            SetPlaying(false);
+            SetHead(seconds, true);
+            if (opened) media.Position = TimeSpan.FromSeconds(head);
+        }
+        void Step(int direction)
+        {
+            double current = playing ? media.Position.TotalSeconds : head;
+            double last = Math.Max(from, (Math.Ceiling(to * videoRate - 1e-7) - 1) / videoRate);
+            int index = (int)Math.Floor(Math.Min(current, last) * videoRate + 1e-7);
+            Seek(Math.Clamp((index + direction) / (double)videoRate, from, last));
+        }
+        time.Tick += (_, _) =>
+        {
+            if (!playing) return;
             if (media.Position.TotalSeconds >= to) media.Position = TimeSpan.FromSeconds(from);
-            updating = true;
-            position.Value = media.Position.TotalSeconds;
-            updating = false;
-        }
-
-        time.Tick += (_, _) => UpdatePosition();
-        position.ValueChanged += (_, _) =>
-        {
-            if (!opened || updating) return;
-            media.Position = TimeSpan.FromSeconds(position.Value);
+            SetHead(media.Position.TotalSeconds, false);
         };
-        position.PreviewMouseLeftButtonDown += (_, _) => seeking = true;
-        position.PreviewMouseLeftButtonUp += (_, _) => seeking = false;
-        position.LostMouseCapture += (_, _) => seeking = false;
+        ink.Pause += () => SetPlaying(false);
+        ink.Seek += Seek;
+        ink.Changed += () => { marks = ink.Items; timeline.Marks(marks, ink.Selection); };
+        timeline.Marks(marks, ink.Selection);
+        timeline.SelectMark += i => ink.SelectMark(i, true);
+        timeline.MarkRange += ink.ChangeRange;
+        timeline.Seek += Seek;
+        timeline.Range(from, to);
+        SetHead(from, true);
 
-        (Slider Slider, TextBox Field) TrimRow(string title, double initial)
+        var rangeRow = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 3, 0, 3) };
+        controls.Children.Add(rangeRow);
+        TextBox TimeField(string label, double initial)
         {
-            var row = new DockPanel { Margin = new Thickness(0, 3, 0, 3) };
-            var label = new TextBlock { Width = 42, Text = title, VerticalAlignment = VerticalAlignment.Center, Foreground = foreground };
-            var unit = new TextBlock { Text = "秒", Margin = new Thickness(7, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center, Foreground = foreground };
-            var field = new TextBox
-            {
-                Width = 78, TextAlignment = TextAlignment.Right, Padding = new Thickness(3, 1, 5, 1),
-                FontFamily = new FontFamily("Consolas"), Text = TimeText(initial)
-            };
-            var slider = new Slider
-            {
-                Minimum = 0, Maximum = full, Value = initial, IsMoveToPointEnabled = true,
-                VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0)
-            };
-            AutomationProperties.SetName(field, title + "秒数");
-            AutomationProperties.SetName(slider, "裁剪" + title + "时间");
-            DockPanel.SetDock(unit, Dock.Right);
-            DockPanel.SetDock(field, Dock.Right);
-            row.Children.Add(label);
-            row.Children.Add(unit);
-            row.Children.Add(field);
-            row.Children.Add(slider);
-            controls.Children.Add(row);
-            return (slider, field);
+            rangeRow.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(5, 0, 3, 0) });
+            var field = new TextBox { Width = 70, Text = TimeText(initial), FontFamily = new FontFamily("Consolas"),
+                TextAlignment = TextAlignment.Right, VerticalContentAlignment = VerticalAlignment.Center };
+            AutomationProperties.SetName(field, label + "秒数");
+            rangeRow.Children.Add(field);
+            return field;
         }
-
-        var (startSlider, startField) = TrimRow("开始", 0);
-        var (endSlider, endField) = TrimRow("结束", full);
-        var options = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 4) };
-        options.Children.Add(new TextBlock { Text = "GIF", VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 5, 0), Foreground = foreground });
-        var rates = new ComboBox { Width = 82, Margin = new Thickness(3), SelectedValuePath = "Tag" };
-        foreach (int value in new[] { 10, 15, 24, 30 }) rates.Items.Add(new ComboBoxItem { Content = $"{value} FPS", Tag = value });
-        rates.SelectedValue = 15;
-        var sizes = new ComboBox { Width = 145, Margin = new Thickness(3), SelectedValuePath = "Tag" };
-        foreach (int value in new[] { 640, 960, 1280, 1920, 0 })
-            sizes.Items.Add(new ComboBoxItem { Content = value == 0 ? "原始尺寸" : $"最长边 {value} 像素", Tag = value });
-        sizes.SelectedValue = 1280;
-        AutomationProperties.SetName(rates, "GIF 帧率");
-        AutomationProperties.SetName(sizes, "GIF 尺寸上限");
-        options.Children.Add(rates);
-        options.Children.Add(sizes);
-        var reset = new Button { Content = "恢复全段", Margin = new Thickness(3), Padding = new Thickness(9, 4, 9, 4) };
-        options.Children.Add(reset);
-        controls.Children.Add(options);
+        var startField = TimeField("开始", from);
+        var endField = TimeField("结束", to);
+        var status = new TextBlock { Text = "正在读取视频…", VerticalAlignment = VerticalAlignment.Center, Foreground = muted };
+        var reset = RecordingWindow.Button("恢复全段", () => ApplyRange(0, full, 0));
+        rangeRow.Children.Add(reset);
+        int gifRate = 15, gifLimit = 1280;
 
         var statusRow = new DockPanel { LastChildFill = true, Margin = new Thickness(3, 3, 3, 1) };
-        var status = new TextBlock { Text = "正在读取视频…", VerticalAlignment = VerticalAlignment.Center, Foreground = muted };
         var cancel = RecordingWindow.Button("取消导出", () => export?.Cancel());
         cancel.Visibility = Visibility.Collapsed;
         DockPanel.SetDock(cancel, Dock.Right);
@@ -187,25 +216,23 @@ internal sealed partial class RecordingPreview : IDisposable
 
         string RangeText() => $"已选择 {to - from:F2} 秒，视频与 GIF 均导出此范围，GIF 无声";
 
-        void ApplyRange(double start, double end, bool seek)
+        void ApplyRange(double start, double end, double seek)
         {
-            from = start;
-            to = end;
-            updating = true;
-            startSlider.Value = from;
-            endSlider.Value = to;
+            trimStart = from = start;
+            trimEnd = to = end;
             startField.Text = TimeText(from);
             endField.Text = TimeText(to);
-            position.Maximum = to;
-            position.Minimum = from;
-            if (seek && opened) { media.Position = TimeSpan.FromSeconds(from); position.Value = from; }
-            updating = false;
+            timeline.Range(from, to);
+            Seek(seek);
             if (export == null) status.Text = RangeText();
         }
 
-        reset.Click += (_, _) => ApplyRange(0, full, true);
-        startSlider.ValueChanged += (_, _) => { if (!updating) ApplyRange(Math.Clamp(startSlider.Value, 0, Math.Max(0, to - minimum)), to, true); };
-        endSlider.ValueChanged += (_, _) => { if (!updating) ApplyRange(from, Math.Clamp(endSlider.Value, Math.Min(full, from + minimum), full), true); };
+        void Adjust(bool start, double value)
+        {
+            if (start) { double n = Math.Clamp(value, 0, Math.Max(0, to - minimum)); ApplyRange(n, to, n); }
+            else { double n = Math.Clamp(value, Math.Min(full, from + minimum), full); ApplyRange(from, n, n); }
+        }
+        timeline.Trim += Adjust;
 
         void Commit(TextBox field, bool changeStart)
         {
@@ -216,8 +243,7 @@ internal sealed partial class RecordingPreview : IDisposable
                 field.Text = TimeText(changeStart ? from : to);
                 return;
             }
-            if (changeStart) ApplyRange(Math.Clamp(value, 0, Math.Max(0, to - minimum)), to, true);
-            else ApplyRange(from, Math.Clamp(value, Math.Min(full, from + minimum), full), true);
+            Adjust(changeStart, value);
         }
 
         startField.LostKeyboardFocus += (_, _) => { if (startField.Text != TimeText(from)) Commit(startField, true); };
@@ -225,23 +251,46 @@ internal sealed partial class RecordingPreview : IDisposable
         startField.PreviewKeyDown += (_, e) => { if (e.Key == Key.Enter) { Commit(startField, true); e.Handled = true; } };
         endField.PreviewKeyDown += (_, e) => { if (e.Key == Key.Enter) { Commit(endField, false); e.Handled = true; } };
 
-        var footer = new System.Windows.Controls.Primitives.UniformGrid { Rows = 1 };
+        var footer = new DockPanel { LastChildFill = false };
         var close = RecordingWindow.Button("关闭", panel.Close);
         var saveVideo = new Button { Content = "保存视频…", Margin = new Thickness(3) };
         var copyVideo = new Button { Content = "复制视频", ToolTip = "将当前片段作为 MP4 文件复制（Ctrl+C）", Margin = new Thickness(3) };
         copyVideo.SetResourceReference(FrameworkElement.StyleProperty, "SnapPrimary");
-        var saveGif = new Button { Content = "保存 GIF…", Margin = new Thickness(3) };
         var copyGif = new Button { Content = "复制 GIF", Margin = new Thickness(3) };
+        var gifOptions = ToolbarGlyph.CreateButton("GIF 导出选项", "⌄", palette);
         saveVideo.Click += (_, _) => StartExport(".mp4", false);
         copyVideo.Click += (_, _) => StartExport(".mp4", true);
-        saveGif.Click += (_, _) => StartExport(".gif", false);
         copyGif.Click += (_, _) => StartExport(".gif", true);
-        foreach (var button in new[] { close, saveVideo, saveGif, copyGif, copyVideo }) footer.Children.Add(button);
+        gifOptions.Click += (_, _) =>
+        {
+            var menu = new ContextMenu { PlacementTarget = gifOptions };
+            var save = new MenuItem { Header = "保存 GIF…" };
+            save.Click += (_, _) => StartExport(".gif", false);
+            menu.Items.Add(save);
+            void Choices(string title, int[] values, int selected, Func<int, string> label, Action<int> choose)
+            {
+                var group = new MenuItem { Header = title };
+                foreach (int n in values)
+                {
+                    var item = new MenuItem { Header = label(n), IsChecked = n == selected };
+                    item.Click += (_, _) => choose(n);
+                    group.Items.Add(item);
+                }
+                menu.Items.Add(group);
+            }
+            Choices("帧率", new[] { 10, 15, 24, 30 }, gifRate, n => $"{n} FPS", n => gifRate = n);
+            Choices("最长边", new[] { 640, 960, 1280, 1920, 0 }, gifLimit, n => n == 0 ? "原始尺寸" : $"{n} 像素", n => gifLimit = n);
+            gifOptions.ContextMenu = menu;
+            menu.IsOpen = true;
+        };
+        footer.Children.Add(close);
+        foreach (var button in new[] { copyVideo, saveVideo, gifOptions, copyGif })
+        { DockPanel.SetDock(button, Dock.Right); footer.Children.Add(button); }
         controls.Children.Add(footer);
 
         void SetExporting(bool busy)
         {
-            foreach (var control in new Control[] { startSlider, endSlider, startField, endField, rates, sizes, reset, saveVideo, saveGif, copyGif, copyVideo })
+            foreach (var control in new UIElement[] { timeline, ink, ink.Controls, startField, endField, reset, saveVideo, gifOptions, copyGif, copyVideo })
                 control.IsEnabled = !busy;
             progress.Visibility = busy ? Visibility.Visible : Visibility.Hidden;
             cancel.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
@@ -250,7 +299,8 @@ internal sealed partial class RecordingPreview : IDisposable
         void StartExport(string format, bool copy)
         {
             if (export != null || closed) return;
-            exporting = RunExportAsync();
+            var current = RunExportAsync();
+            exporting = exporting is { IsCompleted: false } pending ? Task.WhenAll(pending, current) : current;
             async Task RunExportAsync()
             {
                 try { await ExportAsync(format, copy); }
@@ -280,19 +330,31 @@ internal sealed partial class RecordingPreview : IDisposable
             using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
             export = cancellation;
             double start = from, end = to;
-            int rate = (int)rates.SelectedValue, limit = (int)sizes.SelectedValue;
+            int rate = gifRate, limit = gifLimit;
             SetExporting(true);
             status.Text = "正在导出…";
             bool placedOnClipboard = false;
             try
             {
-                if (format == ".gif") await Task.Run(() => SaveGif(path, start, end, rate, limit, cancellation.Token), cancellation.Token);
-                else if (start == 0 && end == full)
+                RecordingOverlay[] layers = [];
+                if (marks.Any(m => m.Start < end && start < m.End))
+                {
+                    int w = frames.Width & ~1, h = frames.Height & ~1;
+                    if (format == ".gif")
+                    {
+                        using var input = frames.Open();
+                        var frame = frames.ReadFrame(input, frames.IndexAt(start), limit);
+                        w = frame.PixelWidth; h = frame.PixelHeight;
+                    }
+                    layers = RecordingOverlay.Prepare(marks, reference, start, end, w, h, format == ".gif");
+                }
+                if (format == ".gif") await Task.Run(() => SaveGif(path, start, end, rate, limit, cancellation.Token, layers), cancellation.Token);
+                else if (start == 0 && end == full && layers.Length == 0)
                 {
                     string original = await PrepareAsync().WaitAsync(cancellation.Token);
                     await Task.Run(() => CopyVideo(original, path, cancellation.Token), cancellation.Token);
                 }
-                else await Task.Run(() => SaveMp4(path, start, end, cancellation.Token), cancellation.Token);
+                else await Task.Run(() => SaveMp4(path, start, end, cancellation.Token, layers), cancellation.Token);
                 if (copy && !closed)
                 {
                     var files = new StringCollection { path };
@@ -319,12 +381,11 @@ internal sealed partial class RecordingPreview : IDisposable
         {
             if (closed) return;
             opened = true;
-            play.IsEnabled = position.IsEnabled = true;
-            media.Visibility = Visibility.Visible;
-            poster.Visibility = Visibility.Collapsed;
-            media.Position = TimeSpan.FromSeconds(from);
+            play.IsEnabled = true;
+            media.Pause();
+            media.Position = TimeSpan.FromSeconds(head);
             if (export == null) { progress.Visibility = Visibility.Hidden; status.Text = RangeText(); }
-            SetPlaying(true);
+            SetPlaying(autoplay);
         };
         media.MediaEnded += (_, _) =>
         {
@@ -336,7 +397,8 @@ internal sealed partial class RecordingPreview : IDisposable
         {
             opened = false;
             time.Stop();
-            play.IsEnabled = position.IsEnabled = false;
+            playing = false;
+            play.IsEnabled = false;
             media.Visibility = Visibility.Hidden;
             poster.Visibility = Visibility.Visible;
             if (export == null) { progress.Visibility = Visibility.Hidden; status.Text = $"无法播放视频：{failure.ErrorException.Message}"; }
@@ -345,6 +407,18 @@ internal sealed partial class RecordingPreview : IDisposable
         {
             try
             {
+                thumbnails ??= Task.Run(() =>
+                {
+                    using var input = frames.Open();
+                    return Enumerable.Range(0, 8).Select(i =>
+                    {
+                        lifetime.Token.ThrowIfCancellationRequested();
+                        return frames.ReadFrame(input, frames.IndexAt((i + .5) * full / 8), 180);
+                    }).ToArray();
+                }, lifetime.Token);
+                var film = await thumbnails;
+                if (closed) return;
+                timeline.SetFilm(film);
                 var path = await PrepareAsync();
                 if (!closed)
                 {
@@ -361,7 +435,12 @@ internal sealed partial class RecordingPreview : IDisposable
         };
         panel.PreviewKeyDown += (_, e) =>
         {
-            if (e.Key == Key.Escape) { panel.Close(); e.Handled = true; }
+            if (e.Key == Key.Escape) { if (!ink.CancelTool()) panel.Close(); e.Handled = true; return; }
+            if (Keyboard.FocusedElement is TextBox or ComboBox) return;
+            if (export == null && Keyboard.Modifiers == ModifierKeys.Control && e.Key is Key.Z or Key.Y)
+            { ink.History(e.Key == Key.Y); e.Handled = true; return; }
+            if (export == null && e.Key == Key.Delete) { ink.DeleteSelection(); e.Handled = true; return; }
+            if (e.Key is Key.Left or Key.Right) { Step(e.Key == Key.Left ? -1 : 1); e.Handled = true; return; }
             if (e.Key == Key.C && Keyboard.Modifiers == ModifierKeys.Control && Keyboard.FocusedElement is not TextBox)
             { if (!e.IsRepeat) StartExport(".mp4", true); e.Handled = true; }
             if (e.Key == Key.Space && Keyboard.FocusedElement is not TextBox and not ComboBox)
@@ -378,7 +457,7 @@ internal sealed partial class RecordingPreview : IDisposable
         panel.Show();
     }
 
-    private static string TimeText(double value) => value.ToString("F2", CultureInfo.CurrentCulture);
+    private static string TimeText(double value) => value.ToString("0.###", CultureInfo.CurrentCulture);
 
     private Task<string> PrepareAsync() => preparation ??= Task.Run(async () =>
     {
@@ -418,6 +497,8 @@ internal sealed partial class RecordingPreview : IDisposable
 
     private async Task CleanAsync()
     {
+        try { if (thumbnails != null) await thumbnails; }
+        catch (Exception) { }
         try { if (preparation != null) await preparation; }
         catch (Exception) { }
         try { if (exporting != null) await exporting; }

@@ -15,7 +15,7 @@ using System.Windows.Media.Imaging;
 using ImageMagick;
 using TapSnap.Windows;
 
-internal static class Program
+internal static partial class Program
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
 
@@ -39,7 +39,9 @@ internal static class Program
                 Require(after.Report.MeanRgbError <= before.Report.MeanRgbError + 2, "GIF color error regressed.");
                 using var preview = (RecordingPreview)after.Preview;
                 using var host = new TapSnapHost(app);
+                await CheckStaticFrameEdits(args[2]);
                 await CheckSelection(host, args[2]);
+                await CheckHistoryFilters(host, args[2]);
                 await CheckClipboard(preview, Path.Combine(args[2], "current.gif"));
                 Console.WriteLine("PASS selection dock, one-click editor handoff and recording clipboard.");
                 app.Shutdown(0);
@@ -78,7 +80,8 @@ internal static class Program
         var preview = Activator.CreateInstance(previewType, frames, TimeSpan.FromSeconds(5), GifFixture.Fps, null)!;
         var write = previewType.GetMethod("SaveGif", Private)!;
         var timer = Stopwatch.StartNew();
-        write.Invoke(preview, [target, 0d, 5d, GifFixture.Fps, 1280, CancellationToken.None]);
+        object[] arguments = [target, 0d, 5d, GifFixture.Fps, 1280, CancellationToken.None];
+        write.Invoke(preview, assembly == typeof(RecordingPreview).Assembly ? [.. arguments, Array.Empty<RecordingOverlay>()] : arguments);
         timer.Stop();
         if (assembly != typeof(RecordingPreview).Assembly) type.GetMethod("Clean")!.Invoke(frames, null);
         using var gif = new MagickImageCollection(target);
@@ -166,11 +169,9 @@ internal static class Program
         Console.WriteLine($"PASS Windows clipboard GIF bytes and file match saved export ({bytes.Length} bytes).");
 
         // Exercise the same trim controls and downscaling as the preview UI.
-        var sliders = Descendants<Slider>(panel).ToList();
-        sliders.Single(s => AutomationProperties.GetName(s) == "裁剪开始时间").Value = 1;
-        sliders.Single(s => AutomationProperties.GetName(s) == "裁剪结束时间").Value = 3;
-        var settings = Descendants<ComboBox>(panel).ToList();
-        settings.Single(c => c.Items.OfType<ComboBoxItem>().Any(i => Equals(i.Tag, 640))).SelectedValue = 640;
+        EditField(panel, "开始秒数", "1");
+        EditField(panel, "结束秒数", "3");
+        await GifOption(panel, "最长边", "640 像素");
         Invoke(copy);
         await Until(() => Clipboard.GetFileDropList().Cast<string>().Any(p => p != file && p.EndsWith(".gif")),
             "cropped and resized GIF", 90);
@@ -191,8 +192,9 @@ internal static class Program
         var info = await video.Properties.GetVideoPropertiesAsync();
         Require(Math.Abs(info.Duration.TotalSeconds - 2) < .1 && !Clipboard.ContainsData("GIF"),
             "MP4 clipboard file did not preserve the selected range.");
-        panel.Close();
         Console.WriteLine($"PASS copied MP4 duration {info.Duration.TotalSeconds:F2} s.");
+        await CheckTimedAnnotation(panel, Path.GetDirectoryName(saved)!);
+        panel.Close();
     }
 
     private static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject

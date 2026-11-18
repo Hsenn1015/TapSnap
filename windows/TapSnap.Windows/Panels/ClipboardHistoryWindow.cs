@@ -140,8 +140,7 @@ internal sealed class ClipboardHistoryWindow : Window
     private readonly TextBlock count = new() { FontSize = 11, VerticalAlignment = VerticalAlignment.Center };
     private readonly Button clear;
     private readonly Action<BitmapSource> editImage;
-    private readonly ComboBox filter = new() { ItemsSource = new[] { "全部", "图片", "文字" },
-        SelectedIndex = 0, Margin = new Thickness(9, 5, 9, 3) };
+    private string filter = "全部";
 
     public ClipboardHistoryWindow(ClipboardHistory history, Action<BitmapSource> editImage, bool dark = false)
     {
@@ -191,10 +190,19 @@ internal sealed class ClipboardHistoryWindow : Window
         header.Children.Add(grip);
         DockPanel.SetDock(header, Dock.Top);
         layout.Children.Add(header);
-        AutomationProperties.SetName(filter, "剪贴板分类");
-        DockPanel.SetDock(filter, Dock.Top);
-        layout.Children.Add(filter);
-        filter.SelectionChanged += (_, _) => Refresh();
+        var segments = new UniformGrid { Rows = 1 };
+        var filters = new Border { Child = segments, CornerRadius = new CornerRadius(7), Background = palette.Input,
+            Padding = new Thickness(2), Margin = new Thickness(9, 7, 9, 4) };
+        AutomationProperties.SetName(filters, "剪贴板分类");
+        foreach (string kind in new[] { "全部", "图片", "文字" })
+        {
+            var segment = new RadioButton { Content = kind, IsChecked = kind == filter };
+            segment.SetResourceReference(StyleProperty, "SnapSegment");
+            segment.Checked += (_, _) => { filter = kind; Refresh(); };
+            segments.Children.Add(segment);
+        }
+        DockPanel.SetDock(filters, Dock.Top);
+        layout.Children.Add(filters);
 
         var footer = new DockPanel { Height = 34, Margin = new Thickness(13, 0, 13, 0) };
         var capacity = new TextBlock { Text = "最多 50 条", FontSize = 11,
@@ -291,8 +299,8 @@ internal sealed class ClipboardHistoryWindow : Window
 
     private void Refresh()
     {
-        var visible = history.Entries.Where(e => filter.SelectedIndex switch
-            { 1 => e.ImagePath != null, 2 => e.ImagePath == null, _ => true }).ToList();
+        var visible = history.Entries.Where(e => filter switch
+            { "图片" => e.ImagePath != null, "文字" => e.ImagePath == null, _ => true }).ToList();
         count.Text = visible.Count.ToString();
         AutomationProperties.SetName(count, $"{count.Text} 条记录");
         clear.IsEnabled = history.Entries.Count > 0;
@@ -302,7 +310,7 @@ internal sealed class ClipboardHistoryWindow : Window
             var empty = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(10, 120, 10, 0) };
             empty.Children.Add(GlyphTile("clipboard", palette.Muted));
             empty.Children[^1].SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
-            empty.Children.Add(new TextBlock { Text = "还没有记录", FontSize = 13, FontWeight = FontWeights.SemiBold,
+            empty.Children.Add(new TextBlock { Text = filter == "全部" ? "还没有记录" : $"还没有{filter}记录", FontSize = 13, FontWeight = FontWeights.SemiBold,
                 HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 9, 0, 0) });
             empty.Children.Add(new TextBlock { Text = "复制的文字和图片会出现在这里", Foreground = palette.Muted,
                 HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 5, 0, 0) });

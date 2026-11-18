@@ -15,7 +15,7 @@ namespace TapSnap.Windows;
 
 internal sealed partial class RecordingPreview
 {
-    private void SaveGif(string path, double from, double to, int fps, int longestEdge, CancellationToken cancellation)
+    private void SaveGif(string path, double from, double to, int fps, int longestEdge, CancellationToken cancellation, RecordingOverlay[] overlays)
     {
         string temporary = path + ".tapsnap-" + Guid.NewGuid().ToString("N");
         try
@@ -24,27 +24,36 @@ internal sealed partial class RecordingPreview
             using (var output = File.Create(temporary))
             using (var writer = new BinaryWriter(output))
             {
-                int count = (int)Math.Ceiling((to - from) * fps);
                 RecordingGifWriter? animation = null;
-                byte[]? pixels = null;
-                int previousIndex = -1;
-                for (int index = 0; index < count; index++)
+                byte[]? pixels = null, annotated = null;
+                int previousIndex = -1, stride = 0;
+                foreach (var sample in RecordingOverlay.GifSamples(from, to, fps, overlays))
                 {
                     cancellation.ThrowIfCancellationRequested();
-                    int frameIndex = frames.IndexAt(from + index / (double)fps);
+                    int frameIndex = frames.IndexAt(sample.Time);
                     if (frameIndex != previousIndex)
                     {
                         var frame = frames.ReadFrame(input, frameIndex, longestEdge);
                         var bitmap = new FormatConvertedBitmap(frame, PixelFormats.Bgra32, null, 0);
-                        int stride = checked(bitmap.PixelWidth * 4);
+                        stride = checked(bitmap.PixelWidth * 4);
                         pixels ??= new byte[checked(stride * bitmap.PixelHeight)];
                         animation ??= new RecordingGifWriter(writer, bitmap.PixelWidth, bitmap.PixelHeight);
                         bitmap.CopyPixels(pixels, stride, 0);
                         previousIndex = frameIndex;
                     }
-                    double before = index / (double)fps;
-                    double after = Math.Min((index + 1) / (double)fps, to - from);
-                    animation!.Append(pixels!, (ushort)Math.Max(1, Math.Round(after * 100) - Math.Round(before * 100)));
+                    var outputPixels = pixels!;
+                    foreach (var layer in overlays)
+                    {
+                        if (!layer.Mark.Active(sample.Time)) continue;
+                        if (outputPixels == pixels)
+                        {
+                            annotated ??= new byte[pixels!.Length];
+                            pixels!.CopyTo(annotated, 0);
+                            outputPixels = annotated;
+                        }
+                        layer.Paint(outputPixels, stride);
+                    }
+                    animation!.Append(outputPixels, sample.Delay);
                 }
                 if (animation == null) throw new InvalidDataException("没有可导出的 GIF 帧。");
                 animation.Finish();
@@ -55,7 +64,7 @@ internal sealed partial class RecordingPreview
         finally { File.Delete(temporary); }
     }
 
-    private async Task SaveMp4(string path, double from, double to, CancellationToken cancellation)
+    private async Task SaveMp4(string path, double from, double to, CancellationToken cancellation, RecordingOverlay[]? overlays = null)
     {
         cancellation.ThrowIfCancellationRequested();
         int fps = videoRate;
@@ -67,7 +76,7 @@ internal sealed partial class RecordingPreview
         props.FrameRate.Denominator = 1;
         var source = new MediaStreamSource(new VideoStreamDescriptor(props))
         {
-            BufferTime = TimeSpan.Zero, Duration = TimeSpan.FromSeconds(count / (double)fps)
+            BufferTime = TimeSpan.Zero, Duration = TimeSpan.FromSeconds(to - from)
         };
         using var videoFile = frames.Open();
         using var sound = audio == null ? null : File.OpenHandle(audio, FileMode.Open, FileAccess.Read, FileShare.Read, FileOptions.RandomAccess);
@@ -108,11 +117,16 @@ internal sealed partial class RecordingPreview
                     return;
                 }
                 if (index >= count) { e.Request.Sample = null; return; }
-                var bitmap = new FormatConvertedBitmap(frames.Read(videoFile, from + index / (double)fps), PixelFormats.Bgra32, null, 0);
+                double offsetSeconds = index++ / (double)fps;
+                double sourceTime = from + offsetSeconds;
+                var bitmap = new FormatConvertedBitmap(frames.Read(videoFile, sourceTime), PixelFormats.Bgra32, null, 0);
                 byte[] pixels = new byte[checked(w * h * 4)];
                 bitmap.CopyPixels(new Int32Rect(0, 0, w, h), pixels, w * 4, 0);
-                var sample = MediaStreamSample.CreateFromBuffer(CryptographicBuffer.CreateFromByteArray(pixels), TimeSpan.FromSeconds(index++ / (double)fps));
-                sample.Duration = TimeSpan.FromSeconds(1d / fps);
+                if (overlays != null)
+                    foreach (var layer in overlays)
+                        if (layer.Mark.Active(sourceTime)) layer.Paint(pixels, w * 4);
+                var sample = MediaStreamSample.CreateFromBuffer(CryptographicBuffer.CreateFromByteArray(pixels), TimeSpan.FromSeconds(offsetSeconds));
+                sample.Duration = TimeSpan.FromSeconds(Math.Min(1d / fps, to - sourceTime));
                 e.Request.Sample = sample;
             }
             catch (Exception error)
