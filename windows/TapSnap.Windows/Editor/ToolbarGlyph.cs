@@ -1,3 +1,8 @@
+using System.Windows.Media.Animation;
+using System.Windows.Input;
+using System.Windows.Controls.Primitives;
+using System.Windows.Automation;
+using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -49,6 +54,7 @@ internal static class ToolbarGlyph
             "info" => "M14,8 A6,6 0 1 1 2,8 A6,6 0 1 1 14,8Z M8,7 V11 M8,5 V5.1",
             "settings" => "M6,2 H10 L10.5,4 L12,5 L14,4.5 L15.5,7 L14,8.5 V9.5 L15,11 L13.5,13 L11.5,12.5 L10,13.5 L9.5,15 H6.5 L6,13.5 L4.5,12.5 L2.5,13 L1,11 L2,9.5 V8.5 L0.5,7 L2,4.5 L4,5 L5.5,4 Z M10,8.5 A2,2 0 1 1 6,8.5 A2,2 0 1 1 10,8.5Z",
             "keyboard" => "M2,4 H14 Q15,4 15,5 V11 Q15,12 14,12 H2 Q1,12 1,11 V5 Q1,4 2,4Z M4,6.5 H4.1 M7,6.5 H7.1 M10,6.5 H10.1 M12,6.5 H12.1 M4,9.5 H4.1 M6,9.5 H11",
+            "edit" => "M3,3 H8 M3,3 V13 H13 V8 M6,10 L7,7 L12,2 L14,4 L9,9Z",
             "frame" => "M2,6 V2 H6 M10,2 H14 V6 M14,10 V14 H10 M6,14 H2 V10",
             "grip" => "M6,3 H6.1 M10,3 H10.1 M6,8 H6.1 M10,8 H10.1 M6,13 H6.1 M10,13 H10.1",
             "pause" => "M6,3 V13 M10,3 V13",
@@ -77,4 +83,84 @@ internal static class ToolbarGlyph
         viewport.Children.Add(path);
         return new Viewbox { Width = size, Height = size, Stretch = Stretch.Uniform, Child = viewport };
     }
+
+    internal static Button CreateButton(string label, string symbol, SnapPalette palette)
+    {
+        var control = new Button
+        {
+            Width = 28,
+            Height = 28,
+            Margin = new Thickness(0, 0, 1, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Content = ToolbarGlyph.Make(symbol),
+            Cursor = Cursors.Hand,
+            Focusable = false,
+            ToolTip = new ToolTip
+            {
+                Content = label, Padding = new Thickness(9, 5, 9, 5), Background = palette.Panel,
+                Foreground = palette.Foreground, BorderBrush = palette.Border, FontSize = 11,
+                Placement = PlacementMode.Top, VerticalOffset = -4
+            },
+            RenderTransformOrigin = new Point(0.5, 0.5),
+            RenderTransform = new ScaleTransform(1, 1),
+            Foreground = palette.Foreground, Background = Brushes.Transparent,
+            Template = IconTemplate(palette)
+        };
+        ToolTipService.SetInitialShowDelay(control, 300);
+        ToolTipService.SetShowOnDisabled(control, true);
+        if (SystemParameters.ClientAreaAnimation)
+        {
+            var scale = (ScaleTransform)control.RenderTransform;
+            void Animate(double target)
+            {
+                var duration = TimeSpan.FromMilliseconds(115);
+                scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(target, duration));
+                scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(target, duration));
+            }
+            control.PreviewMouseLeftButtonDown += (_, _) => Animate(0.92);
+            control.PreviewMouseLeftButtonUp += (_, _) => Animate(1);
+            control.LostMouseCapture += (_, _) => Animate(1);
+        }
+        AutomationProperties.SetName(control, label);
+        return control;
+    }
+
+    internal static ControlTemplate IconTemplate(SnapPalette palette)
+    {
+        var border = new FrameworkElementFactory(typeof(Border)) { Name = "Pill" };
+        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
+        border.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Control.BackgroundProperty));
+        var outer = new FrameworkElementFactory(typeof(Grid));
+        outer.AppendChild(border);
+        var hoverFill = new FrameworkElementFactory(typeof(Border)) { Name = "Hover" };
+        hoverFill.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
+        hoverFill.SetValue(Border.BackgroundProperty, palette.Muted);
+        hoverFill.SetValue(UIElement.OpacityProperty, 0d);
+        outer.AppendChild(hoverFill);
+        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
+        presenter.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        presenter.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        outer.AppendChild(presenter);
+
+        var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+        hover.Setters.Add(new Setter(UIElement.OpacityProperty, 0.14, "Hover"));
+        var press = new Trigger { Property = ButtonBase.IsPressedProperty, Value = true };
+        press.Setters.Add(new Setter(UIElement.OpacityProperty, 0.73, "Pill"));
+        var disabled = new Trigger { Property = UIElement.IsEnabledProperty, Value = false };
+        disabled.Setters.Add(new Setter(UIElement.OpacityProperty, 0.32));
+        var template = new ControlTemplate(typeof(Button)) { VisualTree = outer };
+        template.Triggers.Add(hover);
+        template.Triggers.Add(press);
+        template.Triggers.Add(disabled);
+        return template;
+    }
+
+    internal static Border Divider(SnapPalette palette) => new Border
+    {
+        Height = 20,
+        Width = 1,
+        Margin = new Thickness(3, 0, 4, 0),
+        VerticalAlignment = VerticalAlignment.Center,
+        Background = palette.Border
+    };
 }

@@ -25,60 +25,34 @@ internal sealed partial class RecordingPreview
             using (var writer = new BinaryWriter(output))
             {
                 int count = (int)Math.Ceiling((to - from) * fps);
+                RecordingGifWriter? animation = null;
+                byte[]? pixels = null;
+                int previousIndex = -1;
                 for (int index = 0; index < count; index++)
                 {
                     cancellation.ThrowIfCancellationRequested();
-                    var frame = frames.Read(input, from + index / (double)fps);
-                    double scale = longestEdge == 0 ? 1 : Math.Min(1, (double)longestEdge / Math.Max(frame.PixelWidth, frame.PixelHeight));
-                    if (scale != 1) frame = new TransformedBitmap(frame, new ScaleTransform(scale, scale));
-                    var encoder = new GifBitmapEncoder();
-                    encoder.Frames.Add(BitmapFrame.Create(frame));
-                    using var encoded = new MemoryStream();
-                    encoder.Save(encoded);
+                    int frameIndex = frames.IndexAt(from + index / (double)fps);
+                    if (frameIndex != previousIndex)
+                    {
+                        var frame = frames.ReadFrame(input, frameIndex, longestEdge);
+                        var bitmap = new FormatConvertedBitmap(frame, PixelFormats.Bgra32, null, 0);
+                        int stride = checked(bitmap.PixelWidth * 4);
+                        pixels ??= new byte[checked(stride * bitmap.PixelHeight)];
+                        animation ??= new RecordingGifWriter(writer, bitmap.PixelWidth, bitmap.PixelHeight);
+                        bitmap.CopyPixels(pixels, stride, 0);
+                        previousIndex = frameIndex;
+                    }
                     double before = index / (double)fps;
                     double after = Math.Min((index + 1) / (double)fps, to - from);
-                    WriteGifFrame(writer, encoded.ToArray(), index == 0, (ushort)Math.Max(1,
-                        Math.Round(after * 100) - Math.Round(before * 100)));
+                    animation!.Append(pixels!, (ushort)Math.Max(1, Math.Round(after * 100) - Math.Round(before * 100)));
                 }
-                writer.Write((byte)0x3b);
+                if (animation == null) throw new InvalidDataException("没有可导出的 GIF 帧。");
+                animation.Finish();
             }
             cancellation.ThrowIfCancellationRequested();
             File.Move(temporary, path, true);
         }
         finally { File.Delete(temporary); }
-    }
-
-    private static void WriteGifFrame(BinaryWriter output, byte[] frame, bool first, ushort delay)
-    {
-        if (frame.Length < 14 || frame[0] != 'G') throw new InvalidDataException("无法编码 GIF 帧。");
-        int globalSize = (frame[10] & 0x80) != 0 ? 3 << ((frame[10] & 7) + 1) : 0;
-        if (first)
-        {
-            output.Write(System.Text.Encoding.ASCII.GetBytes("GIF89a"));
-            output.Write(frame, 6, 7);
-            output.Write(frame, 13, globalSize);
-            output.Write(new byte[] { 0x21, 0xff, 0x0b, 0x4e, 0x45, 0x54, 0x53, 0x43, 0x41, 0x50, 0x45, 0x32, 0x2e, 0x30, 3, 1, 0, 0, 0 });
-        }
-        int p = 13 + globalSize;
-        while (p < frame.Length && frame[p] == 0x21)
-        {
-            p += 2;
-            while (p < frame.Length && frame[p] != 0) p += frame[p] + 1;
-            p++;
-        }
-        if (p + 10 >= frame.Length || frame[p] != 0x2c) throw new InvalidDataException("GIF 帧缺少图像数据。");
-        output.Write(new byte[] { 0x21, 0xf9, 4, 4 });
-        output.Write(delay);
-        output.Write((ushort)0);
-        bool localTable = (frame[p + 9] & 0x80) != 0;
-        output.Write(frame, p, 9);
-        if (!localTable && globalSize > 0)
-        {
-            output.Write((byte)((frame[p + 9] & 0x78) | 0x80 | (frame[10] & 7)));
-            output.Write(frame, 13, globalSize);
-        }
-        else output.Write(frame[p + 9]);
-        output.Write(frame, p + 10, frame.Length - p - 11);
     }
 
     private async Task SaveMp4(string path, double from, double to, CancellationToken cancellation)

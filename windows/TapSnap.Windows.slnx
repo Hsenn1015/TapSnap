@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/Tests/">
+    <Project Path="Tests/DesktopWorkflowTests/DesktopWorkflowTests.csproj" />
     <Project Path="Tests/ImageFormatTests/ImageFormatTests.csproj" />
     <Project Path="Tests/LongShotTests/LongShotTests.csproj" />
     <Project Path="Tests/PrivacyTests/PrivacyTests.csproj" />

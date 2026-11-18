@@ -8,12 +8,6 @@ using System.Windows.Media.Imaging;
 
 namespace TapSnap.Windows;
 
-internal enum AnnotationTool
-{
-    Arrow, Rectangle, Ellipse, Line, Pen, Text, Mosaic, Highlight, Number, Polygon,
-    Spotlight, Eraser, Magnifier, Watermark, PathTag, Privacy, Crop
-}
-
 internal enum StrokePattern { Solid, Dash, Dot }
 internal enum ShapeFill { Outline, Fill, Both }
 internal enum ArrowHead { Solid, Hollow, Open }

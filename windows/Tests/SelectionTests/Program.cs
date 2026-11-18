@@ -31,6 +31,21 @@ Check(SelectionGeometry.Resize(selected, leftMonitor, 3, 6000, -900) == Rectangl
 Check(SelectionGeometry.Resize(selected, leftMonitor, 5, 0, -1000).Height == 2,
     "缩过对边时保留最小有效尺寸");
 
+foreach (bool singleScreen in new[] { true, false })
+foreach (bool copies in new[] { true, false })
+foreach (int width in new[] { 240, 396, 760, 1600 })
+{
+    int slots = SelectionToolbarModel.Slots(width);
+    var dock = SelectionToolbarModel.Layout(slots, singleScreen, copies);
+    var all = dock.Tools.Concat(dock.Outputs).Concat(dock.More).ToList();
+    Check(all.Distinct().Count() == all.Count && dock.Tools.Length + dock.Outputs.Length <= slots &&
+        SelectionToolbarModel.DrawingTools.All(all.Contains), "框选工具栏缩窄时完整保留标注工具且不重复");
+    Check(all.Any(i => i.Action == CaptureAction.Record) == singleScreen &&
+          all.Any(i => i.Action == CaptureAction.LongShot) == singleScreen, "跨屏选区从主栏和更多中同时移除单屏录制动作");
+    Check(all.Any(i => i.Action == CaptureAction.Edit && i.Tool == null) == copies &&
+          all.Any(i => i.Action == CaptureAction.Copy) != copies, "普通截图以勾选复制，预设或隐私截图保留编辑确认");
+}
+
 static void Check(bool passed, string description)
 {
     if (!passed) throw new InvalidOperationException(description);

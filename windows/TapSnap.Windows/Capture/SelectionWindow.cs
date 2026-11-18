@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -18,10 +19,11 @@ using DrawingPoint = System.Drawing.Point;
 
 namespace TapSnap.Windows;
 
-internal enum CaptureAction { Edit, Copy, Save, Pin, LongShot, Record, Privacy, Text, Barcode, Table, Translation, Formula }
 internal sealed record Selection(BitmapSource Image, DrawingRect ScreenRegion, CaptureAction Action)
 {
     public DateTime CapturedAt { get; init; } = DateTime.Now;
+    public AnnotationTool? InitialTool { get; init; }
+    public bool RequiresPrivacy { get; init; }
 }
 
 internal sealed class SelectionWindow : Window
@@ -39,7 +41,11 @@ internal sealed class SelectionWindow : Window
     private readonly TextBlock hex = new() { Foreground = Brushes.White, FontSize = 10, HorizontalAlignment = HorizontalAlignment.Center };
     private readonly Border tag;
     private readonly Border toolbar;
-    private readonly WrapPanel buttons;
+    private readonly Panel buttons;
+    private readonly SnapPalette palette;
+    private readonly bool copyOnConfirm;
+    private (int Slots, bool SingleScreen)? dockLayout;
+    private bool ShowsEditorDock => action is CaptureAction.Edit or CaptureAction.Privacy;
     private readonly Border lens;
     private readonly Image zoomed = new() { Width = 100, Height = 100, Stretch = Stretch.Fill };
     private readonly byte[] pixel = new byte[4];
@@ -55,7 +61,7 @@ internal sealed class SelectionWindow : Window
     private int snapGeneration;
 
     private SelectionWindow(DrawingRect monitor, BitmapSource screenshot, CaptureAction action, bool windowsOnly,
-        Settings settings, CaptureSession session)
+        Settings settings, CaptureSession session, bool preset)
     {
         this.monitor = monitor;
         this.screenshot = screenshot;
@@ -63,6 +69,8 @@ internal sealed class SelectionWindow : Window
         this.windowsOnly = windowsOnly;
         this.settings = settings;
         this.session = session;
+        copyOnConfirm = action == CaptureAction.Edit && !preset;
+        palette = SnapPalette.For(settings.DarkTheme);
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false;
@@ -83,30 +91,29 @@ internal sealed class SelectionWindow : Window
         tag = Badge(dimensions);
         tag.IsHitTestVisible = false;
         canvas.Children.Add(tag);
-        buttons = new WrapPanel();
-        buttons.Children.Add(Choice("取消 ⎋", "取消框选 Esc", null));
-        if (action is CaptureAction.Edit or CaptureAction.Privacy)
-        {
-            buttons.Children.Add(Choice("长截图", "用当前选区开始长截图", CaptureAction.LongShot));
-            buttons.Children.Add(Choice("录屏", "用当前选区开始录屏", CaptureAction.Record));
-        }
-        if (action == CaptureAction.Edit)
-        {
-            buttons.Children.Add(Choice("复制", "复制当前选区", CaptureAction.Copy));
-            buttons.Children.Add(Choice("保存…", "选择文件名和保存位置", CaptureAction.Save));
-        }
-        buttons.Children.Add(Choice(action switch
-        {
-            CaptureAction.Record => "开始录屏",
-            CaptureAction.LongShot => "开始长截图",
-            CaptureAction.Pin => "贴图 ↵",
-            CaptureAction.Edit => "编辑 ↵",
-            _ => "确认 ↵"
-        }, "确认当前选区 ↵", action, primary: true));
+        buttons = ShowsEditorDock ? new StackPanel { Orientation = Orientation.Horizontal } : new WrapPanel();
         toolbar = Badge(buttons);
-        toolbar.Padding = new Thickness(6, 4, 6, 4);
         toolbar.CornerRadius = new CornerRadius(9);
-        toolbar.Background = SnapTheme.Brush(0, 204);
+        if (ShowsEditorDock)
+        {
+            toolbar.Height = 44;
+            toolbar.Padding = new Thickness(6, 0, 6, 0);
+            toolbar.Background = palette.EditorChrome;
+            toolbar.BorderBrush = palette.Border;
+            toolbar.BorderThickness = new Thickness(1);
+            AutomationProperties.SetName(toolbar, "标注工具栏");
+        }
+        else
+        {
+            buttons.Children.Add(Choice("取消 ⎋", "取消框选 Esc", null));
+            buttons.Children.Add(Choice(action switch
+            {
+                CaptureAction.Record => "开始录屏", CaptureAction.LongShot => "开始长截图",
+                CaptureAction.Pin => "贴图 ↵", _ => "确认 ↵"
+            }, "确认当前选区 ↵", action, primary: true));
+            toolbar.Padding = new Thickness(6, 4, 6, 4);
+            toolbar.Background = SnapTheme.Brush(0, 204);
+        }
         toolbar.Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 14, ShadowDepth = 2, Direction = 270, Opacity = .27 };
         toolbar.Cursor = Cursors.Arrow;
         toolbar.MouseLeftButtonDown += (_, e) => e.Handled = true;
@@ -155,7 +162,7 @@ internal sealed class SelectionWindow : Window
         PreviewKeyDown += (_, e) =>
         {
             if (e.Key == Key.Escape) { e.Handled = true; session.End(); }
-            bool copy = action == CaptureAction.Edit && e.Key == Key.C && Keyboard.Modifiers == ModifierKeys.Control;
+            bool copy = ShowsEditorDock && e.Key == Key.C && Keyboard.Modifiers == ModifierKeys.Control;
             if ((!copy && e.Key != Key.Enter) || start.HasValue || session.Finishing) return;
             e.Handled = true;
             if (region.HasValue) _ = Finish(copy ? CaptureAction.Copy : action);
@@ -199,7 +206,7 @@ internal sealed class SelectionWindow : Window
         }
     }
 
-    public static Selection? Select(CaptureAction action, Settings settings, bool windowsOnly = false)
+    public static Selection? Select(CaptureAction action, Settings settings, bool windowsOnly = false, bool preset = false)
     {
         var session = new CaptureSession();
         var screens = Desktop.Monitors();
@@ -209,7 +216,7 @@ internal sealed class SelectionWindow : Window
         try
         {
             for (int i = 0; i < screens.Count; i++)
-                session.Windows.Add(new SelectionWindow(screens[i].Bounds, images[i], action, windowsOnly, settings, session));
+                session.Windows.Add(new SelectionWindow(screens[i].Bounds, images[i], action, windowsOnly, settings, session, preset));
             if (session.Windows.Count == 0) return null;
             foreach (var window in session.Windows) window.Show();
             var active = session.Windows.FirstOrDefault(w => w.monitor.Contains(Desktop.Cursor)) ?? session.Windows[0];
@@ -460,32 +467,77 @@ internal sealed class SelectionWindow : Window
             Canvas.SetTop(tag, ClampPosition(rim.Top - 24, ActualHeight, tag.DesiredSize.Height));
         }
         if (!locked || !showsToolbar) return;
-        foreach (Button button in buttons.Children)
-            if (button.Tag is CaptureAction.LongShot or CaptureAction.Record && action is CaptureAction.Edit or CaptureAction.Privacy)
-                button.Visibility = monitor.Contains(r) ? Visibility.Visible : Visibility.Collapsed;
         rim.Intersect(full);
         if (rim.IsEmpty) return;
+        Rect available = full;
+        if (ShowsEditorDock)
+        {
+            var work = System.Windows.Forms.Screen.FromRectangle(monitor).WorkingArea;
+            available = new Rect(Local(work.Location), Local(new DrawingPoint(work.Right, work.Bottom)));
+            double limit = Math.Min(available.Width - 16, Math.Max(rim.Width, 44 * 9));
+            UpdateDock(SelectionToolbarModel.Slots(limit), monitor.Contains(r));
+        }
+        else buttons.MaxWidth = Math.Max(1, ActualWidth - 28);
         toolbar.Visibility = Visibility.Visible;
-        buttons.MaxWidth = Math.Max(1, ActualWidth - 28);
         toolbar.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         double height = toolbar.DesiredSize.Height;
         double top = rim.Bottom + 10;
-        if (top + height > ActualHeight - 8)
+        if (top + height > available.Bottom - 8)
         {
             double above = rim.Top - height - (settings.ShowSelectionSize ? 28 : 10);
-            top = above >= 8 ? above : rim.Bottom - height - 10;
+            top = !ShowsEditorDock && above >= available.Top + 8 ? above : rim.Bottom - height - 10;
         }
-        Canvas.SetLeft(toolbar, ClampPosition(rim.Left + (rim.Width - toolbar.DesiredSize.Width) / 2, ActualWidth, toolbar.DesiredSize.Width));
-        Canvas.SetTop(toolbar, ClampPosition(top, ActualHeight, height));
+        Canvas.SetLeft(toolbar, available.Left + ClampPosition(rim.Left + (rim.Width - toolbar.DesiredSize.Width) / 2 - available.Left,
+            available.Width, toolbar.DesiredSize.Width));
+        Canvas.SetTop(toolbar, available.Top + ClampPosition(top - available.Top, available.Height, height));
     }
 
-    private async Task Finish(CaptureAction act)
+    private void UpdateDock(int slots, bool singleScreen)
+    {
+        if (dockLayout == (slots, singleScreen)) return;
+        dockLayout = (slots, singleScreen);
+        buttons.Children.Clear();
+        var layout = SelectionToolbarModel.Layout(slots, singleScreen, copyOnConfirm);
+        Button Add(string title, string symbol, Action run)
+        {
+            var button = ToolbarGlyph.CreateButton(title, symbol, palette);
+            button.Click += (_, _) => run();
+            buttons.Children.Add(button);
+            return button;
+        }
+        void Choose(ToolbarItem item) => _ = Finish(item.Action, item.Tool);
+        foreach (var item in layout.Tools) Add(item.Title, item.Symbol, () => Choose(item));
+        buttons.Children.Add(ToolbarGlyph.Divider(palette));
+        foreach (var item in layout.Outputs) Add(item.Title, item.Symbol, () => Choose(item));
+        var more = ToolbarGlyph.CreateButton("更多工具与操作", "⌄", palette);
+        more.Click += (_, _) =>
+        {
+            var menu = new ContextMenu { PlacementTarget = more, Placement = PlacementMode.Top,
+                Background = palette.Panel, Foreground = palette.Foreground, BorderBrush = palette.Border };
+            foreach (var item in layout.More)
+            {
+                var entry = new MenuItem { Header = item.Title, Icon = ToolbarGlyph.Make(item.Symbol) };
+                entry.Click += (_, _) => Choose(item);
+                menu.Items.Add(entry);
+            }
+            menu.IsOpen = true;
+        };
+        buttons.Children.Add(more);
+        buttons.Children.Add(ToolbarGlyph.Divider(palette));
+        Add("取消框选 Esc", "×", session.End);
+        var title = copyOnConfirm ? (RecognitionService.ShouldScanAutomatically ? "检查后复制 Ctrl+C" : "复制 Ctrl+C") : "编辑 ↵";
+        var confirm = Add(title, "✓", () => _ = Finish(copyOnConfirm ? CaptureAction.Copy : action));
+        confirm.Background = palette.Primary;
+        confirm.Foreground = palette.PrimaryForeground;
+    }
+
+    private async Task Finish(CaptureAction act, AnnotationTool? initialTool = null)
     {
         if (session.Finishing || session.Ended || region is not { Width: > 0, Height: > 0 } rect) return;
         session.Finishing = true;
         buttons.IsEnabled = false;
         border.Opacity = .65;
-        await Task.Delay(SystemParameters.ClientAreaAnimation ? 75 : 1);
+        if (act != CaptureAction.Copy && SystemParameters.ClientAreaAnimation) await Task.Delay(65);
         if (session.Ended) return;
 
         try
@@ -519,7 +571,8 @@ internal sealed class SelectionWindow : Window
                 combined.Freeze();
                 image = combined;
             }
-            session.Result = new Selection(image, rect, act) { CapturedAt = session.CapturedAt };
+            session.Result = new Selection(image, rect, act) { CapturedAt = session.CapturedAt,
+                InitialTool = initialTool, RequiresPrivacy = action == CaptureAction.Privacy || initialTool == AnnotationTool.Privacy };
         }
         catch (Exception error)
         {

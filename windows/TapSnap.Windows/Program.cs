@@ -185,7 +185,7 @@ internal sealed class TapSnapHost : IDisposable
         {
             Desktop.Flush();
             toast.Dismiss();
-            selection = SelectionWindow.Select(action, settings, windowOnly);
+            selection = SelectionWindow.Select(action, settings, windowOnly, preset: accept != null);
         }
         finally { selecting = false; }
         if (selection == null) return;
@@ -208,7 +208,7 @@ internal sealed class TapSnapHost : IDisposable
 
     private void Complete(Selection shot, CapturePreset? preset = null)
     {
-        bool autoPrivacy = RecognitionService.ShouldScanAutomatically;
+        bool autoPrivacy = shot.RequiresPrivacy || RecognitionService.ShouldScanAutomatically;
         if (shot.Action is not (CaptureAction.LongShot or CaptureAction.Record))
         {
             ++captureSequence;
@@ -233,7 +233,7 @@ internal sealed class TapSnapHost : IDisposable
             case CaptureAction.Edit:
             case CaptureAction.Privacy:
                 OpenEditor(shot.Image, shot.ScreenRegion, shot.Action == CaptureAction.Privacy || autoPrivacy, preset: preset,
-                    captureID: captureSequence, capturedAt: shot.CapturedAt);
+                    captureID: captureSequence, capturedAt: shot.CapturedAt, initialTool: shot.InitialTool);
                 break;
             case CaptureAction.Copy:
                 if (autoPrivacy) OpenEditor(shot.Image, shot.ScreenRegion, true, CopyImage, completionTitle: "复制",
@@ -251,7 +251,12 @@ internal sealed class TapSnapHost : IDisposable
                         completionTitle: autoPrivacy ? "保存…" : null, captureID: captureSequence, capturedAt: shot.CapturedAt,
                         saveOnConfirm: autoPrivacy);
                 break;
-            case CaptureAction.LongShot: StartLongShot(shot.ScreenRegion); break;
+            case CaptureAction.Print:
+                if (autoPrivacy) OpenEditor(shot.Image, shot.ScreenRegion, true, i => EditorWindow.PrintImage(i, "TapSnap"),
+                    completionTitle: "打印", captureID: captureSequence, capturedAt: shot.CapturedAt);
+                else EditorWindow.PrintImage(shot.Image, "TapSnap");
+                break;
+            case CaptureAction.LongShot: StartLongShot(shot.ScreenRegion, shot.RequiresPrivacy); break;
             case CaptureAction.Record: StartRecording(shot.ScreenRegion); break;
             case CaptureAction.Text: Recognize(RecognitionMode.Text); break;
             case CaptureAction.Barcode: Recognize(RecognitionMode.Barcode); break;
@@ -273,7 +278,7 @@ internal sealed class TapSnapHost : IDisposable
 
     private void OpenEditor(BitmapSource image, DrawingRect? region, bool scan, Action<BitmapSource>? reviewedOutput = null,
         CapturePreset? preset = null, string? completionTitle = null, bool longImage = false, long? captureID = null,
-        DateTime? capturedAt = null, EditorWindow.Draft? restoring = null, bool saveOnConfirm = false)
+        DateTime? capturedAt = null, EditorWindow.Draft? restoring = null, bool saveOnConfirm = false, AnnotationTool? initialTool = null)
     {
         EditorWindow editor = null!;
         void Transfer(Action<DrawingRect> run, CaptureAction fallback)
@@ -294,7 +299,7 @@ internal sealed class TapSnapHost : IDisposable
         }
         editor = new EditorWindow(image, i => Invoke(() => CopyImage(i)),
             i => Invoke(() => { if (Images.SaveWithDialog(i, settings.OutputFolder, preset?.SaveFormat ?? settings.SaveFormat)) toast.Show("已保存"); }),
-            i => Invoke(() => pins.Add(i)), () => Transfer(StartLongShot, CaptureAction.LongShot),
+            i => Invoke(() => pins.Add(i)), () => Transfer(r => StartLongShot(r, scan || editor.LocalScanCompleted), CaptureAction.LongShot),
             () => Transfer(StartRecording, CaptureAction.Record), i => Scan(editor, i), settings.DarkTheme,
             settings.DefaultLineWidth, settings.DefaultFontSize, settings.DefaultMosaicBlockSize, settings.AutoMosaicFaces);
         editor.CapturedAt = capturedAt ?? DateTime.Now;
@@ -366,6 +371,7 @@ internal sealed class TapSnapHost : IDisposable
         editor.Closed += (_, _) => StopPrivacyScan(editor);
         if (longImage) editor.UseLongShotLayout();
         editor.Show();
+        if (initialTool is { } tool) editor.PickTool(tool);
         if (scan) Scan(editor, image);
     }
 
@@ -437,12 +443,12 @@ internal sealed class TapSnapHost : IDisposable
         else editor.Dispatcher.Invoke(Apply);
     }
 
-    private void StartLongShot(DrawingRect region)
+    private void StartLongShot(DrawingRect region, bool forcePrivacy = false)
     {
         if (longShot != null) { longShot.Activate(); return; }
         Desktop.Flush();
         var panel = new LongShotWindow(region, Desktop.Capture, image => OpenEditor(image, null,
-            RecognitionService.ShouldScanAutomatically, longImage: true), settings);
+            forcePrivacy || RecognitionService.ShouldScanAutomatically, longImage: true), settings);
         longShot = panel;
         panel.Closed += (_, _) => longShot = null;
         panel.Show();

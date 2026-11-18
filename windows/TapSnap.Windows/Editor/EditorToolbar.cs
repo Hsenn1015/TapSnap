@@ -8,7 +8,6 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
 using System.Windows.Threading;
 using System.Windows.Shapes;
@@ -40,16 +39,9 @@ public sealed partial class EditorWindow
         foreach (Button existing in dockButtons.Keys) ToolTipService.SetIsEnabled(existing, false);
         dockButtons.Clear();
         toolbar.Children.Clear();
-        var tools = new[]
-        {
-            Tool("箭头", "↗", AnnotationTool.Arrow), Tool("矩形", "□", AnnotationTool.Rectangle),
-            Tool("椭圆", "○", AnnotationTool.Ellipse), Tool("直线", "╱", AnnotationTool.Line),
-            Tool("画笔", "✎", AnnotationTool.Pen, priority: 2), Tool("文字标注", "T", AnnotationTool.Text, priority: 1),
-            Tool("马赛克", "▦", AnnotationTool.Mosaic, priority: 2), Tool("荧光笔", "▱", AnnotationTool.Highlight, priority: 2),
-            Tool("序号", "#", AnnotationTool.Number, priority: 2), Tool("多边形", "⬠", AnnotationTool.Polygon, priority: 2),
-            Tool("聚光灯", "◐", AnnotationTool.Spotlight, priority: 2), Tool("橡皮擦", "◇", AnnotationTool.Eraser, false, 2),
-            Tool("放大镜", "⌕", AnnotationTool.Magnifier, priority: 2)
-        };
+        var tools = SelectionToolbarModel.DrawingTools.Select((item, index) =>
+            Tool(item.Title, item.Symbol, item.Tool!.Value, item.Tool != AnnotationTool.Eraser,
+                 index < 4 ? 0 : item.Tool == AnnotationTool.Text ? 1 : 2)).ToArray();
         var actions = new List<DockTool>
         {
             Tool("隐私打码", "shield", AnnotationTool.Privacy, priority: 2),
@@ -110,83 +102,12 @@ public sealed partial class EditorWindow
 
     private Button NewIcon(string label, string symbol)
     {
-        var control = new Button
-        {
-            Width = 28,
-            Height = 28,
-            Margin = new Thickness(0, 0, 1, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-            Content = ToolbarGlyph.Make(symbol),
-            Cursor = Cursors.Hand,
-            Focusable = false,
-            ToolTip = new ToolTip
-            {
-                Content = label, Padding = new Thickness(9, 5, 9, 5), Background = palette.Panel,
-                Foreground = palette.Foreground, BorderBrush = palette.Border, FontSize = 11,
-                Placement = PlacementMode.Top, VerticalOffset = -4
-            },
-            RenderTransformOrigin = new Point(0.5, 0.5),
-            RenderTransform = new ScaleTransform(1, 1),
-            Template = IconTemplate()
-        };
-        ToolTipService.SetInitialShowDelay(control, 300);
-        ToolTipService.SetShowOnDisabled(control, true);
+        var control = ToolbarGlyph.CreateButton(label, symbol, palette);
         control.ToolTipOpening += (_, e) => e.Handled = stylePopup?.IsOpen == true;
-        if (SystemParameters.ClientAreaAnimation)
-        {
-            var scale = (ScaleTransform)control.RenderTransform;
-            void Animate(double target)
-            {
-                var duration = TimeSpan.FromMilliseconds(115);
-                scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(target, duration));
-                scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(target, duration));
-            }
-            control.PreviewMouseLeftButtonDown += (_, _) => Animate(0.92);
-            control.PreviewMouseLeftButtonUp += (_, _) => Animate(1);
-            control.LostMouseCapture += (_, _) => Animate(1);
-        }
-        AutomationProperties.SetName(control, label);
         return control;
     }
 
-    private ControlTemplate IconTemplate()
-    {
-        var border = new FrameworkElementFactory(typeof(Border)) { Name = "Pill" };
-        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
-        border.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Control.BackgroundProperty));
-        var outer = new FrameworkElementFactory(typeof(Grid));
-        outer.AppendChild(border);
-        var hoverFill = new FrameworkElementFactory(typeof(Border)) { Name = "Hover" };
-        hoverFill.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
-        hoverFill.SetValue(Border.BackgroundProperty, palette.Muted);
-        hoverFill.SetValue(OpacityProperty, 0d);
-        outer.AppendChild(hoverFill);
-        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
-        presenter.SetValue(HorizontalAlignmentProperty, HorizontalAlignment.Center);
-        presenter.SetValue(VerticalAlignmentProperty, VerticalAlignment.Center);
-        outer.AppendChild(presenter);
-
-        var hover = new Trigger { Property = IsMouseOverProperty, Value = true };
-        hover.Setters.Add(new Setter(OpacityProperty, 0.14, "Hover"));
-        var press = new Trigger { Property = ButtonBase.IsPressedProperty, Value = true };
-        press.Setters.Add(new Setter(OpacityProperty, 0.73, "Pill"));
-        var disabled = new Trigger { Property = IsEnabledProperty, Value = false };
-        disabled.Setters.Add(new Setter(OpacityProperty, 0.32));
-        var template = new ControlTemplate(typeof(Button)) { VisualTree = outer };
-        template.Triggers.Add(hover);
-        template.Triggers.Add(press);
-        template.Triggers.Add(disabled);
-        return template;
-    }
-
-    private void AddDivider() => toolbar.Children.Add(new Border
-    {
-        Height = 20,
-        Width = 1,
-        Margin = new Thickness(3, 0, 4, 0),
-        VerticalAlignment = VerticalAlignment.Center,
-        Background = palette.Border
-    });
+    private void AddDivider() => toolbar.Children.Add(ToolbarGlyph.Divider(palette));
 
     private void UpdateButtons()
     {
@@ -227,7 +148,7 @@ public sealed partial class EditorWindow
         menu.IsOpen = true;
     }
 
-    private void PickTool(AnnotationTool kind)
+    internal void PickTool(AnnotationTool kind)
     {
         FinishText(save: true);
         CancelDrag();
@@ -783,7 +704,7 @@ public sealed partial class EditorWindow
             layout.Children.Add(new TextBlock { Text = label, Foreground = palette.Foreground,
                 HorizontalAlignment = HorizontalAlignment.Center, FontSize = 11, Margin = new Thickness(0, 3, 0, 0) });
             var button = new Button { Content = layout, Margin = new Thickness(1), ToolTip = label, Cursor = Cursors.Hand,
-                BorderThickness = new Thickness(0), Padding = new Thickness(0), Template = IconTemplate() };
+                BorderThickness = new Thickness(0), Padding = new Thickness(0), Template = ToolbarGlyph.IconTemplate(palette) };
             AutomationProperties.SetName(button, label);
             button.Click += (_, _) =>
             {

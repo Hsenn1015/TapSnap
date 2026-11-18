@@ -2,7 +2,7 @@ name: Build and release
 
 on:
   push:
-    branches: [main]
+    branches: [main, verify/windows-editor-gif]
     tags: ['v*']
   pull_request:
     branches: [main]
@@ -181,6 +181,29 @@ jobs:
             dotnet run --project "windows/Tests/$suite" -c Release --no-build
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+      - name: Check out the Windows GIF baseline
+        if: github.ref == 'refs/heads/verify/windows-editor-gif'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v0.2.3
+          path: .baseline-windows
+          persist-credentials: false
+      - name: Test the first-stage editor and compare clipboard GIFs with v0.2.3
+        if: github.ref == 'refs/heads/verify/windows-editor-gif'
+        shell: pwsh
+        run: |
+          dotnet build .baseline-windows/windows/TapSnap.Windows/TapSnap.Windows.csproj -c Release -o "$env:RUNNER_TEMP/tapsnap-old"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet run --project windows/Tests/DesktopWorkflowTests -c Release --no-build -- "$env:RUNNER_TEMP/tapsnap-old/TapSnap.dll" "$PWD/assets/readme/capture-overview.webp" "$PWD/windows-evidence"
+          exit $LASTEXITCODE
+      - name: Upload the comparison and native toolbar image
+        if: always() && github.ref == 'refs/heads/verify/windows-editor-gif'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-verification
+          path: windows-evidence/
+          if-no-files-found: warn
+          retention-days: 14
       - name: Publish and verify the Windows ZIP files
         shell: pwsh
         run: |

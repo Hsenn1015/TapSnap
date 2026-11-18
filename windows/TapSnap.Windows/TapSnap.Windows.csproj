@@ -14,6 +14,7 @@
     <StartupObject>TapSnap.Windows.Program</StartupObject>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="DesktopWorkflowTests" />
     <PackageReference Include="Magick.NET-Q8-AnyCPU" Version="15.0.0" />
     <PackageReference Include="Tesseract" Version="5.2.0" />
     <PackageReference Include="ZXing.Net" Version="0.16.11" />

@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../TapSnap.Windows/Capture/SelectionGeometry.cs" Link="SelectionGeometry.cs" />
+    <Compile Include="../../TapSnap.Windows/Capture/SelectionToolbarModel.cs" Link="SelectionToolbarModel.cs" />
   </ItemGroup>
 </Project>

@@ -228,18 +228,20 @@ internal sealed partial class RecordingPreview : IDisposable
         var footer = new System.Windows.Controls.Primitives.UniformGrid { Rows = 1 };
         var close = RecordingWindow.Button("关闭", panel.Close);
         var saveVideo = new Button { Content = "保存视频…", Margin = new Thickness(3) };
-        saveVideo.SetResourceReference(FrameworkElement.StyleProperty, "SnapPrimary");
+        var copyVideo = new Button { Content = "复制视频", ToolTip = "将当前片段作为 MP4 文件复制（Ctrl+C）", Margin = new Thickness(3) };
+        copyVideo.SetResourceReference(FrameworkElement.StyleProperty, "SnapPrimary");
         var saveGif = new Button { Content = "保存 GIF…", Margin = new Thickness(3) };
         var copyGif = new Button { Content = "复制 GIF", Margin = new Thickness(3) };
         saveVideo.Click += (_, _) => StartExport(".mp4", false);
+        copyVideo.Click += (_, _) => StartExport(".mp4", true);
         saveGif.Click += (_, _) => StartExport(".gif", false);
         copyGif.Click += (_, _) => StartExport(".gif", true);
-        foreach (var button in new[] { close, saveVideo, saveGif, copyGif }) footer.Children.Add(button);
+        foreach (var button in new[] { close, saveVideo, saveGif, copyGif, copyVideo }) footer.Children.Add(button);
         controls.Children.Add(footer);
 
         void SetExporting(bool busy)
         {
-            foreach (var control in new Control[] { startSlider, endSlider, startField, endField, rates, sizes, reset, saveVideo, saveGif, copyGif })
+            foreach (var control in new Control[] { startSlider, endSlider, startField, endField, rates, sizes, reset, saveVideo, saveGif, copyGif, copyVideo })
                 control.IsEnabled = !busy;
             progress.Visibility = busy ? Visibility.Visible : Visibility.Hidden;
             cancel.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
@@ -263,7 +265,7 @@ internal sealed partial class RecordingPreview : IDisposable
             {
                 string cache = Path.Combine(Settings.DirectoryPath, "RecordingClipboard");
                 Directory.CreateDirectory(cache);
-                path = Path.Combine(cache, $"TapSnap-{DateTime.Now:yyyy-MM-dd-HHmmss}-{Guid.NewGuid():N}.gif");
+                path = Path.Combine(cache, $"TapSnap-{DateTime.Now:yyyy-MM-dd-HHmmss}-{Guid.NewGuid():N}{format}");
             }
             else
             {
@@ -281,6 +283,7 @@ internal sealed partial class RecordingPreview : IDisposable
             int rate = (int)rates.SelectedValue, limit = (int)sizes.SelectedValue;
             SetExporting(true);
             status.Text = "正在导出…";
+            bool placedOnClipboard = false;
             try
             {
                 if (format == ".gif") await Task.Run(() => SaveGif(path, start, end, rate, limit, cancellation.Token), cancellation.Token);
@@ -294,11 +297,13 @@ internal sealed partial class RecordingPreview : IDisposable
                 {
                     var files = new StringCollection { path };
                     var data = new DataObject();
-                    data.SetData("GIF", new MemoryStream(File.ReadAllBytes(path)), false);
+                    if (format == ".gif") data.SetData("GIF", new MemoryStream(await File.ReadAllBytesAsync(path, cancellation.Token)), false);
+                    cancellation.Token.ThrowIfCancellationRequested();
                     data.SetFileDropList(files);
                     Clipboard.SetDataObject(data, true);
+                    placedOnClipboard = true;
                 }
-                status.Text = copy ? "已复制 GIF" : "已保存";
+                status.Text = !copy ? "已保存" : format == ".gif" ? "已复制 GIF" : "已复制视频";
             }
             catch (OperationCanceledException) { if (!closed) status.Text = "已取消导出"; }
             catch (Exception error) { if (!closed) status.Text = $"导出失败：{error.Message}"; }
@@ -306,6 +311,7 @@ internal sealed partial class RecordingPreview : IDisposable
             {
                 export = null;
                 if (!closed) SetExporting(false);
+                if (copy && !placedOnClipboard) File.Delete(path);
             }
         }
 
@@ -357,7 +363,7 @@ internal sealed partial class RecordingPreview : IDisposable
         {
             if (e.Key == Key.Escape) { panel.Close(); e.Handled = true; }
             if (e.Key == Key.C && Keyboard.Modifiers == ModifierKeys.Control && Keyboard.FocusedElement is not TextBox)
-            { StartExport(".gif", true); e.Handled = true; }
+            { if (!e.IsRepeat) StartExport(".mp4", true); e.Handled = true; }
             if (e.Key == Key.Space && Keyboard.FocusedElement is not TextBox and not ComboBox)
             { SetPlaying(!playing); e.Handled = true; }
         };

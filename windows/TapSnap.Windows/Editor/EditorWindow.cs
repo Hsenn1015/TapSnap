@@ -478,17 +478,16 @@ public sealed partial class EditorWindow : Window
         }
     }
 
-    private void Print()
+    private void Print() => Export(image => PrintImage(image, Title));
+
+    internal static void PrintImage(BitmapSource image, string title)
     {
-        Export(image =>
-        {
-            var dialog = new PrintDialog();
-            if (dialog.ShowDialog() != true) return;
-            double scale = Math.Min(dialog.PrintableAreaWidth / image.PixelWidth, dialog.PrintableAreaHeight / image.PixelHeight);
-            var visual = new DrawingVisual();
-            using (var dc = visual.RenderOpen()) dc.DrawImage(image, new Rect(0, 0, image.PixelWidth * scale, image.PixelHeight * scale));
-            dialog.PrintVisual(visual, Title);
-        });
+        var dialog = new PrintDialog();
+        if (dialog.ShowDialog() != true) return;
+        double scale = Math.Min(dialog.PrintableAreaWidth / image.PixelWidth, dialog.PrintableAreaHeight / image.PixelHeight);
+        var visual = new DrawingVisual();
+        using (var dc = visual.RenderOpen()) dc.DrawImage(image, new Rect(0, 0, image.PixelWidth * scale, image.PixelHeight * scale));
+        dialog.PrintVisual(visual, title);
     }
 
     private void Confirm()

@@ -1,0 +1,198 @@
+using System.Diagnostics;
+using System.IO;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Runtime.Loader;
+using System.Text.Json;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using ImageMagick;
+using TapSnap.Windows;
+
+internal static class Program
+{
+    private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
+
+    [STAThread]
+    private static int Main(string[] args)
+    {
+        if (args.Length != 3) throw new ArgumentException("Expected v0.2.3 TapSnap.dll, fixture artwork and output folder.");
+        Application.ResourceAssembly = typeof(EditorWindow).Assembly;
+        var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+        app.Startup += async (_, _) =>
+        {
+            try
+            {
+                Directory.CreateDirectory(args[2]);
+                var legacy = new AssemblyLoadContext("v0.2.3").LoadFromAssemblyPath(Path.GetFullPath(args[0]));
+                var before = Export(legacy, args[1], Path.Combine(args[2], "v0.2.3.gif"));
+                var after = Export(typeof(RecordingPreview).Assembly, args[1], Path.Combine(args[2], "current.gif"));
+                var json = JsonSerializer.Serialize(new { before.Report, Current = after.Report }, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(Path.Combine(args[2], "gif-comparison.json"), json);
+                Console.WriteLine(json);
+                Require(after.Report.Bytes < before.Report.Bytes * .60, "Expected at least 40% savings on this desktop recording.");
+                Require(after.Report.MeanRgbError <= before.Report.MeanRgbError + 2, "GIF color error regressed.");
+                using var preview = (RecordingPreview)after.Preview;
+                using var host = new TapSnapHost(app);
+                await CheckSelection(host, args[2]);
+                await CheckClipboard(preview, Path.Combine(args[2], "current.gif"));
+                Console.WriteLine("PASS selection dock, one-click editor handoff and GIF clipboard.");
+                app.Shutdown(0);
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine(error);
+                app.Shutdown(1);
+            }
+        };
+        return app.Run();
+    }
+
+    private sealed record Measurement(long Bytes, long EncodingMs, int Width, int Height, int Frames, int Centiseconds, double MeanRgbError);
+
+    // Run each version's own JPEG spool, sampler and GIF writer. Only the timed
+    // SaveGif call is measured. Waiting for the spool keeps all 75 input samples.
+    private static (object Preview, Measurement Report) Export(Assembly assembly, string artwork, string target)
+    {
+        var type = assembly.GetType("TapSnap.Windows.RecordingFrames", true)!;
+        var frames = Activator.CreateInstance(type, GifFixture.Width, GifFixture.Height)!;
+        var add = type.GetMethod("Add")!;
+        var count = type.GetProperty("Count")!;
+        int i = 0;
+        foreach (var pixels in GifFixture.Frames(artwork))
+        {
+            var shot = BitmapSource.Create(GifFixture.Width, GifFixture.Height, 96, 96, PixelFormats.Bgra32, null, pixels, GifFixture.Width * 4);
+            shot.Freeze();
+            add.Invoke(frames, [TimeSpan.FromTicks(TimeSpan.TicksPerSecond * i / GifFixture.Fps), shot]);
+            i++;
+            Require(SpinWait.SpinUntil(() => (int)count.GetValue(frames)! == i, 10000), "Recording spool dropped a fixture frame.");
+        }
+        type.GetMethod("Stop")!.Invoke(frames, null);
+        ((Task)type.GetProperty("Completion")!.GetValue(frames)!).GetAwaiter().GetResult();
+        var previewType = assembly.GetType("TapSnap.Windows.RecordingPreview", true)!;
+        var preview = Activator.CreateInstance(previewType, frames, TimeSpan.FromSeconds(5), GifFixture.Fps, null)!;
+        var write = previewType.GetMethod("SaveGif", Private)!;
+        var timer = Stopwatch.StartNew();
+        write.Invoke(preview, [target, 0d, 5d, GifFixture.Fps, 1280, CancellationToken.None]);
+        timer.Stop();
+        if (assembly != typeof(RecordingPreview).Assembly) type.GetMethod("Clean")!.Invoke(frames, null);
+        using var gif = new MagickImageCollection(target);
+        Require(gif[0].AnimationIterations == 0, "GIF must loop.");
+        int duration = gif.Sum(f => (int)f.AnimationDelay);
+        Require(duration == 500, "GIF did not preserve the 5-second duration.");
+        gif.Coalesce();
+        Require(gif[0].Width == GifFixture.Width && gif[0].Height == GifFixture.Height, "Output resolution changed.");
+        int current = 0, until = (int)gif[0].AnimationDelay;
+        long error = 0, samples = 0;
+        i = 0;
+        foreach (var frame in GifFixture.Frames(artwork))
+        {
+            double center = (i++ + .5) * 100 / GifFixture.Fps;
+            while (center >= until && current + 1 < gif.Count) until += (int)gif[++current].AnimationDelay;
+            if (i % 7 != 1 && i != GifFixture.Count) continue;
+            var decoded = gif[current].ToByteArray(MagickFormat.Bgra);
+            for (int j = 0; j < frame.Length; j += 4)
+                for (int c = 0; c < 3; c++) error += Math.Abs(frame[j + c] - decoded[j + c]);
+            samples += frame.Length / 4 * 3;
+        }
+        var report = new Measurement(new FileInfo(target).Length, timer.ElapsedMilliseconds, GifFixture.Width, GifFixture.Height,
+            gif.Count, duration, Math.Round((double)error / samples, 3));
+        return (preview, report);
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool SetCursorPos(int x, int y);
+
+    private static async Task CheckSelection(TapSnapHost host, string output)
+    {
+        var shortcuts = (Dictionary<string, (string Title, Action Action)>)typeof(TapSnapHost).GetField("hotkeyActions", Private)!.GetValue(host)!;
+        var opening = Application.Current.Dispatcher.InvokeAsync(shortcuts["capture"].Action);
+        await Until(() => Application.Current.Windows.OfType<SelectionWindow>().Any(w => w.IsVisible), "selection window");
+        var overlay = Application.Current.Windows.OfType<SelectionWindow>().First(w => w.IsVisible);
+        var screen = Desktop.Monitors().First().Bounds;
+        var canvas = (Canvas)overlay.Content;
+        Require(SetCursorPos(screen.Left + 60, screen.Top + 80), "Cannot set cursor on the capture desktop.");
+        canvas.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
+            { RoutedEvent = UIElement.MouseLeftButtonDownEvent });
+        Require(SetCursorPos(screen.Left + screen.Width * 2 / 3, screen.Top + screen.Height / 2), "Cannot move cursor.");
+        canvas.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = Mouse.MouseMoveEvent });
+        canvas.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
+            { RoutedEvent = UIElement.MouseLeftButtonUpEvent });
+        overlay.UpdateLayout();
+        var dock = Descendants<Border>(canvas).Single(b => AutomationProperties.GetName(b) == "标注工具栏");
+        Require(dock.IsVisible && dock.ActualWidth > 0 && dock.ActualHeight == 44, "Dock missing on first drag release.");
+        var buttons = Descendants<Button>(dock).ToDictionary(AutomationProperties.GetName);
+        foreach (var name in new[] { "箭头", "编辑 ↵", "长截图", "录屏", "更多工具与操作", "复制 Ctrl+C" })
+            Require(buttons.ContainsKey(name), "Missing first-stage button " + name);
+        var size = new Size(Math.Ceiling(dock.ActualWidth), Math.Ceiling(dock.ActualHeight));
+        var visual = new DrawingVisual();
+        using (var graphics = visual.RenderOpen()) graphics.DrawRectangle(new VisualBrush(dock), null, new Rect(size));
+        var bitmap = new RenderTargetBitmap((int)size.Width, (int)size.Height, 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(visual);
+        var png = new PngBitmapEncoder();
+        png.Frames.Add(BitmapFrame.Create(bitmap));
+        using (var file = File.Create(Path.Combine(output, "selection-toolbar.png"))) png.Save(file);
+        Invoke(buttons["箭头"]);
+        await Until(() => Application.Current.Windows.OfType<EditorWindow>().Any(w => w.IsVisible), "editor after selecting arrow");
+        await opening;
+        var editor = Application.Current.Windows.OfType<EditorWindow>().Single(w => w.IsVisible);
+        Require(Equals(typeof(EditorWindow).GetField("tool", Private)!.GetValue(editor), AnnotationTool.Arrow),
+            "Editor did not start with arrow selected.");
+        editor.Close();
+        Console.WriteLine("PASS native screenshot action, drag, first-stage toolbar PNG, editor with arrow selected.");
+    }
+
+    private static async Task CheckClipboard(RecordingPreview preview, string saved)
+    {
+        Clipboard.Clear();
+        preview.Show();
+        var panel = Application.Current.Windows.Cast<Window>().Single(w => w.Title == "录屏预览");
+        panel.UpdateLayout();
+        var copy = Descendants<Button>(panel).Single(b => Equals(b.Content, "复制 GIF"));
+        Invoke(copy);
+        await Until(() => Clipboard.ContainsData("GIF") && Clipboard.ContainsFileDropList(), "GIF clipboard formats", 90);
+        var file = Clipboard.GetFileDropList().Cast<string>().Single();
+        using var data = (Stream)Clipboard.GetData("GIF")!;
+        using var memory = new MemoryStream();
+        data.CopyTo(memory);
+        var bytes = File.ReadAllBytes(file);
+        Require(bytes.SequenceEqual(memory.ToArray()) && bytes.SequenceEqual(File.ReadAllBytes(saved)),
+            "Clipboard bytes, its file and the regular GIF export differ.");
+        panel.Close();
+        Console.WriteLine($"PASS Windows clipboard GIF bytes and file match saved export ({bytes.Length} bytes).");
+    }
+
+    private static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T match) yield return match;
+            foreach (var nested in Descendants<T>(child)) yield return nested;
+        }
+    }
+
+    private static void Invoke(Button button) =>
+        ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)!).Invoke();
+
+    private static async Task Until(Func<bool> predicate, string description, int seconds = 15)
+    {
+        var timer = Stopwatch.StartNew();
+        while (!predicate())
+        {
+            Require(timer.Elapsed.TotalSeconds < seconds, "Timed out waiting for " + description);
+            await Task.Delay(50);
+        }
+    }
+
+    private static void Require(bool passed, string detail)
+    {
+        if (!passed) throw new InvalidOperationException(detail);
+    }
+}

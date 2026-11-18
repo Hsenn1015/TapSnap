@@ -43,7 +43,7 @@ internal sealed class RecordingFrames
 
     public SafeFileHandle Open() => File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.Read, FileOptions.RandomAccess);
 
-    public BitmapSource Read(SafeFileHandle file, double seconds)
+    public int IndexAt(double seconds)
     {
         int first = 0, last = index.Count - 1;
         while (first < last)
@@ -52,7 +52,14 @@ internal sealed class RecordingFrames
             if (index[mid].Time.TotalSeconds <= seconds) first = mid;
             else last = mid - 1;
         }
-        var frame = index[first];
+        return first;
+    }
+
+    public BitmapSource Read(SafeFileHandle file, double seconds) => ReadFrame(file, IndexAt(seconds));
+
+    public BitmapSource ReadFrame(SafeFileHandle file, int frameIndex, int longestEdge = 0)
+    {
+        var frame = index[frameIndex];
         var bytes = new byte[frame.Length];
         int read = 0;
         while (read < frame.Length)
@@ -62,7 +69,16 @@ internal sealed class RecordingFrames
             read += size;
         }
         using var stream = new MemoryStream(bytes, false);
-        return Images.Decode(stream);
+        if (longestEdge <= 0 || longestEdge >= Math.Max(Width, Height)) return Images.Decode(stream);
+        var bitmap = new BitmapImage();
+        bitmap.BeginInit();
+        bitmap.CacheOption = BitmapCacheOption.OnLoad;
+        if (Width >= Height) bitmap.DecodePixelWidth = longestEdge;
+        else bitmap.DecodePixelHeight = longestEdge;
+        bitmap.StreamSource = stream;
+        bitmap.EndInit();
+        bitmap.Freeze();
+        return bitmap;
     }
 
     public void Clean()
