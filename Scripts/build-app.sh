@@ -6,6 +6,7 @@
 #   Scripts/build-app.sh debug     # debug 构建
 #   TAPSNAP_VERSION 和 TAPSNAP_BUILD_NUMBER 可覆盖安装包中的版本号。
 #   同时设置 TAPSNAP_UPDATE_FEED_URL 和 TAPSNAP_UPDATE_PUBLIC_KEY 可启用更新。
+#   TAPSNAP_MAC_SIGNING_SHA1 指定签名证书指纹，TAPSNAP_MAC_SIGNING_KEYCHAIN 可指定钥匙串。
 set -euo pipefail
 
 CONFIG="${1:-release}"
@@ -23,6 +24,20 @@ LOOPBACK_FEED='^http://(localhost|127\.0\.0\.1|\[::1\])(:[0-9]+)?(/[^[:space:]]*
 if [[ -n "$UPDATE_FEED" && "$UPDATE_FEED" != https://* && ! "$UPDATE_FEED" =~ $LOOPBACK_FEED ]]; then
   echo "更新地址需使用 HTTPS，本机回环地址可使用 HTTP。" >&2
   exit 1
+fi
+
+KEYCHAIN="${TAPSNAP_MAC_SIGNING_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}"
+IDENTITY="${TAPSNAP_MAC_SIGNING_SHA1:-}"
+if [[ -n "$IDENTITY" ]]; then
+  if ! [[ "$IDENTITY" =~ ^[[:xdigit:]]{40}$ ]] || ! security find-identity -p codesigning "$KEYCHAIN" |
+      awk -v pin="$IDENTITY" 'toupper($2) == toupper(pin) { found = 1 } END { exit !found }'; then
+    echo "找不到指定的 macOS 代码签名身份，请核对证书指纹及对应的私钥。" >&2
+    exit 1
+  fi
+elif security find-identity -p codesigning "$KEYCHAIN" 2>/dev/null | grep -q '"SenSnap Local"'; then
+  IDENTITY="SenSnap Local"
+else
+  IDENTITY=-
 fi
 
 echo "==> swift build -c $CONFIG"
@@ -75,31 +90,25 @@ if [ -d "$ROOT/Resources/Localizable" ]; then
   cp -R "$ROOT/Resources/Localizable" "$APP/Contents/Resources/"
 fi
 
-echo "==> 签名"
-# 优先用本地自签名身份：它的 designated requirement 基于证书
-# （`identifier ... and certificate root = H"..."`），重建后
-# 「屏幕录制 / 辅助功能」授权依然有效。
-# 退回到 ad-hoc（--sign -）时 DR 是写死的 CDHash，每次重建授权都会失效。
-KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
-# 保留已有证书，不能因应用更名生成新身份而使系统授权失效。
-IDENTITY="SenSnap Local"
-# 注意不能加 -v：自签名证书不在信任链里，会被判定为 invalid 而漏掉。
-if security find-identity -p codesigning "$KEYCHAIN" 2>/dev/null | grep -q "\"$IDENTITY\""; then
-  echo "    使用身份：$IDENTITY"
+echo "==> 签名 ($IDENTITY)"
+SIGNER=("$IDENTITY")
+if [[ "$IDENTITY" == - ]]; then
+  echo "    临时签名的构建可能需要重新授权。本机开发可用 Scripts/setup-signing.sh 配置固定身份。"
 else
-  echo "    ad-hoc 签名（提示：重建后需要在系统设置里重新授予屏幕录制权限）"
-  echo "    想一劳永逸，先运行 Scripts/setup-signing.sh"
-  IDENTITY=-
+  SIGNER+=(--keychain "$KEYCHAIN")
 fi
 
 # 由内向外签名，保留 Sparkle 下载服务的权限与辅助程序的 Hardened Runtime。
 SPARKLE_VERSION="$SPARKLE/Versions/Current"
-codesign --force --sign "$IDENTITY" --options runtime "$SPARKLE_VERSION/XPCServices/Installer.xpc"
-bash "$ROOT/Scripts/build-update-downloader.sh" "$SPARKLE_VERSION/XPCServices/Downloader.xpc" "$IDENTITY"
-codesign --force --sign "$IDENTITY" --options runtime "$SPARKLE_VERSION/Autoupdate"
-codesign --force --sign "$IDENTITY" --options runtime "$SPARKLE_VERSION/Updater.app"
-codesign --force --sign "$IDENTITY" --options runtime "$SPARKLE"
-codesign --force --sign "$IDENTITY" "$APP"
+codesign --force --sign "${SIGNER[@]}" --options runtime "$SPARKLE_VERSION/XPCServices/Installer.xpc"
+bash "$ROOT/Scripts/build-update-downloader.sh" "$SPARKLE_VERSION/XPCServices/Downloader.xpc" "${SIGNER[@]}"
+codesign --force --sign "${SIGNER[@]}" --options runtime "$SPARKLE_VERSION/Autoupdate"
+codesign --force --sign "${SIGNER[@]}" --options runtime "$SPARKLE_VERSION/Updater.app"
+codesign --force --sign "${SIGNER[@]}" --options runtime "$SPARKLE"
+codesign --force --sign "${SIGNER[@]}" "$APP"
+if [[ -n "${TAPSNAP_MAC_SIGNING_SHA1:-}" ]]; then
+  codesign --verify --strict -R "=identifier \"com.sensnap.app\" and certificate leaf = H\"$IDENTITY\"" "$APP"
+fi
 
 echo "==> 完成：$APP"
 echo "    运行：open \"$APP\""

@@ -82,11 +82,21 @@ jobs:
           desktop='CaptureModeHandoffTests|ClipboardHistoryPersistenceTests|EditFeatureCompletionTests|EditorDockLayoutTests|GlobalShortcutTests|PrivacyCaptureTests|PrivacyVisualAITests|RecordingClipboardTests|UIRegionDetectorTests'
           encoder='GifExporterTests|RecordingAnnotationStyleTests|RecordingEnhancementTests|VideoEncoderTests|RecordSessionTests/test(RealEncoder|StaticScreen)'
           swift test --skip "$desktop|$encoder"
-      - name: Build and verify the DMG
+      - name: Build the macOS release with its persistent signing identity
+        if: github.ref_type == 'tag' && needs.version.outputs.prerelease == 'false'
+        shell: bash
+        env:
+          TAPSNAP_MAC_SIGNING_SHA1: ${{ vars.TAPSNAP_MAC_SIGNING_SHA1 }}
+          TAPSNAP_MAC_SIGNING_P12: ${{ secrets.TAPSNAP_MAC_SIGNING_P12 }}
+          TAPSNAP_MAC_SIGNING_PASSWORD: ${{ secrets.TAPSNAP_MAC_SIGNING_PASSWORD }}
+        run: bash Scripts/build-signed-macos.sh
+      - name: Build the macOS CI package
+        if: github.ref_type != 'tag' || needs.version.outputs.prerelease == 'true'
+        run: Scripts/build-app.sh release
+      - name: Verify the app and build the DMG
         shell: bash
         run: |
           set -euo pipefail
-          Scripts/build-app.sh release
           app=dist/TapSnap.app
           plist="$app/Contents/Info.plist"
           test "$(lipo -archs "$app/Contents/MacOS/TapSnap")" = arm64

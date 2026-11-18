@@ -160,7 +160,11 @@ macOS 菜单栏点「公式识别」，按提示准备 Python 3.12，再在应�
 
 推送 `main`、提交面向 `main` 的 PR，或在 [GitHub Actions](https://github.com/Hsenn1015/TapSnap/actions/workflows/build.yml) 手动运行时，会执行 macOS 托管环境回归测试与 Windows 四组回归，并在运行详情的 Artifacts 提供 Apple Silicon DMG 和两种架构的自包含 Windows ZIP。需要实际桌面、系统编码器和识别环境的 macOS 用例可在本机运行 `swift test`。
 
-发布时在目标提交创建并推送版本标签，例如 `v0.2.0`。所有构建通过后，流程会把三个安装包和 `SHA256SUMS.txt` 上传到 [GitHub Releases](https://github.com/Hsenn1015/TapSnap/releases)。CI 生成的 macOS 包是 ad-hoc 签名且未公证，Sparkle 更新源需单独配置。
+发布时在目标提交创建并推送版本标签，例如 `v0.2.0`。所有构建通过后，流程会把三个安装包和 `SHA256SUMS.txt` 上传到 [GitHub Releases](https://github.com/Hsenn1015/TapSnap/releases)。
+
+macOS 正式版使用固定的代码签名身份。维护者在仓库 Actions 变量 `TAPSNAP_MAC_SIGNING_SHA1` 中填写证书的 40 位 SHA-1 指纹，并将含私钥的 PKCS#12 文件的 Base64 内容和密码分别存入 Actions Secrets `TAPSNAP_MAC_SIGNING_P12`、`TAPSNAP_MAC_SIGNING_PASSWORD`。正式标签在临时钥匙串中签名，并校验产物使用了指定证书。公开分发可用 Developer ID Application 证书，内部构建也可复用同一张专用自签名证书。当前流程未做 Apple 公证。
+
+从 0.2.4 或更早的临时签名版本首次切换到固定签名时，macOS 可能会要求再次确认屏幕录制或辅助功能权限。后续版本保持兼容的签名身份即可沿用原授权。
 
 配置更新源的 macOS 构建可通过菜单栏「检查更新…」查看新版。自动提醒会等截图、录屏和编辑结束后出现，由用户确认安装。
 
