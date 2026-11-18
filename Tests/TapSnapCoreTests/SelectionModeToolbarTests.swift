@@ -1,7 +1,6 @@
 import AppKit
 import QuartzCore
 import TapSnapActionsBar
-import TapSnapScreen
 import XCTest
 @testable import TapSnapApp
 
@@ -152,17 +151,9 @@ final class SelectionModeToolbarTests: XCTestCase {
     }
 
     func testQuickToolbarDisplaysAVisibleHintWithShortcutAndHidesItOnExit() async throws {
-        _ = NSApplication.shared
-        guard let screen = ScreenLayout.current().first else { throw XCTSkip("工具栏提示需要 macOS WindowServer") }
-        let window = SelectionOverlayWindow(screen: screen)
-        let view = SelectionOverlayView(frame: CGRect(origin: .zero, size: screen.frame.size))
-        window.contentView = view
+        let view = makeView()
         view.onQuickAction = { _, _ in XCTFail("悬停不能触发快捷操作") }
         view.quickToolbarToolTip = { $0 == .record ? "录制 ⇧⌘R" : $0.title }
-        // 此用例直接向视图发送悬停事件，避免实体鼠标的进出事件覆盖测试位置。
-        window.ignoresMouseEvents = true
-        window.orderFrontRegardless()
-        defer { window.orderOut(nil) }
         try drag(view, from: CGPoint(x: 100, y: 160), to: CGPoint(x: 460, y: 360))
         let layout = try XCTUnwrap(view.quickToolbarLayout())
         let recordIndex = try XCTUnwrap(layout.actions.outputActions.firstIndex(of: .record))
@@ -172,10 +163,21 @@ final class SelectionModeToolbarTests: XCTestCase {
             + ActionsBarLayout.dividerWidth + ActionsBarLayout.spacing + ActionsBarLayout.buttonSize / 2
         let point = CGPoint(x: x, y: layout.background.midY)
 
-        view.mouseMoved(with: try mouse(.mouseMoved, at: point))
-        try await Task.sleep(for: .milliseconds(400))
-        let tip = try XCTUnwrap(view.subviews.filter { !$0.isHidden }
-            .first { subview in subview.subviews.contains { ($0 as? NSTextField)?.stringValue == "录制 ⇧⌘R" } })
+        func hoverAndWaitForTip(_ title: String) async throws -> NSView {
+            view.mouseMoved(with: try mouse(.mouseMoved, at: point))
+            func visibleTip() -> NSView? {
+                view.subviews.first { subview in
+                    !subview.isHidden && subview.subviews.contains { ($0 as? NSTextField)?.stringValue == title }
+                }
+            }
+            let deadline = ContinuousClock.now + .seconds(3)
+            while visibleTip() == nil, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            return try XCTUnwrap(visibleTip(), "悬停后应显示提示「\(title)」")
+        }
+
+        let tip = try await hoverAndWaitForTip("录制 ⇧⌘R")
         let label = try XCTUnwrap(tip.subviews.compactMap { $0 as? NSTextField }.first)
         let cell = try XCTUnwrap(label.cell)
         XCTAssertGreaterThanOrEqual(label.bounds.width, ceil(cell.cellSize.width), "应为绘制内边距留出空间")
@@ -190,9 +192,8 @@ final class SelectionModeToolbarTests: XCTestCase {
         let longHint = String(repeating: "录制当前桌面并显示按键和麦克风状态",
                               count: max(2, Int(view.bounds.width) / 120)) + " ⇧⌃⌥⌘R"
         view.quickToolbarToolTip = { $0 == .record ? longHint : $0.title }
-        view.mouseMoved(with: try mouse(.mouseMoved, at: point))
-        try await Task.sleep(for: .milliseconds(400))
-        XCTAssertFalse(tip.isHidden)
+        let wrappedTip = try await hoverAndWaitForTip(longHint)
+        XCTAssertTrue(wrappedTip === tip)
         XCTAssertEqual(label.stringValue, longHint)
         XCTAssertGreaterThan(cell.cellSize.width, label.bounds.width, "长提示应触发换行")
         XCTAssertGreaterThan(label.bounds.height, singleLineHeight)
