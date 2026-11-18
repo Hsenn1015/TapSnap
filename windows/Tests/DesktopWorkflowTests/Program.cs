@@ -23,6 +23,7 @@ internal static partial class Program
     private static int Main(string[] args)
     {
         if (args.Length != 3) throw new ArgumentException("Expected v0.2.3 TapSnap.dll, fixture artwork and output folder.");
+        args[2] = Path.GetFullPath(args[2]);
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         app.Startup += async (_, _) =>
         {

@@ -164,8 +164,6 @@ internal static partial class Program
         Console.WriteLine("PASS trimmed clipboard GIF shows the mask for exactly 7 centiseconds.");
         var mp4 = await Copy("复制视频", ".mp4");
         File.Copy(mp4, Path.Combine(folder, "clipboard-annotated.mp4"), true);
-        await CheckMoviePixels(mp4, 1);
-        Console.WriteLine("PASS decoded clipboard MP4 pixels before, during and after the annotation.");
         string savedGif = Path.Combine(folder, "annotated.gif");
         var saveGif = await GifMenu(panel, "保存 GIF…");
         await SaveThroughDialog(panel, savedGif, () =>
@@ -173,10 +171,13 @@ internal static partial class Program
         Require(File.ReadAllBytes(savedGif).SequenceEqual(File.ReadAllBytes(gifPath)), "Saved and copied annotation GIFs differ.");
         string savedVideo = Path.Combine(folder, "annotated.mp4");
         await SaveThroughDialog(panel, savedVideo, () => Invoke(ButtonNamed(panel, "保存视频…")));
-        await CheckMoviePixels(savedVideo, 1);
         Invoke(ButtonNamed(panel, "恢复全段"));
         await Until(() => Descendants<TextBox>(panel).Any(b => AutomationProperties.GetName(b) == "结束秒数" && b.Text == "5"), "reset full range");
-        await CheckMoviePixels(await Copy("复制视频", ".mp4"), 0);
+        string full = await Copy("复制视频", ".mp4");
+        File.Copy(full, Path.Combine(folder, "full-annotated.mp4"), true);
+        await CheckMoviePixels(mp4, 1);
+        await CheckMoviePixels(savedVideo, 1);
+        await CheckMoviePixels(full, 0);
         Console.WriteLine("PASS source frame 23/15 appears only at 53–60 cs of the trimmed GIF, and in trimmed and full MP4. Native save dialogs and clipboard exports agree.");
     }
 

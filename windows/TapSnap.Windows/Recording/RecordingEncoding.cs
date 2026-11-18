@@ -144,6 +144,9 @@ internal sealed partial class RecordingPreview
             {
                 var transcoder = new MediaTranscoder { HardwareAccelerationEnabled = true };
                 var profile = MediaEncodingProfile.CreateMp4(VideoEncodingQuality.HD720p);
+                // Media Foundation shifts the first presentation timestamp when it
+                // reorders B-frames. Keep the exported timeline anchored to zero.
+                profile.Video.ProfileId = H264ProfileIds.Baseline;
                 profile.Video.Width = (uint)w;
                 profile.Video.Height = (uint)h;
                 profile.Video.Bitrate = 8_000_000;
