@@ -28,7 +28,12 @@ internal static partial class Program
         panel.UpdateLayout();
         var size = new Size(Math.Ceiling(panel.ActualWidth), Math.Ceiling(panel.ActualHeight));
         var visual = new DrawingVisual();
-        using (var dc = visual.RenderOpen()) dc.DrawRectangle(new VisualBrush(panel), null, new Rect(size));
+        using (var dc = visual.RenderOpen())
+        {
+            var bounds = new Rect(size);
+            dc.DrawRectangle(Window.GetWindow(panel)?.Background, null, bounds);
+            dc.DrawRectangle(new VisualBrush(panel), null, bounds);
+        }
         var image = new RenderTargetBitmap((int)size.Width, (int)size.Height, 96, 96, PixelFormats.Pbgra32);
         image.Render(visual);
         var encoder = new PngBitmapEncoder();
@@ -51,10 +56,13 @@ internal static partial class Program
         window.UpdateLayout();
         var buttons = Descendants<RadioButton>(window).ToDictionary(b => (string)b.Content);
         Require(buttons.Count == 3 && buttons["全部"].IsChecked == true, "Missing history segments.");
+        var surfaces = buttons.ToDictionary(pair => pair.Key, pair => pair.Value.Template.FindName("Segment", pair.Value) as Border);
+        Require(surfaces.Values.All(b => b != null), "History filter is missing its segmented control template.");
         foreach (string filter in new[] { "文字", "图片", "全部" })
         {
             ((ISelectionItemProvider)new RadioButtonAutomationPeer(buttons[filter]).GetPattern(PatternInterface.SelectionItem)!).Select();
             window.UpdateLayout();
+            Require(Equals(surfaces[filter]!.Background, window.FindResource("Snap.Panel")), "Selected history segment is not highlighted.");
             Require(Descendants<TextBlock>(window).Any(t => t.Text == example) == (filter != "图片") &&
                 Descendants<Button>(window).Any(b => Equals(b.Content, "编辑")) == (filter != "文字"), "Wrong rows for " + filter);
         }

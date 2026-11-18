@@ -30,6 +30,9 @@ internal static partial class Program
             try
             {
                 Directory.CreateDirectory(args[2]);
+                // Initialize the production WPF resources before loading the old
+                // encoder, whose assembly has the same name and pack URI.
+                using var host = new TapSnapHost(app);
                 var legacy = new AssemblyLoadContext("v0.2.3").LoadFromAssemblyPath(Path.GetFullPath(args[0]));
                 var before = Export(legacy, args[1], Path.Combine(args[2], "v0.2.3.gif"));
                 var after = Export(typeof(RecordingPreview).Assembly, args[1], Path.Combine(args[2], "current.gif"));
@@ -39,7 +42,6 @@ internal static partial class Program
                 Require(after.Report.Bytes < before.Report.Bytes * .60, "Expected at least 40% savings on this desktop recording.");
                 Require(after.Report.MeanRgbError <= before.Report.MeanRgbError + 2, "GIF color error regressed.");
                 using var preview = (RecordingPreview)after.Preview;
-                using var host = new TapSnapHost(app);
                 await CheckStaticFrameEdits(args[2]);
                 await CheckSelection(host, args[2]);
                 await CheckHistoryFilters(host, args[2]);
