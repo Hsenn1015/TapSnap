@@ -58,6 +58,8 @@ internal static class ToolbarGlyph
             "frame" => "M2,6 V2 H6 M10,2 H14 V6 M14,10 V14 H10 M6,14 H2 V10",
             "grip" => "M6,3 H6.1 M10,3 H10.1 M6,8 H6.1 M10,8 H10.1 M6,13 H6.1 M10,13 H10.1",
             "pause" => "M6,3 V13 M10,3 V13",
+            "previous-frame" => "M3,3 V13 M13,3 L6,8 L13,13 Z",
+            "next-frame" => "M13,3 V13 M3,3 L10,8 L3,13 Z",
             "play" => "M5,2 L13,8 L5,14 Z",
             _ => string.Empty
         };

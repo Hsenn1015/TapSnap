@@ -103,7 +103,7 @@ internal sealed class RecordingMarkupEditor : FrameworkElement
         if (styles.TryGetValue(kind, out var style)) return style;
         double factor = Math.Min(reference.PixelWidth, reference.PixelHeight) / 720d;
         return new AnnotationStyle { Color = kind switch {
-            AnnotationTool.Text => Colors.White, AnnotationTool.Highlight => Colors.Gold, AnnotationTool.Privacy => Colors.Black,
+            AnnotationTool.Text => Colors.White, AnnotationTool.Highlight => Color.FromRgb(252, 217, 102), AnnotationTool.Privacy => Colors.Black,
             _ => Color.FromRgb(87, 227, 189) }, LineWidth = Math.Max(1, 5 * factor),
             FontSize = Math.Max(1, 36 * factor), Bold = true, TextBackground = Color.FromRgb(24, 24, 24) };
     }
@@ -111,7 +111,7 @@ internal sealed class RecordingMarkupEditor : FrameworkElement
     private void ShowStyles()
     {
         var kind = Selection >= 0 ? Items[Selection].Shape.Tool : tool;
-        if (kind == null || kind == AnnotationTool.Privacy) return;
+        if (kind == null) return;
         var style = Selection >= 0 ? Items[Selection].Shape.Style : StyleFor(kind.Value);
         var menu = new ContextMenu { PlacementTarget = styleButton };
         void Option(string label, AnnotationStyle next, bool active)
@@ -125,14 +125,27 @@ internal sealed class RecordingMarkupEditor : FrameworkElement
         }
         foreach (var (name, color) in new[] { ("薄荷绿", Color.FromRgb(87, 227, 189)), ("红色", Colors.Red), ("黄色", Colors.Gold), ("白色", Colors.White), ("黑色", Colors.Black) })
             Option(name, style with { Color = color }, style.Color == color);
-        menu.Items.Add(new Separator());
         double scale = Math.Min(reference.PixelWidth, reference.PixelHeight) / 720d;
-        foreach (int n in kind == AnnotationTool.Text ? new[] { 18, 24, 36, 48 } : new[] { 2, 5, 8, 12 })
+        if (kind != AnnotationTool.Privacy) menu.Items.Add(new Separator());
+        foreach (int n in kind switch { AnnotationTool.Text => new[] { 18, 24, 36, 48 }, AnnotationTool.Privacy => Array.Empty<int>(), _ => new[] { 2, 5, 8, 12 } })
         {
             double size = Math.Max(1, n * scale);
             bool isText = kind == AnnotationTool.Text;
             Option((isText ? "字号 " : "线宽 ") + n, isText ? style with { FontSize = size } : style with { LineWidth = size },
                 Math.Abs((isText ? style.FontSize : style.LineWidth) - size) < .01);
+        }
+        if (kind is AnnotationTool.Arrow or AnnotationTool.Line or AnnotationTool.Rectangle or AnnotationTool.Ellipse or AnnotationTool.Pen)
+        {
+            menu.Items.Add(new Separator());
+            foreach (var (label, pattern) in new[] { ("实线", StrokePattern.Solid), ("虚线", StrokePattern.Dash), ("点线", StrokePattern.Dot) })
+                Option(label, style with { Pattern = pattern }, style.Pattern == pattern);
+        }
+        if (kind is AnnotationTool.Rectangle or AnnotationTool.Ellipse)
+            Option("填充", style with { Fill = style.Fill == ShapeFill.Outline ? ShapeFill.Both : ShapeFill.Outline }, style.Fill != ShapeFill.Outline);
+        if (kind == AnnotationTool.Text)
+        {
+            Option("粗体", style with { Bold = !style.Bold }, style.Bold);
+            Option("文字底色", style with { TextBackground = style.TextBackground == null ? Color.FromRgb(24, 24, 24) : null }, style.TextBackground != null);
         }
         menu.IsOpen = true;
     }
@@ -245,7 +258,7 @@ internal sealed class RecordingMarkupEditor : FrameworkElement
         redoButton.IsEnabled = redo.Count > 0;
         var current = Selection >= 0 ? Items[Selection] : null;
         var kind = current?.Shape.Tool ?? tool;
-        styleButton.IsEnabled = kind is not (null or AnnotationTool.Privacy);
+        styleButton.IsEnabled = kind != null;
         inspector.Visibility = current == null ? Visibility.Collapsed : Visibility.Visible;
         if (current != null)
         {

@@ -81,7 +81,7 @@ internal sealed partial class RecordingPreview : IDisposable
         var timeline = new RecordingTimeline(full, videoRate, palette);
         int posterIndex = 0;
         media.Visibility = Visibility.Hidden;
-        var transport = new DockPanel { Margin = new Thickness(9, 4, 9, 5), Background = Brushes.Black };
+        var transport = new DockPanel { Background = palette.EditorChrome };
         DockPanel.SetDock(transport, Dock.Bottom);
         video.Children.Add(transport);
         video.Children.Add(scene);
@@ -90,15 +90,14 @@ internal sealed partial class RecordingPreview : IDisposable
         scene.Children.Add(ink);
 
         var time = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(20) };
-        var play = new Button { Content = "▶", Margin = new Thickness(3), Padding = new Thickness(9, 4, 9, 4) };
+        var play = ToolbarGlyph.CreateButton("播放／暂停", "play", palette);
         play.IsEnabled = false;
-        play.ToolTip = "播放／暂停";
         var volume = new Slider { Width = 64, Minimum = 0, Maximum = 1, Value = media.Volume, Margin = new Thickness(8, 2, 0, 2) };
         volume.ValueChanged += (_, _) => media.Volume = volume.Value;
         AutomationProperties.SetName(volume, "音量");
-        var previousFrame = ToolbarGlyph.CreateButton("上一帧", "◀", palette);
-        var nextFrame = ToolbarGlyph.CreateButton("下一帧", "▶", palette);
-        var clock = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Foreground = Brushes.White,
+        var previousFrame = ToolbarGlyph.CreateButton("上一帧", "previous-frame", palette);
+        var nextFrame = ToolbarGlyph.CreateButton("下一帧", "next-frame", palette);
+        var clock = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Foreground = foreground,
             Margin = new Thickness(8, 0, 0, 0), FontFamily = new FontFamily("Consolas") };
         AutomationProperties.SetName(clock, "当前播放时间");
         play.Click += (_, _) => SetPlaying(!playing);
@@ -106,8 +105,8 @@ internal sealed partial class RecordingPreview : IDisposable
         nextFrame.Click += (_, _) => Step(1);
         DockPanel.SetDock(volume, Dock.Right);
         transport.Children.Add(volume);
-        transport.Children.Add(previousFrame);
         transport.Children.Add(play);
+        transport.Children.Add(previousFrame);
         transport.Children.Add(nextFrame);
         transport.Children.Add(clock);
         controls.Children.Add(ink.Controls);
@@ -140,7 +139,7 @@ internal sealed partial class RecordingPreview : IDisposable
             if (!opened) return;
             if (value == playing) return;
             playing = value;
-            play.Content = value ? "Ⅱ" : "▶";
+            play.Content = ToolbarGlyph.Make(value ? "pause" : "play");
             if (value)
             {
                 if (head >= to) SetHead(from, false);

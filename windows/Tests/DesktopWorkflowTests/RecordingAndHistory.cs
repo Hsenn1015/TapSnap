@@ -1,11 +1,14 @@
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Automation.Provider;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ImageMagick;
@@ -155,8 +158,8 @@ internal static partial class Program
         }
         string savedGif = Path.Combine(folder, "annotated.gif");
         var saveGif = await GifMenu(panel, "保存 GIF…");
-        ButtonNamed(panel, "GIF 导出选项").ContextMenu!.IsOpen = false;
-        await SaveThroughDialog(panel, savedGif, () => saveGif.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent)));
+        await SaveThroughDialog(panel, savedGif, () =>
+            ((IInvokeProvider)new MenuItemAutomationPeer(saveGif).GetPattern(PatternInterface.Invoke)!).Invoke());
         Require(File.ReadAllBytes(savedGif).SequenceEqual(File.ReadAllBytes(gifPath)), "Saved and copied annotation GIFs differ.");
         var mp4 = await Copy("复制视频", ".mp4");
         await CheckMoviePixels(mp4, 1);
@@ -197,7 +200,7 @@ internal static partial class Program
         await frames.Completion;
         using var preview = new RecordingPreview(frames, TimeSpan.FromSeconds(.3), 60, null);
         RecordingMark[] marks = [
-            new(new(AnnotationTool.Privacy, new[] { new Point(20, 12), new Point(40, 32) }, new()), 2d / 60, 3d / 60),
+            new(new(AnnotationTool.Privacy, new[] { new Point(20, 12), new Point(40, 32) }, new() { Color = Colors.Black }), 2d / 60, 3d / 60),
             new(new(AnnotationTool.Arrow, new[] { new Point(4, 18), new Point(46, 18) }, new() { Color = Colors.Red, LineWidth = 4 }), .1, .2),
             new(new(AnnotationTool.Text, new[] { new Point(1, 1), new Point(60, 44) }, new() { Color = Colors.Black, FontSize = 28 }, "A"), .2, .3)
         ];
@@ -226,24 +229,54 @@ internal static partial class Program
         Console.WriteLine("PASS held source frame, 60 FPS mask at 3–5 cs, arrow, text and exact 30 cs duration at 10 FPS output.");
     }
 
+    private delegate bool EnumWindow(IntPtr window, IntPtr data);
+    [DllImport("user32.dll")] private static extern bool EnumThreadWindows(uint thread, EnumWindow callback, IntPtr data);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+    [DllImport("user32.dll")] private static extern IntPtr GetLastActivePopup(IntPtr window);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr window, StringBuilder name, int length);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr window, StringBuilder name, int length);
+
     private static async Task SaveThroughDialog(Window window, string path, Action start)
     {
         // Drive the standard Windows file picker on a worker while WPF runs its modal loop.
+        var owner = new WindowInteropHelper(window).Handle;
+        var thread = GetWindowThreadProcessId(owner, out _);
         var picker = Task.Run(() =>
         {
-            var condition = new AndCondition(new PropertyCondition(AutomationElement.ProcessIdProperty, Environment.ProcessId),
-                new PropertyCondition(AutomationElement.ClassNameProperty, "#32770"));
             var timer = Stopwatch.StartNew();
-            AutomationElement? dialog;
-            while ((dialog = AutomationElement.RootElement.FindFirst(TreeScope.Children, condition)) == null)
+            IntPtr handle = IntPtr.Zero;
+            while (handle == IntPtr.Zero)
             {
-                Require(timer.Elapsed.TotalSeconds < 15, "Native Save dialog did not open.");
-                Thread.Sleep(70);
+                var names = new List<string>();
+                bool Inspect(IntPtr hwnd, IntPtr unused)
+                {
+                    if (!IsWindowVisible(hwnd)) return true;
+                    var type = new StringBuilder(140);
+                    var title = new StringBuilder(140);
+                    GetClassName(hwnd, type, type.Capacity);
+                    GetWindowText(hwnd, title, title.Capacity);
+                    names.Add(type + "=" + title);
+                    if (type.ToString() != "#32770") return true;
+                    handle = hwnd;
+                    return false;
+                }
+                Inspect(GetLastActivePopup(owner), IntPtr.Zero);
+                if (handle == IntPtr.Zero) EnumThreadWindows(thread, Inspect, IntPtr.Zero);
+                Require(timer.Elapsed.TotalSeconds < 20, "Save dialog missing. Open windows: " + string.Join(", ", names));
+                if (handle == IntPtr.Zero) Thread.Sleep(70);
             }
+            var dialog = AutomationElement.FromHandle(handle);
             try
             {
-                var edit = dialog.FindFirst(TreeScope.Descendants, new AndCondition(new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit),
-                    new PropertyCondition(AutomationElement.AutomationIdProperty, "1001")));
+                var condition = new AndCondition(new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit),
+                    new PropertyCondition(AutomationElement.AutomationIdProperty, "1001"));
+                AutomationElement? edit;
+                while ((edit = dialog.FindFirst(TreeScope.Descendants, condition)) == null)
+                {
+                    Require(timer.Elapsed.TotalSeconds < 25, "Save dialog did not show its filename control.");
+                    Thread.Sleep(70);
+                }
                 ((ValuePattern)edit.GetCurrentPattern(ValuePattern.Pattern)).SetValue(path);
                 var save = dialog.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "1"));
                 ((InvokePattern)save.GetCurrentPattern(InvokePattern.Pattern)).Invoke();

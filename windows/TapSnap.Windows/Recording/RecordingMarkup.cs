@@ -18,7 +18,11 @@ internal sealed record RecordingMark(Annotation Shape, double Start, double End)
         var result = new DrawingGroup();
         using (var dc = result.Open())
         {
-            if (Shape.Tool == AnnotationTool.Privacy) dc.DrawRectangle(Brushes.Black, null, Shape.Bounds);
+            if (Shape.Tool == AnnotationTool.Privacy)
+            {
+                var color = Shape.Style.Color;
+                dc.DrawRectangle(AnnotationDrawing.Brush(Color.FromRgb(color.R, color.G, color.B)), null, Shape.Bounds);
+            }
             else AnnotationDrawing.Draw(dc, Shape, reference, new Rect(0, 0, reference.PixelWidth, reference.PixelHeight));
         }
         result.Freeze();
@@ -72,7 +76,9 @@ internal sealed record RecordingOverlay(RecordingMark Mark, Int32Rect Area, byte
             int dest = (Area.Y + y) * stride + Area.X * 4;
             if (Ink == null)
             {
-                MemoryMarshal.Cast<byte, uint>(frame.AsSpan(dest, Area.Width * 4)).Fill(0xff000000);
+                var color = Mark.Shape.Style.Color;
+                uint solid = 0xff000000u | (uint)color.R << 16 | (uint)color.G << 8 | color.B;
+                MemoryMarshal.Cast<byte, uint>(frame.AsSpan(dest, Area.Width * 4)).Fill(solid);
                 continue;
             }
             for (int x = 0; x < Area.Width; x++, src += 4, dest += 4)
