@@ -1,19 +1,19 @@
 # TapSnap for Windows
 
-Windows 版和 macOS 版同仓库维护。`TapSnap.Windows.slnx` 是独立的 C# / WPF 解决方案，构建不依赖 Swift 或 Xcode。它以现有 macOS 版的功能和交互为对照；此版本已交叉编译，Windows 桌面效果仍待实机验收。
+Windows 版和 macOS 版同仓库维护。Windows 使用独立的 C# / WPF 解决方案 `TapSnap.Windows.slnx`。Windows x64 原生回归覆盖框选后选择标注工具、录屏裁剪，以及 GIF 和 MP4 的剪贴板输出。
 
 设置、截图工具条、编辑器及浮动面板沿用 macOS 版的布局和配色。「设置 → 通用 → 深色界面」可以切换主题；新安装默认深色，已有设置会保留。
 
 ## 运行与构建
 
-建议在 Windows 11 上使用。运行试用包需安装与系统架构一致的 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/10.0)；解压整个 ZIP 后运行 `TapSnap.exe`。应用出现在系统托盘，双击图标进入框选，右键查看功能。源码构建需要 .NET 10 SDK，从仓库根目录运行：
+建议在 Windows 11 上使用。GitHub 构建的 ZIP 自带 .NET 运行时。Intel 或 AMD 电脑选择 `windows-x64`，Windows on Arm 电脑选择 `windows-arm64`。完整解压后运行 `TapSnap.exe`，双击系统托盘图标进入框选，右键可查看其他功能。安装 .NET 10 SDK 后，也可在仓库根目录构建和运行。
 
 ```powershell
 dotnet build windows/TapSnap.Windows.slnx -c Release
 dotnet run --project windows/TapSnap.Windows -c Release
 
-dotnet publish windows/TapSnap.Windows -c Release -r win-x64 --self-contained false -o windows/publish/win-x64
-dotnet publish windows/TapSnap.Windows -c Release -r win-arm64 --self-contained false -o windows/publish/win-arm64
+dotnet publish windows/TapSnap.Windows -c Release -r win-x64 --self-contained true -o windows/publish/win-x64
+dotnet publish windows/TapSnap.Windows -c Release -r win-arm64 --self-contained true -o windows/publish/win-arm64
 ```
 
 如需无需安装 .NET 的单文件 EXE：
