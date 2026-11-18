@@ -41,7 +41,7 @@ internal static class Program
                 using var host = new TapSnapHost(app);
                 await CheckSelection(host, args[2]);
                 await CheckClipboard(preview, Path.Combine(args[2], "current.gif"));
-                Console.WriteLine("PASS selection dock, one-click editor handoff and GIF clipboard.");
+                Console.WriteLine("PASS selection dock, one-click editor handoff and recording clipboard.");
                 app.Shutdown(0);
             }
             catch (Exception error)
@@ -163,8 +163,36 @@ internal static class Program
         var bytes = File.ReadAllBytes(file);
         Require(bytes.SequenceEqual(memory.ToArray()) && bytes.SequenceEqual(File.ReadAllBytes(saved)),
             "Clipboard bytes, its file and the regular GIF export differ.");
-        panel.Close();
         Console.WriteLine($"PASS Windows clipboard GIF bytes and file match saved export ({bytes.Length} bytes).");
+
+        // Exercise the same trim controls and downscaling as the preview UI.
+        var sliders = Descendants<Slider>(panel).ToList();
+        sliders.Single(s => AutomationProperties.GetName(s) == "裁剪开始时间").Value = 1;
+        sliders.Single(s => AutomationProperties.GetName(s) == "裁剪结束时间").Value = 3;
+        var settings = Descendants<ComboBox>(panel).ToList();
+        settings.Single(c => c.Items.OfType<ComboBoxItem>().Any(i => Equals(i.Tag, 640))).SelectedValue = 640;
+        Invoke(copy);
+        await Until(() => Clipboard.GetFileDropList().Cast<string>().Any(p => p != file && p.EndsWith(".gif")),
+            "cropped and resized GIF", 90);
+        using (var trimmed = new MagickImageCollection(Clipboard.GetFileDropList()[0]!))
+            Require(trimmed[0].Width == 640 && trimmed[0].Height == 360 && trimmed.Sum(f => (int)f.AnimationDelay) == 200,
+                "Preview range or GIF downscaling was lost.");
+        Console.WriteLine("PASS selected GIF range 1–3 s, 640 × 360, exactly two seconds.");
+
+        var videoButton = Descendants<Button>(panel).Single(b => Equals(b.Content, "复制视频"));
+        Invoke(videoButton);
+        await Until(() =>
+        {
+            var status = Descendants<TextBlock>(panel).FirstOrDefault(t => t.Text.StartsWith("导出失败"));
+            Require(status == null, status?.Text ?? "");
+            return Clipboard.GetFileDropList().Cast<string>().Any(p => p.EndsWith(".mp4"));
+        }, "trimmed MP4 clipboard file", 90);
+        var video = await Windows.Storage.StorageFile.GetFileFromPathAsync(Clipboard.GetFileDropList()[0]!);
+        var info = await video.Properties.GetVideoPropertiesAsync();
+        Require(Math.Abs(info.Duration.TotalSeconds - 2) < .1 && !Clipboard.ContainsData("GIF"),
+            "MP4 clipboard file did not preserve the selected range.");
+        panel.Close();
+        Console.WriteLine($"PASS copied MP4 duration {info.Duration.TotalSeconds:F2} s.");
     }
 
     private static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject
