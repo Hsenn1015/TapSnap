@@ -11,6 +11,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using ImageMagick;
 using TapSnap.Windows;
 using Windows.Graphics.Imaging;
@@ -109,9 +110,13 @@ internal static partial class Program
         await Task.Delay(100);
         await Drag(ink, new Point(ink.ActualWidth * .39, ink.ActualHeight * .39), new Point(ink.ActualWidth * .61, ink.ActualHeight * .61));
         Require(ink.Items is [{ Start: 0, End: 5 }], "Mask should cover the whole recording by default.");
+        // Selecting the new annotation opens its inspector and moves the timeline.
+        await panel.Dispatcher.InvokeAsync(panel.UpdateLayout, DispatcherPriority.ApplicationIdle);
         var seek = new Point(9 + (timeline.ActualWidth - 18) * 1.5 / 5, 19);
         await Drag(timeline, seek, seek);
         var clock = Descendants<TextBlock>(panel).Single(t => AutomationProperties.GetName(t) == "当前播放时间");
+        double at = double.Parse(clock.Text.Split('/')[0], System.Globalization.CultureInfo.CurrentCulture);
+        Require(Math.Abs(at - 1.5) < .025, $"Timeline click at 1.5 seconds reached {clock.Text}.");
         Invoke(ButtonNamed(panel, "上一帧"));
         await Until(() => clock.Text.StartsWith("1.400"), "previous frame");
         Invoke(ButtonNamed(panel, "下一帧"));
@@ -158,6 +163,7 @@ internal static partial class Program
         }
         Console.WriteLine("PASS trimmed clipboard GIF shows the mask for exactly 7 centiseconds.");
         var mp4 = await Copy("复制视频", ".mp4");
+        File.Copy(mp4, Path.Combine(folder, "clipboard-annotated.mp4"), true);
         await CheckMoviePixels(mp4, 1);
         Console.WriteLine("PASS decoded clipboard MP4 pixels before, during and after the annotation.");
         string savedGif = Path.Combine(folder, "annotated.gif");
@@ -193,6 +199,9 @@ internal static partial class Program
 
     private static async Task CheckStaticFrameEdits(string folder)
     {
+        var oneFrame = new RecordingMark(new(AnnotationTool.Privacy, new[] { new Point(), new Point(4, 4) }, new()), 23d / 15, 24d / 15);
+        Require(!oneFrame.Active(1 + 7d / 15) && oneFrame.Active(1 + 8d / 15) && !oneFrame.Active(1 + 9d / 15),
+            "Trimming a whole second shifted a one-frame annotation on the media clock.");
         // Only one captured JPEG backs every sample. A one-frame mask at 60 FPS
         // must appear between the 10 FPS ticks and clear again on that same JPEG.
         var frames = new RecordingFrames(64, 48);
@@ -235,8 +244,7 @@ internal static partial class Program
     [DllImport("user32.dll")] private static extern bool EnumThreadWindows(uint thread, EnumWindow callback, IntPtr data);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
     [DllImport("user32.dll")] private static extern IntPtr GetLastActivePopup(IntPtr window);
-    [DllImport("user32.dll")] private static extern IntPtr GetDlgItem(IntPtr dialog, int id);
-    [DllImport("user32.dll")] private static extern bool PostMessageW(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr window, StringBuilder name, int length);
@@ -246,6 +254,7 @@ internal static partial class Program
     {
         // Drive the standard Windows file picker on a worker while WPF runs its modal loop.
         path = Path.GetFullPath(path).Replace('/', '\\');
+        Clipboard.SetText(path);
         var owner = new WindowInteropHelper(window).Handle;
         var thread = GetWindowThreadProcessId(owner, out _);
         var picker = Task.Run(() =>
@@ -286,19 +295,19 @@ internal static partial class Program
                 SetForegroundWindow(handle);
                 edit.SetFocus();
                 var value = (ValuePattern)edit.GetCurrentPattern(ValuePattern.Pattern);
-                value.SetValue(path);
-                Require(value.Current.Value == path, "Native picker filename did not update.");
-                var ok = GetDlgItem(handle, 1);
-                Require(ok != IntPtr.Zero, "Native picker has no IDOK button.");
-                PostMessageW(ok, 0x00F5, IntPtr.Zero, IntPtr.Zero); // BM_CLICK
+                void Key(byte key, bool down) => keybd_event(key, 0, down ? 0u : 2u, UIntPtr.Zero);
+                Key(0x11, true); // Ctrl+A, Ctrl+V into the shell filename field.
+                Key(0x41, true); Key(0x41, false);
+                Key(0x56, true); Key(0x56, false);
+                Key(0x11, false);
+                for (int i = 0; value.Current.Value != path; i++)
+                {
+                    Require(i < 40, "Native picker filename after paste: " + value.Current.Value);
+                    Thread.Sleep(50);
+                }
+                Key(0x0D, true); Key(0x0D, false);
                 for (int attempt = 0; IsWindowVisible(handle); attempt++)
                 {
-                    if (attempt == 12)
-                    {
-                        var field = new IntPtr(edit.Current.NativeWindowHandle);
-                        PostMessageW(field, 0x0100, new IntPtr(13), IntPtr.Zero);
-                        PostMessageW(field, 0x0101, new IntPtr(13), IntPtr.Zero);
-                    }
                     if (attempt > 50)
                     {
                         var popup = AutomationElement.FromHandle(GetLastActivePopup(handle));

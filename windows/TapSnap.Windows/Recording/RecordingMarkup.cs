@@ -11,7 +11,13 @@ namespace TapSnap.Windows;
 // Shape coordinates and time ranges always refer to the original recording.
 internal sealed record RecordingMark(Annotation Shape, double Start, double End)
 {
-    public bool Active(double time) => Start <= time && time < End;
+    public bool Active(double time)
+    {
+        // A trimmed MP4's offset + frame index can round differently from the
+        // same frame on the original timeline. Compare on the media clock.
+        double tick = Math.Round(time * TimeSpan.TicksPerSecond);
+        return Math.Round(Start * TimeSpan.TicksPerSecond) <= tick && tick < Math.Round(End * TimeSpan.TicksPerSecond);
+    }
 
     public Drawing Drawing(BitmapSource reference)
     {
