@@ -13,6 +13,11 @@ namespace TapSnap.Windows;
 
 internal sealed class RecordingMarkupEditor : FrameworkElement
 {
+    internal static readonly (AnnotationTool Kind, string Title, string Symbol)[] Tools = [
+        (AnnotationTool.Arrow, "箭头", "↗"), (AnnotationTool.Rectangle, "方框", "□"),
+        (AnnotationTool.Ellipse, "椭圆", "○"), (AnnotationTool.Line, "直线", "╱"),
+        (AnnotationTool.Pen, "画笔", "✎"), (AnnotationTool.Highlight, "高亮", "▱"),
+        (AnnotationTool.Text, "文字", "T"), (AnnotationTool.Privacy, "打码", "shield") ];
     private readonly BitmapSource reference;
     private readonly SnapPalette palette;
     private readonly double duration;
@@ -33,6 +38,7 @@ internal sealed class RecordingMarkupEditor : FrameworkElement
     internal RecordingMark[] Items { get; private set; }
     internal int Selection { get; private set; } = -1;
     internal StackPanel Controls { get; } = new();
+    internal Panel Inspector => inspector;
     internal event Action? Changed, Pause;
     internal event Action<double>? Seek;
 
@@ -48,12 +54,7 @@ internal sealed class RecordingMarkupEditor : FrameworkElement
         AutomationProperties.SetName(this, "录屏标注画布");
         var row = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Center };
         Controls.Children.Add(row);
-        Controls.Children.Add(inspector);
-        foreach (var (kind, label, symbol) in new[] {
-            (AnnotationTool.Arrow, "箭头", "↗"), (AnnotationTool.Rectangle, "方框", "□"),
-            (AnnotationTool.Ellipse, "椭圆", "○"), (AnnotationTool.Line, "直线", "╱"),
-            (AnnotationTool.Pen, "画笔", "✎"), (AnnotationTool.Highlight, "高亮", "▱"),
-            (AnnotationTool.Text, "文字", "T"), (AnnotationTool.Privacy, "打码", "shield") })
+        foreach (var (kind, label, symbol) in Tools)
         {
             var button = Icon(row, label, symbol, () => ChooseTool(tool == kind ? null : kind));
             buttons.Add(kind, button);

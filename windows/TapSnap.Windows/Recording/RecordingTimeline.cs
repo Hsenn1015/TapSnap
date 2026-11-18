@@ -1,4 +1,6 @@
 using System;
+using System.Globalization;
+using System.Linq;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Input;
@@ -15,6 +17,7 @@ internal sealed class RecordingTimeline : FrameworkElement
     private readonly SnapPalette palette;
     private ImageBrush[] film = [];
     private RecordingMark[] marks = [];
+    private FormattedText[] labels = [];
     private int selected = -1;
     private double start, end, head, grabOffset;
     private enum Target { None, Start, End, Playhead, MarkStart, MarkEnd, MarkBody }
@@ -51,10 +54,15 @@ internal sealed class RecordingTimeline : FrameworkElement
     internal void Playhead(double seconds) { head = seconds; InvalidateVisual(); }
     internal void Marks(RecordingMark[] items, int selection)
     {
+        if (marks == items && selected == selection) return;
         marks = items;
         selected = selection;
+        labels = marks.Select(m => new FormattedText(RecordingMarkupEditor.Tools.First(t => t.Kind == m.Shape.Tool).Title,
+            CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, new Typeface("Segoe UI"), 10,
+            palette.PrimaryForeground, VisualTreeHelper.GetDpi(this).PixelsPerDip)).ToArray();
         Height = FilmHeight + 6 + LaneHeight * marks.Length;
         InvalidateVisual();
+        if (selected >= 0 && IsLoaded) BringIntoView(new Rect(0, FilmHeight + 6 + LaneHeight * selected, 1, LaneHeight));
     }
 
     private double TrackWidth => Math.Max(1, ActualWidth - 2 * Inset);
@@ -86,6 +94,7 @@ internal sealed class RecordingTimeline : FrameworkElement
             double a = X(i == draggedMark ? markStart : m.Start), b = X(i == draggedMark ? markEnd : m.End);
             var lane = new Rect(a, FilmHeight + 7 + i * LaneHeight, Math.Max(3, b - a), 12);
             dc.DrawRoundedRectangle(i == selected ? palette.Primary : palette.Muted, null, lane, 3, 3);
+            if (lane.Width > labels[i].Width + 16) dc.DrawText(labels[i], new Point(lane.X + 7, lane.Y - 1));
             if (i == selected && lane.Width > 12)
                 foreach (double x in new[] { lane.Left + 3, lane.Right - 3 })
                     dc.DrawLine(new Pen(palette.PrimaryForeground, 1), new Point(x, lane.Top + 3), new Point(x, lane.Bottom - 3));

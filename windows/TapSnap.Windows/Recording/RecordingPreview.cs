@@ -177,7 +177,6 @@ internal sealed partial class RecordingPreview : IDisposable
         };
         ink.Pause += () => SetPlaying(false);
         ink.Seek += Seek;
-        ink.Changed += () => { marks = ink.Items; timeline.Marks(marks, ink.Selection); };
         timeline.Marks(marks, ink.Selection);
         timeline.SelectMark += i => ink.SelectMark(i, true);
         timeline.MarkRange += ink.ChangeRange;
@@ -201,6 +200,7 @@ internal sealed partial class RecordingPreview : IDisposable
         var status = new TextBlock { Text = "正在读取视频…", VerticalAlignment = VerticalAlignment.Center, Foreground = muted };
         var reset = RecordingWindow.Button("恢复全段", () => ApplyRange(0, full, 0));
         rangeRow.Children.Add(reset);
+        controls.Children.Add(ink.Inspector);
         int gifRate = 15, gifLimit = 1280;
 
         var statusRow = new DockPanel { LastChildFill = true, Margin = new Thickness(3, 3, 3, 1) };
@@ -214,6 +214,12 @@ internal sealed partial class RecordingPreview : IDisposable
         controls.Children.Add(progress);
 
         string RangeText() => $"已选择 {to - from:F2} 秒，视频与 GIF 均导出此范围，GIF 无声";
+        ink.Changed += () =>
+        {
+            if (marks != ink.Items && export == null) status.Text = RangeText();
+            marks = ink.Items;
+            timeline.Marks(marks, ink.Selection);
+        };
 
         void ApplyRange(double start, double end, double seek)
         {
@@ -264,7 +270,7 @@ internal sealed partial class RecordingPreview : IDisposable
         {
             var menu = new ContextMenu { PlacementTarget = gifOptions };
             var save = new MenuItem { Header = "保存 GIF…" };
-            save.Click += (_, _) => StartExport(".gif", false);
+            save.Click += (_, _) => _ = panel.Dispatcher.BeginInvoke(() => StartExport(".gif", false), DispatcherPriority.Background);
             menu.Items.Add(save);
             void Choices(string title, int[] values, int selected, Func<int, string> label, Action<int> choose)
             {
@@ -289,7 +295,7 @@ internal sealed partial class RecordingPreview : IDisposable
 
         void SetExporting(bool busy)
         {
-            foreach (var control in new UIElement[] { timeline, ink, ink.Controls, startField, endField, reset, saveVideo, gifOptions, copyGif, copyVideo })
+            foreach (var control in new UIElement[] { timeline, ink, ink.Controls, ink.Inspector, startField, endField, reset, saveVideo, gifOptions, copyGif, copyVideo })
                 control.IsEnabled = !busy;
             progress.Visibility = busy ? Visibility.Visible : Visibility.Hidden;
             cancel.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;

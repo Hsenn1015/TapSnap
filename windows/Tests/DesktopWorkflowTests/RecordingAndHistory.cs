@@ -156,13 +156,15 @@ internal static partial class Program
             }
             Require(covered == 7, "A source frame between 10 FPS samples was lost.");
         }
+        Console.WriteLine("PASS trimmed clipboard GIF shows the mask for exactly 7 centiseconds.");
+        var mp4 = await Copy("复制视频", ".mp4");
+        await CheckMoviePixels(mp4, 1);
+        Console.WriteLine("PASS decoded clipboard MP4 pixels before, during and after the annotation.");
         string savedGif = Path.Combine(folder, "annotated.gif");
         var saveGif = await GifMenu(panel, "保存 GIF…");
         await SaveThroughDialog(panel, savedGif, () =>
             ((IInvokeProvider)new MenuItemAutomationPeer(saveGif).GetPattern(PatternInterface.Invoke)!).Invoke());
         Require(File.ReadAllBytes(savedGif).SequenceEqual(File.ReadAllBytes(gifPath)), "Saved and copied annotation GIFs differ.");
-        var mp4 = await Copy("复制视频", ".mp4");
-        await CheckMoviePixels(mp4, 1);
         string savedVideo = Path.Combine(folder, "annotated.mp4");
         await SaveThroughDialog(panel, savedVideo, () => Invoke(ButtonNamed(panel, "保存视频…")));
         await CheckMoviePixels(savedVideo, 1);
@@ -233,6 +235,9 @@ internal static partial class Program
     [DllImport("user32.dll")] private static extern bool EnumThreadWindows(uint thread, EnumWindow callback, IntPtr data);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
     [DllImport("user32.dll")] private static extern IntPtr GetLastActivePopup(IntPtr window);
+    [DllImport("user32.dll")] private static extern IntPtr GetDlgItem(IntPtr dialog, int id);
+    [DllImport("user32.dll")] private static extern bool PostMessageW(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr window, StringBuilder name, int length);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr window, StringBuilder name, int length);
@@ -240,6 +245,7 @@ internal static partial class Program
     private static async Task SaveThroughDialog(Window window, string path, Action start)
     {
         // Drive the standard Windows file picker on a worker while WPF runs its modal loop.
+        path = Path.GetFullPath(path).Replace('/', '\\');
         var owner = new WindowInteropHelper(window).Handle;
         var thread = GetWindowThreadProcessId(owner, out _);
         var picker = Task.Run(() =>
@@ -277,9 +283,32 @@ internal static partial class Program
                     Require(timer.Elapsed.TotalSeconds < 25, "Save dialog did not show its filename control.");
                     Thread.Sleep(70);
                 }
-                ((ValuePattern)edit.GetCurrentPattern(ValuePattern.Pattern)).SetValue(path);
-                var save = dialog.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "1"));
-                ((InvokePattern)save.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+                SetForegroundWindow(handle);
+                edit.SetFocus();
+                var value = (ValuePattern)edit.GetCurrentPattern(ValuePattern.Pattern);
+                value.SetValue(path);
+                Require(value.Current.Value == path, "Native picker filename did not update.");
+                var ok = GetDlgItem(handle, 1);
+                Require(ok != IntPtr.Zero, "Native picker has no IDOK button.");
+                PostMessageW(ok, 0x00F5, IntPtr.Zero, IntPtr.Zero); // BM_CLICK
+                for (int attempt = 0; IsWindowVisible(handle); attempt++)
+                {
+                    if (attempt == 12)
+                    {
+                        var field = new IntPtr(edit.Current.NativeWindowHandle);
+                        PostMessageW(field, 0x0100, new IntPtr(13), IntPtr.Zero);
+                        PostMessageW(field, 0x0101, new IntPtr(13), IntPtr.Zero);
+                    }
+                    if (attempt > 50)
+                    {
+                        var popup = AutomationElement.FromHandle(GetLastActivePopup(handle));
+                        var labels = popup.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text))
+                            .Cast<AutomationElement>().Select(e => e.Current.Name);
+                        throw new InvalidOperationException("File picker stayed open after Save: " + string.Join(" | ", labels));
+                    }
+                    Thread.Sleep(100);
+                }
+                Console.WriteLine("Native picker accepted " + path);
             }
             catch
             {
@@ -289,6 +318,11 @@ internal static partial class Program
         });
         _ = window.Dispatcher.InvokeAsync(start);
         await picker;
-        await Until(() => File.Exists(path) && new FileInfo(path).Length > 0, "save " + Path.GetFileName(path), 90);
+        await Until(() =>
+        {
+            var status = Descendants<TextBlock>(window).FirstOrDefault(t => t.Text.StartsWith("导出失败"));
+            Require(status == null, status?.Text ?? "");
+            return File.Exists(path) && new FileInfo(path).Length > 0;
+        }, "save " + Path.GetFileName(path), 40);
     }
 }
