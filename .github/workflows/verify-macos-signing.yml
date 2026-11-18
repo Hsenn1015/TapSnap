@@ -1,0 +1,48 @@
+name: Verify macOS upgrade signing
+
+on: workflow_dispatch
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build two versions with the release signing identity
+        shell: bash
+        env:
+          TAPSNAP_MAC_SIGNING_SHA1: ${{ vars.TAPSNAP_MAC_SIGNING_SHA1 }}
+          TAPSNAP_MAC_SIGNING_P12: ${{ secrets.TAPSNAP_MAC_SIGNING_P12 }}
+          TAPSNAP_MAC_SIGNING_PASSWORD: ${{ secrets.TAPSNAP_MAC_SIGNING_PASSWORD }}
+        run: |
+          set -euo pipefail
+          TAPSNAP_BUILD_NUMBER=1 bash Scripts/build-signed-macos.sh
+          mv dist/TapSnap.app "$RUNNER_TEMP/TapSnap-1.app"
+          TAPSNAP_BUILD_NUMBER=2 bash Scripts/build-signed-macos.sh
+      - name: Check that each version satisfies the other's code requirement
+        shell: bash
+        run: |
+          set -euo pipefail
+          first="$RUNNER_TEMP/TapSnap-1.app"
+          second=dist/TapSnap.app
+          for app in "$first" "$second"; do
+            codesign --verify --deep --strict "$app"
+          done
+          test "$(plutil -extract CFBundleVersion raw -o - "$first/Contents/Info.plist")" = 1
+          test "$(plutil -extract CFBundleVersion raw -o - "$second/Contents/Info.plist")" = 2
+          requirement() { codesign -d -r- "$1" 2>&1 | sed -n 's/^designated => //p'; }
+          first_rule=$(requirement "$first")
+          second_rule=$(requirement "$second")
+          test -n "$first_rule"
+          test -n "$second_rule"
+          codesign --verify --strict -R "=$first_rule" "$second"
+          codesign --verify --strict -R "=$second_rule" "$first"
+          printf 'Verified both builds against the release identity: %s\n' "$first_rule"

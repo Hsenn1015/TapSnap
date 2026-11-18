@@ -300,7 +300,11 @@ jobs:
             if [[ "$PRERELEASE" == true ]]; then
               flags+=(--prerelease)
             fi
-            gh release create "$tag" "${flags[@]}" --notes 'macOS 包使用临时签名，未公证。Windows ZIP 内含 .NET 运行时，请解压后打开 TapSnap.exe。'
+            macos_note='macOS 包使用 TapSnap 固定签名，尚未经过 Apple 公证。'
+            if [[ "$PRERELEASE" == true ]]; then
+              macos_note='macOS 包使用测试构建签名，尚未经过 Apple 公证。'
+            fi
+            gh release create "$tag" "${flags[@]}" --notes "$macos_note Windows ZIP 内含 .NET 运行时，请解压后打开 TapSnap.exe。"
           fi
           gh release upload "$tag" "${files[@]}" --clobber
           publish_flags=(--draft=false --verify-tag)
