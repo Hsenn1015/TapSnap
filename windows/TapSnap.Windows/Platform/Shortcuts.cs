@@ -9,17 +9,6 @@ using System.Windows.Interop;
 
 namespace TapSnap.Windows;
 
-internal sealed record Hotkey(uint Modifiers, uint KeyCode)
-{
-    public override string ToString()
-    {
-        var key = KeyInterop.KeyFromVirtualKey((int)KeyCode).ToString();
-        if (key.Length == 2 && key[0] == 'D' && char.IsAsciiDigit(key[1])) key = key[1..];
-        return ((Modifiers & 2) != 0 ? "Ctrl+" : "") + ((Modifiers & 1) != 0 ? "Alt+" : "") +
-               ((Modifiers & 4) != 0 ? "Shift+" : "") + ((Modifiers & 8) != 0 ? "Win+" : "") + key;
-    }
-}
-
 internal sealed class Shortcuts : IDisposable
 {
     private readonly HwndSource source = new(new HwndSourceParameters("TapSnapHotkeys")
@@ -71,11 +60,36 @@ internal sealed class Shortcuts : IDisposable
         source.Dispose();
     }
 
-    public static Hotkey? Record(Window owner)
+    internal static Hotkey FromEvent(KeyEventArgs args) =>
+        new((uint)Keyboard.Modifiers, (uint)KeyInterop.VirtualKeyFromKey(EventKey(args)));
+
+    private static Key EventKey(KeyEventArgs args) => args.Key == Key.System ? args.SystemKey : args.Key;
+
+    internal static string Display(Hotkey hotkey)
+    {
+        Key key = KeyInterop.KeyFromVirtualKey((int)hotkey.KeyCode);
+        string text = key switch
+        {
+            >= Key.D0 and <= Key.D9 => ((int)(key - Key.D0)).ToString(),
+            Key.OemPlus => "=",
+            Key.OemMinus => "−",
+            Key.Add => "小键盘+",
+            Key.Subtract => "小键盘−",
+            _ => key.ToString()
+        };
+        uint modifiers = hotkey.Modifiers;
+        return ((modifiers & 2) != 0 ? "Ctrl+" : "") + ((modifiers & 1) != 0 ? "Alt+" : "") +
+               ((modifiers & 4) != 0 ? "Shift+" : "") + ((modifiers & 8) != 0 ? "Win+" : "") + text;
+    }
+
+    internal static string WithHint(string title, string? shortcut) => shortcut is null ? title : $"{title} {shortcut}";
+
+    public static Hotkey? Record(Window owner, bool allowsSingleKeys = false)
     {
         var instructions = new TextBlock
         {
-            Text = "按下新的组合键。Esc 取消，退格键清除。",
+            Text = allowsSingleKeys ? "按下单键或组合键。Esc 取消，Delete 或退格键清除。"
+                                   : "按下新的组合键。Esc 取消，退格键清除。",
             Margin = new Thickness(20), TextWrapping = TextWrapping.Wrap
         };
         var prompt = new Window
@@ -87,11 +101,12 @@ internal sealed class Shortcuts : IDisposable
         Hotkey? result = null;
         prompt.PreviewKeyDown += (_, e) =>
         {
-            var key = e.Key == Key.System ? e.SystemKey : e.Key;
+            var key = EventKey(e);
             var modifiers = Keyboard.Modifiers;
             e.Handled = true;
+            if (e.IsRepeat) return;
             if (key == Key.Escape) { prompt.Close(); return; }
-            if (key == Key.Back && modifiers == ModifierKeys.None)
+            if ((key == Key.Back || (allowsSingleKeys && key == Key.Delete)) && modifiers == ModifierKeys.None)
             {
                 result = new Hotkey(0, 0);
                 prompt.DialogResult = true;
@@ -99,14 +114,20 @@ internal sealed class Shortcuts : IDisposable
             }
             if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
                 return;
-            if ((modifiers & (ModifierKeys.Alt | ModifierKeys.Control | ModifierKeys.Windows)) == 0 && key is not (>= Key.F1 and <= Key.F24))
+            if (allowsSingleKeys && modifiers == ModifierKeys.None && key is Key.Enter or Key.Tab)
+            {
+                instructions.Text = "回车和 Tab 用于确认与切换焦点，请换一个键位。";
+                return;
+            }
+            if (!allowsSingleKeys && (modifiers & (ModifierKeys.Alt | ModifierKeys.Control | ModifierKeys.Windows)) == 0 &&
+                key is not (>= Key.F1 and <= Key.F24))
             {
                 instructions.Text = "请使用 Ctrl、Alt 或 Win 组合键，也可以单独按 F1–F24。";
                 return;
             }
-            int code = KeyInterop.VirtualKeyFromKey(key);
-            if (code == 0) return;
-            result = new Hotkey((uint)modifiers, (uint)code);
+            Hotkey binding = FromEvent(e);
+            if (binding.KeyCode == 0) return;
+            result = binding;
             prompt.DialogResult = true;
         };
         return prompt.ShowDialog() == true ? result : null;

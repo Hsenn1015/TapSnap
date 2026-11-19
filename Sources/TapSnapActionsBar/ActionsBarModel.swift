@@ -63,6 +63,10 @@ public struct ActionsBarModel: Codable, Hashable, Sendable {
 
     /// 悬停时的提示文字，带上该动作的快捷键。
     public func toolTip(for action: ActionKind, config: ConfigStore) -> String {
+        let operation = OperationShortcut.action(action)
+        if OperationShortcut.defaults[operation.id] != nil {
+            return operation.displayTitle(in: config.settings)
+        }
         guard let shortcut = action.shortcutAction,
               let binding = config.binding(for: shortcut)
         else {

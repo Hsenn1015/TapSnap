@@ -16,12 +16,17 @@ namespace TapSnap.Windows;
 
 public sealed partial class EditorWindow : Window
 {
+    private const double ZoomStep = 1.25;
     private readonly BitmapSource source;
     private readonly AnnotationSurface canvas;
     private readonly Canvas textLayer = new() { ClipToBounds = true, IsHitTestVisible = false };
     private readonly StackPanel toolbar = new() { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+    private readonly StackPanel zoomControls = new() { Orientation = Orientation.Horizontal, Width = 94, Margin = new Thickness(4, 0, 0, 0) };
+    private readonly Button zoomFit;
+    private IReadOnlyDictionary<string, Hotkey>? operationHotkeys;
     private readonly Border toolbarDock;
     private readonly Grid body = new();
+    private readonly ScrollViewer canvasViewport;
     private readonly Border status = new() { Height = 30, Visibility = Visibility.Collapsed };
     private readonly DockPanel statusContent = new() { Margin = new Thickness(9, 0, 8, 0) };
     private readonly TextBlock statusLabel = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 11 };
@@ -71,7 +76,6 @@ public sealed partial class EditorWindow : Window
     private bool showStatus;
     private int laidOutSlots;
     private bool longShotLayout;
-    private ScrollViewer? longShotScroll;
     private bool originalLongShotPixels;
     private readonly List<Button> longShotOutputs = new();
     public Int32Rect PixelCrop
@@ -154,6 +158,17 @@ public sealed partial class EditorWindow : Window
         status.Child = statusContent;
         root.Children.Add(status);
 
+        var zoomOut = ZoomButton(OperationShortcut.ZoomOut, "−", 24, () => ZoomCanvas(1 / ZoomStep));
+        zoomFit = ZoomButton(OperationShortcut.FitImage, "100%", 42, () => ZoomCanvas(null));
+        var zoomIn = ZoomButton(OperationShortcut.ZoomIn, "+", 24, () => ZoomCanvas(ZoomStep));
+        zoomControls.Children.Add(zoomOut);
+        zoomControls.Children.Add(zoomFit);
+        zoomControls.Children.Add(zoomIn);
+        var dock = new DockPanel();
+        DockPanel.SetDock(zoomControls, Dock.Right);
+        dock.Children.Add(zoomControls);
+        dock.Children.Add(toolbar);
+
         toolbarDock = new Border
         {
             Background = palette.EditorChrome,
@@ -162,7 +177,7 @@ public sealed partial class EditorWindow : Window
             Height = 44,
             Padding = new Thickness(8, 0, 8, 0),
             ClipToBounds = true,
-            Child = toolbar
+            Child = dock
         };
         DockPanel.SetDock(toolbarDock, Dock.Bottom);
         root.Children.Add(toolbarDock);
@@ -172,7 +187,15 @@ public sealed partial class EditorWindow : Window
         canvas = new AnnotationSurface(image, palette.Canvas);
         body.Children.Add(canvas);
         body.Children.Add(textLayer);
-        root.Children.Add(body);
+        canvasViewport = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Background = palette.Canvas,
+            Focusable = false,
+            Content = body
+        };
+        root.Children.Add(canvasViewport);
         Content = root;
 
         canvas.MouseLeftButtonDown += CanvasDown;
@@ -190,7 +213,13 @@ public sealed partial class EditorWindow : Window
                 RefreshSurface();
             }
         };
-        canvas.SizeChanged += (_, _) => PositionTextBox();
+        canvas.SizeChanged += (_, _) => { PositionTextBox(); UpdateZoomLabel(); };
+        canvasViewport.PreviewMouseWheel += (_, e) =>
+        {
+            if (longShotLayout || Keyboard.Modifiers != ModifierKeys.Control) return;
+            ZoomCanvas(Math.Pow(ZoomStep, e.Delta / 120d), e.GetPosition(canvasViewport));
+            e.Handled = true;
+        };
         PreviewKeyDown += HandleKey;
         Closed += (_, _) => { if (stylePopup is not null) stylePopup.IsOpen = false; };
         RefreshSurface();
@@ -259,37 +288,29 @@ public sealed partial class EditorWindow : Window
         MinHeight = 320;
         Topmost = true;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        var layout = (DockPanel)Content;
-        layout.Children.Remove(body);
-        longShotScroll = new ScrollViewer
-        {
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalContentAlignment = HorizontalAlignment.Left,
-            Background = palette.Canvas,
-            Content = body
-        };
-        longShotScroll.SizeChanged += (_, _) => SizeLongShotSurface();
-        longShotScroll.ScrollChanged += (_, e) =>
+        zoomControls.Visibility = Visibility.Collapsed;
+        canvasViewport.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+        canvasViewport.HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
+        canvasViewport.HorizontalContentAlignment = HorizontalAlignment.Left;
+        canvasViewport.SizeChanged += (_, _) => SizeLongShotSurface();
+        canvasViewport.ScrollChanged += (_, e) =>
         {
             if (e.ViewportWidthChange != 0) SizeLongShotSurface();
         };
         SourceInitialized += (_, _) => Desktop.Exclude(this);
         DpiChanged += (_, _) => SizeLongShotSurface();
-        layout.Children.Add(longShotScroll);
         LayoutToolbar(force: true);
     }
 
     private void SizeLongShotSurface()
     {
-        if (longShotScroll is null) return;
         double width = originalLongShotPixels ? source.PixelWidth / VisualTreeHelper.GetDpi(this).DpiScaleX :
-            longShotScroll.ViewportWidth - AnnotationSurface.Padding * 2;
+            canvasViewport.ViewportWidth - AnnotationSurface.Padding * 2;
         width = Math.Max(1, width);
         body.Width = width + AnnotationSurface.Padding * 2;
         body.Height = width * source.PixelHeight / source.PixelWidth + AnnotationSurface.Padding * 2;
         if (focusedCandidate is Guid id && candidates.FirstOrDefault(c => c.Id == id) is { } candidate)
-            longShotScroll.ScrollToVerticalOffset(candidate.Bounds.Top * canvas.Scale);
+            canvasViewport.ScrollToVerticalOffset(candidate.Bounds.Top * canvas.Scale);
     }
 
     private void BuildLongShotToolbar()
@@ -312,17 +333,75 @@ public sealed partial class EditorWindow : Window
 
         void ChangeScale(bool pixelMode)
         {
-            double fraction = longShotScroll!.ScrollableHeight > 0 ?
-                longShotScroll.VerticalOffset / longShotScroll.ScrollableHeight : 0;
+            double fraction = canvasViewport.ScrollableHeight > 0 ?
+                canvasViewport.VerticalOffset / canvasViewport.ScrollableHeight : 0;
             originalLongShotPixels = pixelMode;
             fit.Background = pixelMode ? palette.Hover : palette.Primary;
             fit.Foreground = pixelMode ? palette.Foreground : palette.PrimaryForeground;
             pixels.Background = pixelMode ? palette.Primary : palette.Hover;
             pixels.Foreground = pixelMode ? palette.PrimaryForeground : palette.Foreground;
             SizeLongShotSurface();
-            _ = Dispatcher.BeginInvoke(() => longShotScroll.ScrollToVerticalOffset(
-                fraction * longShotScroll.ScrollableHeight), System.Windows.Threading.DispatcherPriority.Loaded);
+            _ = Dispatcher.BeginInvoke(() => canvasViewport.ScrollToVerticalOffset(
+                fraction * canvasViewport.ScrollableHeight), System.Windows.Threading.DispatcherPriority.Loaded);
         }
+    }
+
+    internal void ApplyOperationHotkeys(IReadOnlyDictionary<string, Hotkey>? bindings)
+    {
+        operationHotkeys = bindings;
+        foreach (Button button in zoomControls.Children)
+        {
+            if (button.Tag is OperationShortcut action && button.ToolTip is ToolTip tip)
+                tip.Content = Shortcuts.WithHint(action.Title, ShortcutLabel(action));
+        }
+        if (IsLoaded) LayoutToolbar(force: true);
+    }
+
+    private string? ShortcutLabel(OperationShortcut? operation) =>
+        operation?.Binding(operationHotkeys) is { } binding ? Shortcuts.Display(binding) : null;
+
+    private Button ZoomButton(OperationShortcut operation, string symbol, double width, Action run)
+    {
+        var button = NewIcon(operation.Title, symbol, ShortcutLabel(operation));
+        button.Tag = operation;
+        button.Width = width;
+        button.Click += (_, _) => run();
+        return button;
+    }
+
+    private void UpdateZoomLabel()
+    {
+        double percent = Math.Round(canvas.Scale * 100);
+        zoomFit.Content = percent == 0 ? "<1%" : $"{percent:0}%";
+    }
+
+    private void ZoomCanvas(double? factor, Point? anchor = null)
+    {
+        if (start is not null || canvasViewport.ViewportWidth <= 0 || canvasViewport.ViewportHeight <= 0) return;
+        var size = new Size(canvasViewport.ActualWidth, canvasViewport.ActualHeight);
+        double fit = canvas.FitScale(size);
+        double? scale = factor is double step ? Math.Clamp(canvas.Scale * step, Math.Min(.1, fit), Math.Max(8, fit)) : null;
+        if (scale == canvas.ZoomScale || scale == canvas.Scale) return;
+        var point = anchor ?? new Point(canvasViewport.ViewportWidth / 2, canvasViewport.ViewportHeight / 2);
+        Point imagePoint = canvas.ToImage(canvasViewport.TranslatePoint(point, canvas));
+
+        canvas.SetZoom(scale);
+        double padding = 2 * AnnotationSurface.Padding;
+        body.MinWidth = scale.HasValue ? Math.Ceiling(source.PixelWidth * scale.Value + padding) : 0;
+        body.MinHeight = scale.HasValue ? Math.Ceiling(source.PixelHeight * scale.Value + padding) : 0;
+        var visibility = scale.HasValue ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled;
+        canvasViewport.HorizontalScrollBarVisibility = visibility;
+        canvasViewport.VerticalScrollBarVisibility = visibility;
+        canvasViewport.UpdateLayout();
+        if (scale.HasValue)
+        {
+            Vector drift = canvas.TranslatePoint(canvas.ToWindow(imagePoint), canvasViewport) - point;
+            canvasViewport.ScrollToHorizontalOffset(Math.Max(0, canvasViewport.HorizontalOffset + drift.X));
+            canvasViewport.ScrollToVerticalOffset(Math.Max(0, canvasViewport.VerticalOffset + drift.Y));
+            canvasViewport.UpdateLayout();
+        }
+        PositionTextBox();
+        UpdateZoomLabel();
     }
 
     private void SaveLongShot()
@@ -875,7 +954,12 @@ public sealed partial class EditorWindow : Window
     private void HandleKey(object sender, KeyEventArgs args)
     {
         if (inline is not null || (stylePopup?.IsOpen ?? false)) return;
-        bool control = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+        if (OperationShortcut.Match(Shortcuts.FromEvent(args), operationHotkeys) is { } action &&
+            RunOperationShortcut(action, args.IsRepeat))
+        {
+            args.Handled = true;
+            return;
+        }
         if (args.Key == Key.Escape)
         {
             if (start is not null) CancelDrag();
@@ -899,13 +983,30 @@ public sealed partial class EditorWindow : Window
             items.RemoveAt(selected);
             Select(-1);
         }
-        else if (control && args.Key == Key.Z && !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) TraverseHistory(undo, redo);
-        else if (control && (args.Key == Key.Y || args.Key == Key.Z)) TraverseHistory(redo, undo);
-        else if (control && args.Key == Key.C) Export(copy);
-        else if (control && args.Key == Key.S) Export(save);
         else return;
         args.Handled = true;
         RefreshSurface();
+    }
+
+    private bool RunOperationShortcut(OperationShortcut action, bool repeat)
+    {
+        Action<BitmapSource>? output = action.Output switch
+        {
+            CaptureAction.Copy => copy,
+            CaptureAction.Save => save,
+            CaptureAction.Pin when !longShotLayout => pin,
+            _ => null
+        };
+        if (output is not null) { if (!repeat) Export(output); }
+        else if (action == OperationShortcut.Undo) TraverseHistory(undo, redo);
+        else if (action == OperationShortcut.Redo) TraverseHistory(redo, undo);
+        else if (longShotLayout) return false;
+        else if (action == OperationShortcut.ZoomIn) ZoomCanvas(ZoomStep);
+        else if (action == OperationShortcut.ZoomOut) ZoomCanvas(1 / ZoomStep);
+        else if (action == OperationShortcut.FitImage) ZoomCanvas(null);
+        else if (action.Tool is { } annotation) { if (!repeat) PickTool(annotation); }
+        else return false;
+        return true;
     }
 
     private void BeginText(Annotation item, int index)
@@ -1064,8 +1165,9 @@ public sealed partial class EditorWindow : Window
             var locate = OptionAction("定位", () =>
             {
                 focusedCandidate = candidate.Id;
-                if (longShotScroll is not null)
-                    longShotScroll.ScrollToVerticalOffset(candidate.Bounds.Top * canvas.Scale - 18);
+                var bounds = new Rect(canvas.ToWindow(candidate.Bounds.TopLeft), canvas.ToWindow(candidate.Bounds.BottomRight));
+                bounds.Inflate(14, 14);
+                canvas.BringIntoView(bounds);
                 RefreshSurface();
                 popup.IsOpen = false;
             }, closePopup: false);

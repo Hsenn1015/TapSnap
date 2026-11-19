@@ -15,6 +15,27 @@ internal sealed record ToolbarItem(string Title, string Symbol, AnnotationTool? 
 
 internal static class SelectionToolbarModel
 {
+    internal static readonly IReadOnlyDictionary<AnnotationTool, char> ToolKeys = new Dictionary<AnnotationTool, char>
+    {
+        [AnnotationTool.Arrow] = 'A',
+        [AnnotationTool.Rectangle] = 'R',
+        [AnnotationTool.Ellipse] = 'O',
+        [AnnotationTool.Line] = 'L',
+        [AnnotationTool.Pen] = 'B',
+        [AnnotationTool.Text] = 'T',
+        [AnnotationTool.Mosaic] = 'M',
+        [AnnotationTool.Highlight] = 'H',
+        [AnnotationTool.Number] = 'N',
+        [AnnotationTool.Polygon] = 'P',
+        [AnnotationTool.Spotlight] = 'S',
+        [AnnotationTool.Eraser] = 'E',
+        [AnnotationTool.Magnifier] = 'G',
+        [AnnotationTool.Watermark] = 'W',
+        [AnnotationTool.PathTag] = 'U',
+        [AnnotationTool.Privacy] = 'D',
+        [AnnotationTool.Crop] = 'C',
+    };
+
     internal static readonly ToolbarItem[] DrawingTools = [
         new("箭头", "↗", AnnotationTool.Arrow), new("矩形", "□", AnnotationTool.Rectangle),
         new("椭圆", "○", AnnotationTool.Ellipse), new("直线", "╱", AnnotationTool.Line),
@@ -28,12 +49,15 @@ internal static class SelectionToolbarModel
         new("长截图", "↕", Action: CaptureAction.LongShot), new("录屏", "●", Action: CaptureAction.Record)
     ];
     private static readonly ToolbarItem Edit = new("编辑 ↵", "edit");
-    private static readonly ToolbarItem Copy = new("复制 Ctrl+C", "▢", Action: CaptureAction.Copy);
+    private static readonly ToolbarItem Copy = new("复制", "▢", Action: CaptureAction.Copy);
+    private static readonly ToolbarItem Privacy = new("隐私打码", "shield", AnnotationTool.Privacy);
+    private static readonly ToolbarItem Crop = new("裁剪", "⌗", AnnotationTool.Crop);
     private static readonly ToolbarItem[] Other = [
         new("翻译", "译", Action: CaptureAction.Translation), new("二维码／条码", "码", Action: CaptureAction.Barcode),
         new("表格识别", "表", Action: CaptureAction.Table), new("公式识别", "ƒ", Action: CaptureAction.Formula),
         new("水印", "水", AnnotationTool.Watermark), new("路径标签", "⌁", AnnotationTool.PathTag)
     ];
+    internal static readonly ToolbarItem[] EditableTools = [.. DrawingTools, Privacy, Crop, .. Other.Where(item => item.Tool.HasValue)];
 
     // Two dividers, outer padding, More, Cancel and Confirm use fixed space.
     internal static int Slots(double width) => Math.Max(0, (int)((width - 30) / 29) - 3);
@@ -43,8 +67,8 @@ internal static class SelectionToolbarModel
         var outputs = new List<ToolbarItem>();
         if (singleScreen) outputs.AddRange(Modes);
         if (copyOnConfirm) outputs.Add(Edit);
-        outputs.Add(new("隐私打码", "shield", AnnotationTool.Privacy));
-        outputs.Add(new("裁剪", "⌗", AnnotationTool.Crop));
+        outputs.Add(Privacy);
+        outputs.Add(Crop);
         outputs.Add(new("贴图", "pin", Action: CaptureAction.Pin));
         if (!copyOnConfirm) outputs.Add(Copy);
         outputs.Add(new("保存", "↓", Action: CaptureAction.Save));

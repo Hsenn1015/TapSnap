@@ -43,6 +43,7 @@ internal static partial class Program
                 Require(after.Report.MeanRgbError <= before.Report.MeanRgbError + 2, "GIF color error regressed.");
                 using var preview = (RecordingPreview)after.Preview;
                 await CheckStaticFrameEdits(args[2]);
+                await CheckEditorZoom();
                 await CheckSelection(host, args[2]);
                 await CheckHistoryFilters(host, args[2]);
                 await CheckClipboard(preview, Path.Combine(args[2], "current.gif"));
@@ -114,27 +115,83 @@ internal static partial class Program
     [DllImport("user32.dll")]
     private static extern bool SetCursorPos(int x, int y);
 
+    private static async Task CheckEditorZoom()
+    {
+        const int width = 600, height = 400;
+        var bitmap = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, new byte[width * height * 4], width * 4);
+        var editor = new EditorWindow(bitmap, _ => { }, _ => { }, _ => { }, () => { }, () => { }, _ => { })
+            { Width = 520, Height = 410 };
+        editor.ApplyOperationHotkeys(new Dictionary<string, Hotkey>(OperationShortcut.Defaults)
+        {
+            [OperationShortcut.FitImage.Id] = new(0, (uint)KeyInterop.VirtualKeyFromKey(Key.F6))
+        });
+        editor.Show();
+        try
+        {
+            editor.UpdateLayout();
+            var viewport = Descendants<ScrollViewer>(editor).Single();
+            var canvas = Descendants<AnnotationSurface>(viewport).Single();
+            var controls = Descendants<Button>(editor).Where(button => AutomationProperties.GetName(button) is "适合窗口" or "放大画布")
+                .ToDictionary(AutomationProperties.GetName);
+            double fitScale = canvas.Scale;
+            Require(viewport.ScrollableWidth == 0 && viewport.ScrollableHeight == 0, "Fit should show the whole image.");
+            var center = new Point(viewport.ViewportWidth / 2, viewport.ViewportHeight / 2);
+            Point original = canvas.ToImage(viewport.TranslatePoint(center, canvas));
+
+            Invoke(controls["放大画布"]);
+            await Until(() => canvas.Scale > fitScale && viewport.HorizontalOffset > 0 && viewport.VerticalOffset > 0,
+                "zoom in around the viewport center");
+            Point anchored = canvas.ToImage(viewport.TranslatePoint(center, canvas));
+            Require((anchored - original).Length * canvas.Scale < 2, "Zoom moved the image point under the anchor.");
+            viewport.ScrollToRightEnd();
+            viewport.ScrollToBottom();
+            await Until(() => Math.Abs(viewport.HorizontalOffset - viewport.ScrollableWidth) < 1 &&
+                Math.Abs(viewport.VerticalOffset - viewport.ScrollableHeight) < 1, "bottom-right of enlarged image");
+
+            var crop = new Rect(23, 31, 103, 79);
+            editor.RestoreDraft(new EditorWindow.Draft(bitmap, DateTime.Now, [], crop));
+            BitmapSource full = canvas.Render(crop: false), cropped = canvas.Render(crop: true);
+            Require(full.PixelWidth == width && full.PixelHeight == height && cropped.PixelWidth == crop.Width &&
+                cropped.PixelHeight == crop.Height, "Zoom changed the export or crop dimensions.");
+
+            Require(controls["适合窗口"].ToolTip is ToolTip { Content: "适合窗口 F6" }, "Fit hint did not update to the recorded key.");
+            Press(editor, Key.F6);
+            await Until(() => Math.Abs(canvas.Scale - fitScale) < .001 && viewport.ScrollableWidth == 0 &&
+                viewport.ScrollableHeight == 0, "restore fit and remove both scroll ranges");
+            Console.WriteLine("PASS image zoom anchor, viewport edges, original crop pixels and reset to fit.");
+        }
+        finally { editor.Close(); }
+    }
+
     private static async Task CheckSelection(TapSnapHost host, string output)
     {
         var shortcuts = (Dictionary<string, (string Title, Action Action)>)typeof(TapSnapHost).GetField("hotkeyActions", Private)!.GetValue(host)!;
-        var opening = Application.Current.Dispatcher.InvokeAsync(shortcuts["capture"].Action);
-        await Until(() => Application.Current.Windows.OfType<SelectionWindow>().Any(w => w.IsVisible), "selection window");
-        var overlay = Application.Current.Windows.OfType<SelectionWindow>().First(w => w.IsVisible);
-        var screen = Desktop.Monitors().First().Bounds;
+        async Task<(SelectionWindow Overlay, Task Opening)> DrawSelection()
+        {
+            var opening = Application.Current.Dispatcher.InvokeAsync(shortcuts["capture"].Action);
+            await Until(() => Application.Current.Windows.OfType<SelectionWindow>().Any(w => w.IsVisible), "selection window");
+            var overlay = Application.Current.Windows.OfType<SelectionWindow>().First(w => w.IsVisible);
+            var screen = Desktop.Monitors().First().Bounds;
+            var canvas = (Canvas)overlay.Content;
+            Require(SetCursorPos(screen.Left + 60, screen.Top + 80), "Cannot set cursor on the capture desktop.");
+            canvas.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
+                { RoutedEvent = UIElement.MouseLeftButtonDownEvent });
+            Require(SetCursorPos(screen.Left + screen.Width * 2 / 3, screen.Top + screen.Height / 2), "Cannot move cursor.");
+            canvas.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = Mouse.MouseMoveEvent });
+            canvas.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
+                { RoutedEvent = UIElement.MouseLeftButtonUpEvent });
+            overlay.UpdateLayout();
+            return (overlay, opening.Task);
+        }
+
+        var (overlay, opening) = await DrawSelection();
         var canvas = (Canvas)overlay.Content;
-        Require(SetCursorPos(screen.Left + 60, screen.Top + 80), "Cannot set cursor on the capture desktop.");
-        canvas.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
-            { RoutedEvent = UIElement.MouseLeftButtonDownEvent });
-        Require(SetCursorPos(screen.Left + screen.Width * 2 / 3, screen.Top + screen.Height / 2), "Cannot move cursor.");
-        canvas.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = Mouse.MouseMoveEvent });
-        canvas.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
-            { RoutedEvent = UIElement.MouseLeftButtonUpEvent });
-        overlay.UpdateLayout();
         var dock = Descendants<Border>(canvas).Single(b => AutomationProperties.GetName(b) == "标注工具栏");
         Require(dock.IsVisible && dock.ActualWidth > 0 && dock.ActualHeight == 44, "Dock missing on first drag release.");
         var buttons = Descendants<Button>(dock).ToDictionary(AutomationProperties.GetName);
         foreach (var name in new[] { "箭头", "编辑 ↵", "长截图", "录屏", "更多工具与操作", "复制 Ctrl+C" })
             Require(buttons.ContainsKey(name), "Missing first-stage button " + name);
+        Require(buttons["箭头"].ToolTip is ToolTip { Content: "箭头 A" }, "Arrow button does not show its key.");
         var size = new Size(Math.Ceiling(dock.ActualWidth), Math.Ceiling(dock.ActualHeight));
         var visual = new DrawingVisual();
         using (var graphics = visual.RenderOpen()) graphics.DrawRectangle(new VisualBrush(dock), null, new Rect(size));
@@ -151,6 +208,18 @@ internal static partial class Program
             "Editor did not start with arrow selected.");
         editor.Close();
         Console.WriteLine("PASS native screenshot action, drag, first-stage toolbar PNG, editor with arrow selected.");
+
+        var (shortcutOverlay, shortcutOpening) = await DrawSelection();
+        Press(shortcutOverlay, Key.W);
+        await Until(() => Application.Current.Windows.OfType<EditorWindow>().Any(w => w.IsVisible), "editor after watermark shortcut");
+        await shortcutOpening;
+        var shortcutEditor = Application.Current.Windows.OfType<EditorWindow>().Single(w => w.IsVisible);
+        var selectedTool = typeof(EditorWindow).GetField("tool", Private)!;
+        Require(Equals(selectedTool.GetValue(shortcutEditor), AnnotationTool.Watermark), "W did not select the overflow tool.");
+        Press(shortcutEditor, Key.B);
+        Require(Equals(selectedTool.GetValue(shortcutEditor), AnnotationTool.Pen), "B did not switch to the brush in the editor.");
+        shortcutEditor.Close();
+        Console.WriteLine("PASS stage-one watermark shortcut and in-editor brush shortcut.");
     }
 
     private static async Task CheckClipboard(RecordingPreview preview, string saved)
@@ -212,6 +281,15 @@ internal static partial class Program
 
     private static void Invoke(Button button) =>
         ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)!).Invoke();
+
+    private static void Press(Window window, Key key)
+    {
+        var source = PresentationSource.FromVisual(window) ?? throw new InvalidOperationException("Window not ready for key input.");
+        var args = new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount, key)
+            { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+        window.RaiseEvent(args);
+        Require(args.Handled, $"The toolbar did not handle {key}.");
+    }
 
     private static async Task Until(Func<bool> predicate, string description, int seconds = 15)
     {

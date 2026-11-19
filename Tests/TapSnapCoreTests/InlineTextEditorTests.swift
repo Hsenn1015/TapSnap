@@ -42,11 +42,18 @@ final class InlineTextEditorTests: XCTestCase {
     func testCanvasClickStartsNativeEditorAndReturnAddsLineWithoutDialog() throws {
         let (controller, view, window) = try fixture()
         defer { window.close() }
+        let brush = try key(11, text: "b", window: window)
+        XCTAssertTrue(controller.handleKeyEvent(brush))
+        XCTAssertEqual(controller.selectedTool, .pen)
         controller.perform(.text)
         try mouse(.leftMouseDown, point: CGPoint(x: 20, y: 30), view: view)
         try mouse(.leftMouseUp, point: CGPoint(x: 20, y: 30), view: view)
         let editor = try XCTUnwrap(view.inlineTextEditor)
         XCTAssertTrue(window.firstResponder === editor)
+        XCTAssertFalse(controller.handleKeyEvent(brush), "文字输入期间 B 应交给输入框")
+        XCTAssertFalse(controller.handleKeyEvent(try key(35, text: "P", modifiers: .shift, window: window)),
+                       "文字输入期间 Shift+P 应交给输入框")
+        XCTAssertEqual(controller.selectedTool, .text)
         XCTAssertNotNil(controller.textEditingItem)
         XCTAssertTrue(controller.document.items.isEmpty)
         XCTAssertNil(NSApp.modalWindow)

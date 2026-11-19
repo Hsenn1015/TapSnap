@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import TapSnapActionsBar
 import XCTest
 import TapSnapConfig
 import TapSnapSystem
@@ -14,9 +15,9 @@ final class ShortcutRecorderTests: XCTestCase {
     private let original = KeyBinding(keyCode: UInt32(kVK_ANSI_L), modifiers: GlobalShortcut.Combo.command | GlobalShortcut.Combo.shift)
     private let replacement = KeyBinding(keyCode: UInt32(kVK_ANSI_K), modifiers: GlobalShortcut.Combo.command | GlobalShortcut.Combo.option)
 
-    private func makeController() -> (ConfigStore, ShortcutCenter, ShortcutRecorder) {
+    private func makeController(at directory: URL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        -> (ConfigStore, ShortcutCenter, ShortcutRecorder) {
         _ = NSApplication.shared
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let config = ConfigStore(fileURL: directory.appendingPathComponent("config.json"))
         config.update { $0.shortcuts = [ShortcutAction.longShot.rawValue: original] }
         let center = ShortcutCenter(config: config, makeShortcut: { _, _ in Registration() },
@@ -62,7 +63,7 @@ final class ShortcutRecorderTests: XCTestCase {
 
     func testRecordingPreviewsKeyDownAndCommitsOnlyMatchingKeyUp() {
         let (config, center, recorder) = makeController()
-        recorder.begin(.longShot)
+        recorder.begin(.global(.longShot))
         XCTAssertTrue(center.isRecording)
         recorder.handle(event(kVK_ANSI_K, [.command, .option]))
         XCTAssertEqual(recorder.preview, replacement.displayString)
@@ -82,12 +83,12 @@ final class ShortcutRecorderTests: XCTestCase {
     func testDuplicateStaysInRecordingAndCanBeCorrected() {
         let (config, center, recorder) = makeController()
         config.setBinding(replacement, for: .screenshot)
-        recorder.begin(.longShot)
+        recorder.begin(.global(.longShot))
         recorder.handle(event(kVK_ANSI_K, [.command, .option]))
         recorder.handle(event(kVK_ANSI_K, type: .keyUp))
         XCTAssertEqual(config.binding(for: .longShot), original)
         XCTAssertEqual(config.binding(for: .screenshot), replacement)
-        XCTAssertEqual(recorder.action, .longShot)
+        XCTAssertEqual(recorder.action, .global(.longShot))
         XCTAssertTrue(center.isRecording)
         XCTAssertTrue(recorder.hasError)
         XCTAssertTrue(recorder.message?.contains(ShortcutAction.screenshot.displayName) == true)
@@ -101,7 +102,7 @@ final class ShortcutRecorderTests: XCTestCase {
 
     func testEscapeCancelsPendingBindingAndRestoresShortcuts() {
         let (config, center, recorder) = makeController()
-        recorder.begin(.longShot)
+        recorder.begin(.global(.longShot))
         recorder.handle(event(kVK_ANSI_K, [.command, .option]))
         recorder.handle(event(kVK_Escape))
         recorder.handle(event(kVK_ANSI_K, type: .keyUp))
@@ -113,7 +114,7 @@ final class ShortcutRecorderTests: XCTestCase {
 
     func testDeleteClearsOnlyAfterRelease() {
         let (config, center, recorder) = makeController()
-        recorder.begin(.longShot)
+        recorder.begin(.global(.longShot))
         recorder.handle(event(kVK_Delete))
         XCTAssertEqual(config.binding(for: .longShot), original)
         XCTAssertEqual(recorder.preview, "清除快捷键")
@@ -125,7 +126,7 @@ final class ShortcutRecorderTests: XCTestCase {
 
     func testLosingApplicationFocusCancelsWithoutSavingPendingInput() {
         let (config, center, recorder) = makeController()
-        recorder.begin(.longShot)
+        recorder.begin(.global(.longShot))
         recorder.handle(event(kVK_ANSI_K, [.command, .option]))
         NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: NSApplication.shared)
         recorder.handle(event(kVK_ANSI_K, type: .keyUp))
@@ -136,13 +137,13 @@ final class ShortcutRecorderTests: XCTestCase {
 
     func testSwitchingRowsDiscardsPreviousPendingInput() {
         let (config, center, recorder) = makeController()
-        recorder.begin(.longShot)
+        recorder.begin(.global(.longShot))
         recorder.handle(event(kVK_ANSI_K, [.command, .option]))
-        recorder.begin(.screenshot)
+        recorder.begin(.global(.screenshot))
         recorder.handle(event(kVK_ANSI_K, type: .keyUp))
         XCTAssertEqual(config.binding(for: .longShot), original)
         XCTAssertNil(config.binding(for: .screenshot))
-        XCTAssertEqual(recorder.action, .screenshot)
+        XCTAssertEqual(recorder.action, .global(.screenshot))
         XCTAssertTrue(center.isRecording)
         recorder.handle(event(kVK_ANSI_K, [.command, .option]))
         recorder.handle(event(kVK_ANSI_K, type: .keyUp))
@@ -152,7 +153,7 @@ final class ShortcutRecorderTests: XCTestCase {
 
     func testModifierOnlyPreviewAndInvalidTypingDoNotSave() {
         let (config, center, recorder) = makeController()
-        recorder.begin(.longShot)
+        recorder.begin(.global(.longShot))
         recorder.handle(event(kVK_Command, [.command, .option], type: .flagsChanged))
         XCTAssertEqual(recorder.preview, "⌥⌘…")
         recorder.handle(event(kVK_ANSI_A))
@@ -161,6 +162,56 @@ final class ShortcutRecorderTests: XCTestCase {
         XCTAssertTrue(center.isRecording)
         XCTAssertEqual(config.binding(for: .longShot), original)
         recorder.cancel()
+    }
+
+    func testOperationRecordingPersistsAndReplacesDefaultInBothScopes() {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let (config, _, recorder) = makeController(at: directory)
+        let configFile = directory.appendingPathComponent("config.json")
+        let pin = OperationShortcut.action(.pin)
+        let original = event(kVK_ANSI_P, [.shift])
+        let custom = event(kVK_ANSI_J)
+        XCTAssertEqual(OperationShortcut.matching(original, in: config.settings), pin)
+        recorder.begin(.operation(pin))
+        recorder.handle(custom)
+        XCTAssertEqual(recorder.preview, "J")
+        XCTAssertEqual(OperationShortcut.matching(original, in: config.settings), pin)
+        recorder.handle(event(kVK_ANSI_J, type: .keyUp))
+        XCTAssertNil(recorder.action)
+        XCTAssertEqual(OperationShortcut.matching(custom, in: config.settings, selection: true), pin)
+        XCTAssertEqual(OperationShortcut.matching(custom, in: config.settings), pin)
+        XCTAssertNil(OperationShortcut.matching(original, in: config.settings))
+        XCTAssertEqual(ActionsBarModel().toolTip(for: .pin, config: config), "贴图 J")
+        XCTAssertEqual(OperationShortcut.matching(custom, in: ConfigStore(fileURL: configFile).settings), pin)
+
+        recorder.begin(.operation(pin))
+        recorder.handle(event(kVK_Delete))
+        recorder.handle(event(kVK_Delete, type: .keyUp))
+        XCTAssertNil(pin.binding(in: config.settings))
+        XCTAssertNil(pin.binding(in: ConfigStore(fileURL: configFile).settings))
+        XCTAssertNil(OperationShortcut.matching(custom, in: config.settings))
+        config.resetShortcutsToDefaults()
+        XCTAssertEqual(OperationShortcut.matching(original, in: config.settings), pin)
+    }
+
+    func testOperationBindingRejectsConflictsAndAcceptsShiftOnly() {
+        let (config, _, recorder) = makeController()
+        let pin = OperationShortcut.action(.pin)
+        let target = ShortcutRecorder.Target.operation(pin)
+        recorder.begin(target)
+        recorder.handle(event(kVK_ANSI_B))
+        recorder.handle(event(kVK_ANSI_B, type: .keyUp))
+        XCTAssertTrue(recorder.hasError)
+        XCTAssertEqual(recorder.action, target)
+        recorder.handle(event(kVK_ANSI_L, [.command, .shift]))
+        recorder.handle(event(kVK_ANSI_L, type: .keyUp))
+        XCTAssertTrue(recorder.hasError)
+        XCTAssertTrue(recorder.message?.contains("全局快捷键") == true)
+        XCTAssertEqual(pin.binding(in: config.settings), OperationShortcut.defaults[pin.id])
+        recorder.handle(event(kVK_ANSI_J, [.shift]))
+        recorder.handle(event(kVK_ANSI_J, type: .keyUp))
+        XCTAssertNil(recorder.action)
+        XCTAssertEqual(pin.binding(in: config.settings)?.displayString, "⇧J")
     }
 
     func testResetShortcutsPreservesOtherPreferencesAndPersists() {

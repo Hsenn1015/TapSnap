@@ -86,7 +86,7 @@ internal static class ToolbarGlyph
         return new Viewbox { Width = size, Height = size, Stretch = Stretch.Uniform, Child = viewport };
     }
 
-    internal static Button CreateButton(string label, string symbol, SnapPalette palette)
+    internal static Button CreateButton(string label, string symbol, SnapPalette palette, string? shortcut = null)
     {
         var control = new Button
         {
@@ -99,7 +99,8 @@ internal static class ToolbarGlyph
             Focusable = false,
             ToolTip = new ToolTip
             {
-                Content = label, Padding = new Thickness(9, 5, 9, 5), Background = palette.Panel,
+                Content = shortcut is null ? label : $"{label} {shortcut}",
+                Padding = new Thickness(9, 5, 9, 5), Background = palette.Panel,
                 Foreground = palette.Foreground, BorderBrush = palette.Border, FontSize = 11,
                 Placement = PlacementMode.Top, VerticalOffset = -4
             },

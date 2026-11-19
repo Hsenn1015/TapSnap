@@ -9,14 +9,16 @@ import SwiftUI
 
 /// 编辑画布。
 ///
-/// 用 SwiftUI 显示底图，绘制、选择、移动、缩放和裁剪由 NSView 覆盖层按文档坐标处理。
+/// 滚动画布统一显示底图和标注，交互按文档坐标处理。
 struct EditCanvasView: View {
     static let canvasPadding: CGFloat = 6
+    private static let zoomControlsWidth: CGFloat = 94
 
     @ObservedObject var controller: EditController
     @ObservedObject private var config: ConfigStore
     @ObservedObject private var privacy: PrivacyEditing
     @State private var openStyle: ActionKind?
+    @State private var zoomPercent = 100
 
     init(controller: EditController) {
         self.controller = controller
@@ -35,25 +37,32 @@ struct EditCanvasView: View {
                 }
                 if privacy.phase != .idle {
                     PrivacyStatusView(controller: controller, privacy: privacy, theme: theme, locate: { rect in
-                        controller.onLocatePrivacyFinding?(rect)
+                        controller.canvasViewport?.canvas.scrollToFinding(rect)
                     })
                 }
-                canvas
+                EditorCanvas(controller: controller, onCanvasPress: { openStyle = nil }, onZoom: { zoomPercent = $0 })
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(Self.canvasPadding)
                     .background(RGBAColor(rgb: theme.isDark ? 0x191b20 : 0xdde1e7).color)
-                toolbar(theme, width: max(1, proxy.size.width - 16))
-                    .frame(maxWidth: .infinity)
-                    .overlay(alignment: .top) {
-                        Rectangle().fill(theme.token(.foreground).opacity(0.12))
-                            .frame(height: 1)
-                            .allowsHitTesting(false)
-                    }
+                HStack(spacing: 0) {
+                    toolbar(theme, width: max(1, proxy.size.width - Self.zoomControlsWidth - 8))
+                        .frame(maxWidth: .infinity)
+                    zoomControls(theme)
+                }
+                .padding(.trailing, 8)
+                .overlay(alignment: .top) {
+                    Rectangle().fill(theme.token(.foreground).opacity(0.12))
+                        .frame(height: 1)
+                        .allowsHitTesting(false)
+                }
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
         }
         .background(Self.chromeColor(for: theme).color)
         .onChange(of: theme.isDark) { _, _ in controller.updateWindowAppearance() }
+        .onChange(of: controller.selectedTool) { _, tool in
+            if openStyle != tool { openStyle = nil }
+        }
         .sheet(item: $controller.imageOutput) { request in
             EditorImageOutputView(controller: controller, request: request)
         }
@@ -87,64 +96,81 @@ struct EditCanvasView: View {
         RGBAColor(rgb: theme.isDark ? 0x24262b : 0xeceef2)
     }
 
-    @ViewBuilder private var canvas: some View {
-        if controller.scrollsLongImage {
-            LongShotEditorCanvas(controller: controller, onCanvasPress: { openStyle = nil })
-        } else {
-            fixedCanvas
-        }
-    }
-
-    private var fixedCanvas: some View {
-        GeometryReader { proxy in
-            let layout = CanvasLayout(canvas: controller.document.canvasSize, in: proxy.size)
-            ZStack {
-                Image(decorative: controller.document.baseImage, scale: controller.document.scale)
-                    .resizable()
-                    .interpolation(.high)
-
-                EditItemOverlay(
-                    controller: controller,
-                    displayScale: layout.scale,
-                    revision: controller.revision,
-                    onCanvasPress: { openStyle = nil }
-                )
+    private func zoomControls(_ theme: Theme) -> some View {
+        let fitTitle = controller.scrollsLongImage ? "适合宽度" : "适合窗口"
+        let percent = zoomPercent == 0 ? "<1%" : "\(zoomPercent)%"
+        let step = EditorCanvasViewport.zoomStep
+        return HStack(spacing: 0) {
+            Button { controller.canvasViewport?.zoom(by: 1 / step) } label: {
+                Image(systemName: "minus").frame(width: 24, height: 28)
             }
-            .frame(width: layout.fitted.width, height: layout.fitted.height)
-            .clipped()
-            .offset(x: layout.origin.x, y: layout.origin.y)
+            .accessibilityLabel("缩小画布")
+            .help(OperationShortcut.zoomOut.displayTitle(in: config.settings))
+            Button { controller.canvasViewport?.fitImage() } label: {
+                Text(percent)
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .frame(width: 42, height: 28)
+            }
+            .accessibilityLabel(fitTitle)
+            .accessibilityValue(percent)
+            .help(OperationShortcut.fitImage.displayTitle(in: config.settings, title: fitTitle))
+            Button { controller.canvasViewport?.zoom(by: step) } label: {
+                Image(systemName: "plus").frame(width: 24, height: 28)
+            }
+            .accessibilityLabel("放大画布")
+            .help(OperationShortcut.zoomIn.displayTitle(in: config.settings))
         }
+        .buttonStyle(.borderless)
+        .foregroundStyle(theme.token(.foreground))
+        .frame(width: Self.zoomControlsWidth)
     }
 }
 
-/// 复用长图预览的滚动画布和标注层，图和标注始终使用同一套坐标。
-private struct LongShotEditorCanvas: NSViewRepresentable {
+private struct EditorCanvas: NSViewRepresentable {
     @ObservedObject var controller: EditController
     let onCanvasPress: () -> Void
+    let onZoom: (Int) -> Void
 
-    func makeNSView(context: Context) -> LongShotEditorScrollView {
-        let view = LongShotEditorScrollView(frame: .zero)
-        view.canvas.image = controller.document.baseImage
-        view.canvas.installEditor(controller, onCanvasPress: onCanvasPress)
-        controller.onLocatePrivacyFinding = { [weak view] rect in view?.canvas.scrollToFinding(rect) }
+    func makeNSView(context: Context) -> EditorCanvasViewport {
+        let view = EditorCanvasViewport(controller: controller, onCanvasPress: onCanvasPress)
+        view.onZoom = { percent in
+            // 布局也会改变适合窗口的比例，等这一轮 SwiftUI 更新完成后再更新按钮。
+            DispatchQueue.main.async { onZoom(percent) }
+        }
+        controller.canvasViewport = view
         return view
     }
 
-    func updateNSView(_ view: LongShotEditorScrollView, context: Context) {
+    func updateNSView(_ view: EditorCanvasViewport, context: Context) {
         view.canvas.refreshEditor()
     }
 }
 
-private final class LongShotEditorScrollView: NSScrollView {
-    let canvas = LongShotPreviewView()
+final class EditorCanvasViewport: NSScrollView {
+    static let zoomStep: CGFloat = 1.25
 
-    override init(frame: NSRect) {
-        super.init(frame: frame)
+    let canvas = LongShotPreviewView()
+    var onZoom: ((Int) -> Void)?
+    private let imageSize: CGSize
+    private let imageScale: CGFloat
+    private let fitsWidth: Bool
+    private var layoutSize: CGSize = .zero
+    private var imageLayout: CanvasLayout?
+    private var manualScale: CGFloat?
+    private var lastPercent: Int?
+
+    init(controller: EditController, onCanvasPress: @escaping () -> Void) {
+        imageSize = controller.document.canvasSize
+        imageScale = controller.document.scale
+        fitsWidth = controller.scrollsLongImage
+        super.init(frame: .zero)
         borderType = .noBorder
-        hasVerticalScroller = true
         scrollerStyle = .overlay
         autohidesScrollers = true
         drawsBackground = false
+        canvas.editorImageRect = .zero
+        canvas.image = controller.document.baseImage
+        canvas.installEditor(controller, onCanvasPress: onCanvasPress)
         documentView = canvas
     }
 
@@ -152,17 +178,81 @@ private final class LongShotEditorScrollView: NSScrollView {
 
     override func layout() {
         super.layout()
-        guard let image = canvas.image, contentSize.width > 0 else { return }
-        let scale = contentSize.width / CGFloat(image.width)
-        let size = CGSize(width: contentSize.width, height: CGFloat(image.height) * scale)
-        guard canvas.frame.size != size else { return }
-        let imageY = contentView.bounds.minY / canvas.displayScale
-        canvas.displayScale = scale
-        canvas.setFrameSize(size)
-        contentView.scroll(to: CGPoint(x: 0, y: min(imageY * scale, max(0, size.height - contentSize.height))))
+        guard contentView.bounds.size != layoutSize else { return }
+        let oldAnchor = anchor(in: layoutSize, atTop: fitsWidth && manualScale == nil)
+        let point = imageLayout?.documentPoint(for: offset(oldAnchor, by: contentView.bounds.origin))
+        applyLayout(keeping: point, at: anchor(in: contentView.bounds.size, atTop: fitsWidth && manualScale == nil))
+    }
+
+    func zoom(by factor: CGFloat, at location: CGPoint? = nil) {
+        layoutSubtreeIfNeeded()
+        guard let imageLayout else { return }
+        let fit = CanvasLayout(canvas: imageSize, in: layoutSize, fitsWidth: fitsWidth).scale
+        let scale = min(max(8, fit), max(min(0.1, fit), imageLayout.scale * factor))
+        guard scale != imageLayout.scale else { return }
+        let target = location ?? anchor(in: layoutSize)
+        let point = imageLayout.documentPoint(for: offset(target, by: contentView.bounds.origin))
+        manualScale = scale
+        applyLayout(keeping: point, at: target)
+    }
+
+    func fitImage() {
+        let top = anchor(in: layoutSize, atTop: true)
+        let point = fitsWidth ? imageLayout?.documentPoint(for: offset(top, by: contentView.bounds.origin)) : nil
+        manualScale = nil
+        applyLayout(keeping: point, at: top)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        guard event.modifierFlags.contains(.command) else { super.scrollWheel(with: event); return }
+        guard event.scrollingDeltaY != 0, event.momentumPhase.isEmpty else { return }
+        let step = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY / 20 : event.scrollingDeltaY
+        zoom(by: pow(Self.zoomStep, min(3, max(-3, step))), at: viewportPoint(for: event))
+    }
+
+    override func magnify(with event: NSEvent) {
+        zoom(by: 1 + event.magnification, at: viewportPoint(for: event))
+    }
+
+    private func viewportPoint(for event: NSEvent) -> CGPoint {
+        let point = contentView.convert(event.locationInWindow, from: nil)
+        return CGPoint(x: point.x - contentView.bounds.minX, y: point.y - contentView.bounds.minY)
+    }
+
+    private func applyLayout(keeping point: CGPoint?, at target: CGPoint) {
+        let size = contentView.bounds.size
+        guard size.width > 0, size.height > 0 else { return }
+        layoutSize = size
+        let next = CanvasLayout(canvas: imageSize, in: size, zoom: manualScale, fitsWidth: fitsWidth)
+        imageLayout = next
+        canvas.displayScale = next.scale / imageScale
+        canvas.editorImageRect = CGRect(origin: next.origin, size: next.fitted)
+        let extent = CGSize(width: max(size.width, next.fitted.width), height: max(size.height, next.fitted.height))
+        canvas.setFrameSize(extent)
+        let scrollsHorizontally = extent.width > size.width + 0.01
+        let scrollsVertically = extent.height > size.height + 0.01
+        if hasHorizontalScroller != scrollsHorizontally { hasHorizontalScroller = scrollsHorizontally }
+        if hasVerticalScroller != scrollsVertically { hasVerticalScroller = scrollsVertically }
+        let proposed = point.map { CGPoint(x: next.origin.x + $0.x * next.scale - target.x,
+                                          y: next.origin.y + $0.y * next.scale - target.y) } ?? .zero
+        contentView.scroll(to: CGPoint(x: min(max(0, proposed.x), extent.width - size.width),
+                                       y: min(max(0, proposed.y), extent.height - size.height)))
         reflectScrolledClipView(contentView)
         canvas.needsDisplay = true
         canvas.refreshEditor()
+        let percent = Int((next.scale * 100).rounded())
+        if percent != lastPercent {
+            lastPercent = percent
+            onZoom?(percent)
+        }
+    }
+
+    private func anchor(in size: CGSize, atTop: Bool = false) -> CGPoint {
+        CGPoint(x: size.width / 2, y: atTop ? 0 : size.height / 2)
+    }
+
+    private func offset(_ point: CGPoint, by origin: CGPoint) -> CGPoint {
+        CGPoint(x: point.x + origin.x, y: point.y + origin.y)
     }
 }
 
@@ -172,48 +262,25 @@ struct CanvasLayout {
     let origin: CGPoint
     let fitted: CGSize
 
-    init(canvas: CGSize, in size: CGSize) {
+    init(canvas: CGSize, in size: CGSize, zoom: CGFloat? = nil, fitsWidth: Bool = false) {
         guard canvas.width > 0, canvas.height > 0, size.width > 0, size.height > 0 else {
             scale = 1
             origin = .zero
             fitted = .zero
             return
         }
-        let factor = min(size.width / canvas.width, size.height / canvas.height)
+        let widthFit = size.width / canvas.width
+        let factor = zoom ?? (fitsWidth ? widthFit : min(widthFit, size.height / canvas.height))
         scale = factor
         fitted = CGSize(width: canvas.width * factor, height: canvas.height * factor)
-        origin = CGPoint(x: (size.width - fitted.width) / 2, y: (size.height - fitted.height) / 2)
+        origin = CGPoint(x: max(0, (size.width - fitted.width) / 2),
+                         y: fitsWidth ? 0 : max(0, (size.height - fitted.height) / 2))
     }
 
     /// 视图坐标 -> 文档坐标。
     func documentPoint(for point: CGPoint) -> CGPoint {
         guard scale > 0 else { return point }
         return CGPoint(x: (point.x - origin.x) / scale, y: (point.y - origin.y) / scale)
-    }
-}
-
-struct EditItemOverlay: NSViewRepresentable {
-    let controller: EditController
-    let displayScale: CGFloat
-    let revision: Int
-    var onCanvasPress: () -> Void = {}
-
-    func makeNSView(context: Context) -> EditItemLayerView {
-        let view = EditItemLayerView()
-        view.controller = controller
-        view.onCanvasPress = onCanvasPress
-        return view
-    }
-
-    func updateNSView(_ view: EditItemLayerView, context: Context) {
-        view.controller = controller
-        view.onCanvasPress = onCanvasPress
-        view.displayScale = displayScale
-        view.updateInteractionState()
-        view.needsDisplay = true
-        if controller.isCropping, view.window?.firstResponder !== view {
-            view.window?.makeFirstResponder(view)
-        }
     }
 }
 

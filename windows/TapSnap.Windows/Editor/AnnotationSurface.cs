@@ -24,6 +24,7 @@ internal sealed class AnnotationSurface : FrameworkElement
     internal Rect? DraftCrop { get; set; }
     internal bool IsCropping { get; set; }
     internal Guid? SelectedCandidate { get; set; }
+    internal double? ZoomScale { get; private set; }
     internal double Scale { get; private set; } = 1;
     internal Point Origin { get; private set; }
     internal Rect ImageRect => imageRect;
@@ -50,10 +51,21 @@ internal sealed class AnnotationSurface : FrameworkElement
 
     protected override Size ArrangeOverride(Size size)
     {
-        Scale = Math.Max(0.001, Math.Min((size.Width - 2 * Padding) / imageRect.Width,
-                                        (size.Height - 2 * Padding) / imageRect.Height));
-        Origin = new Point((size.Width - imageRect.Width * Scale) / 2, (size.Height - imageRect.Height * Scale) / 2);
+        double scale = ZoomScale ?? FitScale(size);
+        var origin = new Point((size.Width - imageRect.Width * scale) / 2, (size.Height - imageRect.Height * scale) / 2);
+        if (scale != Scale || origin != Origin) InvalidateVisual();
+        Scale = scale;
+        Origin = origin;
         return size;
+    }
+
+    internal double FitScale(Size size) => Math.Max(0.001, Math.Min((size.Width - 2 * Padding) / imageRect.Width,
+                                                                   (size.Height - 2 * Padding) / imageRect.Height));
+
+    internal void SetZoom(double? scale)
+    {
+        ZoomScale = scale;
+        InvalidateArrange();
     }
 
     protected override void OnRender(DrawingContext context)

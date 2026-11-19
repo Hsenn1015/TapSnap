@@ -39,9 +39,11 @@ ARM64 版使用 `win-arm64`，并输出到单独目录。
 
 区域截图默认 `Ctrl+1`，长截图和录屏分别是 `Ctrl+Shift+L`、`Ctrl+Shift+R`。如果遇到普通快捷键冲突，可在「设置 → 快捷键」启用优先响应，Windows 保留组合仍由系统处理。录屏首选 Windows Graphics Capture，不可用时使用桌面抓屏。录制过程使用本地临时文件，首次打开预览时会准备有声视频。
 
+框选后或标注完成后，默认按 `Shift+P` 贴图。底栏的 `−` 和 `+` 用于缩放画布，按住 `Ctrl` 滚动可围绕指针缩放，点击百分比恢复适合窗口。在「设置 → 快捷键 → 框选与编辑」可录制贴图、缩放和各标注工具的键位。
+
 ## 可选本机组件
 
-- 试用包随附简体中文和英语 OCR 字库。x64 版提供本地 Tesseract 后备。ARM64 便携版如需 Tesseract，可把本机 `tesseract.exe` 加到 `PATH`，或用 `TAPSNAP_TESSERACT` 指定完整路径。字库来自 Tesseract tessdata_fast 4.1.0，并按安装脚本中的 SHA-256 核对。
+- GitHub 发布包随附简体中文和英语 OCR 字库。x64 版提供本地 Tesseract 后备。ARM64 便携版如需 Tesseract，可把本机 `tesseract.exe` 加到 `PATH`，或用 `TAPSNAP_TESSERACT` 指定完整路径。字库来自 Tesseract tessdata_fast 4.1.0，并按安装脚本中的 SHA-256 核对。
 - 在「本机翻译设置」可独立配置和试译本机 OpenAI 兼容模型。隐私补查支持本机或远程模型，远程模式先提示并过滤文字规则命中的内容。API Key 按服务地址通过 Windows DPAPI 保存在当前用户目录。
 - 本地公式识别需 Python 3.12、WebView2 Runtime，并运行产物目录中的 `Recognition\Install-Formula.ps1` 安装和校验模型。模型安装后在本机识别。
 - HEIC 导出需要 Windows HEIF 图像扩展和支持编码的 HEVC 编解码器。WebP、AVIF 随包提供编码支持。

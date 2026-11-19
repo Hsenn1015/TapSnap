@@ -1,6 +1,7 @@
 import AppKit
 import QuartzCore
 import TapSnapActionsBar
+import TapSnapConfig
 import XCTest
 @testable import TapSnapApp
 
@@ -23,10 +24,80 @@ final class SelectionModeToolbarTests: XCTestCase {
         return SelectionOverlayView(frame: CGRect(origin: .zero, size: size))
     }
 
-    private func key(_ code: UInt16, _ modifiers: NSEvent.ModifierFlags = [], characters: String = "") throws -> NSEvent {
+    private func key(_ code: UInt16, _ modifiers: NSEvent.ModifierFlags = [], characters: String = "",
+                     isRepeat: Bool = false) throws -> NSEvent {
         try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
                                       timestamp: 0, windowNumber: 0, context: nil, characters: characters,
-                                      charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
+                                      charactersIgnoringModifiers: characters, isARepeat: isRepeat, keyCode: code))
+    }
+
+    func testDockShortcutsUseReleasedSelectionAndIncludeOverflowTools() throws {
+        let view = makeView()
+        var actions: [ActionKind] = []
+        var selections: [CGRect] = []
+        view.onQuickAction = { action, rect in actions.append(action); selections.append(rect) }
+        let pen = try key(11, characters: "b")
+        let pin = try key(35, .shift, characters: "P")
+        XCTAssertFalse(view.performKeyEquivalent(with: pen))
+        XCTAssertFalse(view.performKeyEquivalent(with: pin))
+        view.mouseDown(with: try mouse(.leftMouseDown, at: CGPoint(x: 100, y: 100)))
+        view.mouseDragged(with: try mouse(.leftMouseDragged, at: CGPoint(x: 350, y: 250)))
+        XCTAssertFalse(view.performKeyEquivalent(with: pen))
+        XCTAssertFalse(view.performKeyEquivalent(with: pin))
+        view.mouseUp(with: try mouse(.leftMouseUp, at: CGPoint(x: 350, y: 250)))
+        XCTAssertTrue(view.quickToolbarLayout()?.actions.overflow.contains(.watermark) == true)
+
+        view.keyDown(with: pen)
+        view.keyDown(with: try key(11, characters: "b", isRepeat: true))
+        XCTAssertTrue(view.performKeyEquivalent(with: try key(13, characters: "w")))
+        XCTAssertTrue(view.performKeyEquivalent(with: try key(8, characters: "c")))
+        XCTAssertTrue(view.performKeyEquivalent(with: try key(8, .command, characters: "c")))
+        XCTAssertTrue(view.performKeyEquivalent(with: try key(1, .command, characters: "s")))
+        XCTAssertFalse(view.performKeyEquivalent(with: try key(1, [.command, .shift], characters: "s")))
+        XCTAssertTrue(view.performKeyEquivalent(with: try key(35, characters: "p")))
+        XCTAssertFalse(view.performKeyEquivalent(with: try key(35, [.command, .shift], characters: "P")))
+        XCTAssertTrue(view.performKeyEquivalent(with: pin))
+        XCTAssertTrue(view.performKeyEquivalent(with: try key(35, .shift, characters: "P", isRepeat: true)))
+        XCTAssertEqual(actions, [.pen, .watermark, .crop, .copy, .save, .polygon, .pin])
+        XCTAssertEqual(selections, Array(repeating: CGRect(x: 100, y: 100, width: 250, height: 150), count: 7))
+    }
+
+    func testMirroredDockShortcutWaitsForTheOtherScreenToReleaseSelection() throws {
+        let view = makeView()
+        let rect = CGRect(x: 10, y: 20, width: 90, height: 60)
+        var selected: ActionKind?
+        view.onQuickAction = { action, selectedRect in
+            XCTAssertEqual(selectedRect, rect)
+            selected = action
+        }
+        let text = try key(17, characters: "t")
+        view.synchronizeSelection(rect, showToolbar: false, dragging: true)
+        XCTAssertFalse(view.performKeyEquivalent(with: text))
+        XCTAssertNil(selected)
+        view.synchronizeSelection(rect, showToolbar: false)
+        XCTAssertTrue(view.performKeyEquivalent(with: text))
+        XCTAssertEqual(selected, .text)
+        XCTAssertTrue(view.performKeyEquivalent(with: try key(35, .shift, characters: "P")))
+        XCTAssertEqual(selected, .pin)
+    }
+
+    func testRecordedPinKeyDispatchesOnReleasedSelection() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let config = ConfigStore(fileURL: directory.appendingPathComponent("settings.json"))
+        config.update {
+            var keys = OperationShortcut.defaults
+            keys[ActionKind.pin.rawValue] = KeyBinding(keyCode: 38, flags: .shift)
+            $0.operationShortcuts = keys
+        }
+        let view = makeView()
+        view.shortcutConfig = config
+        var calls: [ActionKind] = []
+        view.onQuickAction = { action, _ in calls.append(action) }
+        try drag(view, from: CGPoint(x: 100, y: 100), to: CGPoint(x: 400, y: 250))
+        XCTAssertFalse(view.performKeyEquivalent(with: try key(35, .shift, characters: "P")))
+        XCTAssertTrue(view.performKeyEquivalent(with: try key(38, .shift, characters: "J")))
+        XCTAssertEqual(calls, [.pin])
     }
 
     private func click(_ action: SelectionOverlayView.BarButton, in view: SelectionOverlayView) throws {

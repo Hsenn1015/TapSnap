@@ -160,7 +160,7 @@ internal sealed class TapSnapHost : IDisposable
                 conflicts.Add(key);
             if (priority) priorityHotkeys.Add(key);
             menu.Text = definition.Title + (conflicts.Contains(key) ? "（快捷键冲突）" : priority ? "（优先响应）" : "");
-            menu.ShortcutKeyDisplayString = combination.ToString();
+            menu.ShortcutKeyDisplayString = Shortcuts.Display(combination);
         }
     }
 
@@ -302,6 +302,7 @@ internal sealed class TapSnapHost : IDisposable
             i => Invoke(() => pins.Add(i)), () => Transfer(r => StartLongShot(r, scan || editor.LocalScanCompleted), CaptureAction.LongShot),
             () => Transfer(StartRecording, CaptureAction.Record), i => Scan(editor, i), settings.DarkTheme,
             settings.DefaultLineWidth, settings.DefaultFontSize, settings.DefaultMosaicBlockSize, settings.AutoMosaicFaces);
+        editor.ApplyOperationHotkeys(settings.OperationHotkeys);
         editor.CapturedAt = capturedAt ?? DateTime.Now;
         if (restoring != null) editor.RestoreDraft(restoring);
         if (captureID.HasValue)
@@ -814,34 +815,72 @@ internal sealed class TapSnapHost : IDisposable
             Option(SettingsLayout.Group(keys, "冲突处理"), "尝试优先响应冲突组合", settings.PreferPriorityHotkeys,
                 value => { settings.PreferPriorityHotkeys = value; BindHotkeys(); Refresh(); },
                 "检测到冲突时尝试响应。系统保留快捷键仍由 Windows 处理。");
-            var bindings = SettingsLayout.Group(keys, "快捷键");
+            var bindings = SettingsLayout.Group(keys, "全局快捷键");
             foreach (var (id, definition) in hotkeyActions)
             {
-                var button = RecordingWindow.Button("录制", () =>
-                {
-                    Hotkey? recorded;
-                    for (int slot = 1; slot <= hotkeyActions.Count; slot++) shortcuts.Unbind(slot);
-                    try { recorded = Shortcuts.Record(window); }
-                    finally { BindHotkeys(); }
-                    if (recorded is not { } key) return;
-                    if (key.KeyCode == 0) settings.Hotkeys.Remove(id);
-                    else if (settings.Hotkeys.Any(pair => pair.Key != id && pair.Value == key))
-                    {
-                        MessageBox.Show(window, "该快捷键已分配给 TapSnap 中的另一个功能。", "快捷键冲突");
-                        return;
-                    }
-                    else settings.Hotkeys[id] = key;
-                    settings.Save();
-                    BindHotkeys();
-                    Refresh();
-                });
-                string displayed = settings.Hotkeys.TryGetValue(id, out var key) ? key.ToString() : "未分配";
+                var button = RecordingWindow.Button("录制", () => EditShortcut(id, operation: false));
+                AutomationProperties.SetName(button, $"录制{definition.Title}快捷键");
+                string displayed = settings.Hotkeys.TryGetValue(id, out var key) ? Shortcuts.Display(key) : "未分配";
                 SettingsLayout.Row(bindings, definition.Title, button, displayed
                     + (conflicts.Contains(id) ? "（被系统或其他应用占用）" : priorityHotkeys.Contains(id) ? "（优先响应）" : ""));
             }
-            var reset = RecordingWindow.Button("恢复默认快捷键", () => { settings.Hotkeys = Settings.Defaults(); settings.Save(); BindHotkeys(); Refresh(); });
+            var operationBindings = SettingsLayout.Group(keys, "框选与编辑");
+            foreach (var operation in OperationShortcut.All)
+            {
+                var button = RecordingWindow.Button("录制", () => EditShortcut(operation.Id, operation: true));
+                AutomationProperties.SetName(button, $"录制{operation.Title}快捷键");
+                string displayed = operation.Binding(settings.OperationHotkeys) is { } key ? Shortcuts.Display(key) : "未分配";
+                SettingsLayout.Row(operationBindings, operation.Title, button, displayed);
+            }
+            var reset = RecordingWindow.Button("恢复默认快捷键", () =>
+            {
+                settings.Hotkeys = Settings.Defaults();
+                settings.OperationHotkeys = null;
+                settings.Save();
+                BindHotkeys();
+                UpdateEditorShortcuts();
+                Refresh();
+            });
             reset.HorizontalAlignment = HorizontalAlignment.Left;
             keys.Children.Add(reset);
+        }
+
+        void EditShortcut(string id, bool operation)
+        {
+            Hotkey? recorded;
+            for (int slot = 1; slot <= hotkeyActions.Count; slot++) shortcuts.Unbind(slot);
+            try { recorded = Shortcuts.Record(window, allowsSingleKeys: operation); }
+            finally { BindHotkeys(); }
+            if (recorded is not { } key) return;
+            if (key.KeyCode != 0)
+            {
+                var globalConflict = hotkeyActions.FirstOrDefault(pair => (operation || pair.Key != id) &&
+                    settings.Hotkeys.GetValueOrDefault(pair.Key) == key).Value.Title;
+                var operationConflict = OperationShortcut.All.FirstOrDefault(action => (!operation || action.Id != id) &&
+                    action.Binding(settings.OperationHotkeys) == key);
+                string? conflict = globalConflict ?? operationConflict?.Title;
+                if (conflict is not null)
+                {
+                    MessageBox.Show(window, $"该快捷键已分配给“{conflict}”，请更换键位。", "快捷键冲突");
+                    return;
+                }
+            }
+            var bindings = operation
+                ? new Dictionary<string, Hotkey>(settings.OperationHotkeys ?? OperationShortcut.Defaults)
+                : settings.Hotkeys;
+            if (key.KeyCode == 0) bindings.Remove(id);
+            else bindings[id] = key;
+            if (operation) settings.OperationHotkeys = bindings;
+            settings.Save();
+            if (operation) UpdateEditorShortcuts();
+            else BindHotkeys();
+            Refresh();
+        }
+
+        void UpdateEditorShortcuts()
+        {
+            foreach (var editor in app.Windows.OfType<EditorWindow>())
+                editor.ApplyOperationHotkeys(settings.OperationHotkeys);
         }
         Refresh();
         navigation.SelectedIndex = 0;

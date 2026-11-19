@@ -29,7 +29,7 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var textEditingItem: TextItem?
     /// 由画布输入框提交输入法组合文字后结束编辑。
     var onFinishTextEditing: ((Bool) -> Void)?
-    var onLocatePrivacyFinding: ((CGRect) -> Void)?
+    weak var canvasViewport: EditorCanvasViewport?
     private var textEditingOriginal: TextEditingState?
     private var textEditingIsNew = false
     @Published var style: EditItemStyle {
@@ -194,9 +194,20 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
     func handleKeyEvent(_ event: NSEvent) -> Bool {
         // 样式面板中的文本输入由 field editor 自己处理删除、撤销和回车。
         if let responder = event.window?.firstResponder as? NSTextView, responder.isEditable { return false }
-        if event.modifierFlags.contains(.command),
-           event.charactersIgnoringModifiers?.lowercased() == "z" {
-            perform(event.modifierFlags.contains(.shift) ? .redo : .undo)
+        if textEditingItem == nil, let shortcut = OperationShortcut.matching(event, in: environment.config.settings) {
+            switch shortcut {
+            case .action(let action):
+                if !event.isARepeat || action == .undo || action == .redo { perform(action) }
+            case .zoomIn:
+                guard let canvasViewport else { return false }
+                canvasViewport.zoom(by: EditorCanvasViewport.zoomStep)
+            case .zoomOut:
+                guard let canvasViewport else { return false }
+                canvasViewport.zoom(by: 1 / EditorCanvasViewport.zoomStep)
+            case .fitImage:
+                guard let canvasViewport else { return false }
+                canvasViewport.fitImage()
+            }
             return true
         }
         switch event.keyCode {

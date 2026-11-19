@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import TapSnapSystem
 
@@ -37,6 +38,15 @@ public struct KeyBinding: Codable, Hashable, Sendable {
     public init(keyCode: UInt32, modifiers: UInt32) {
         self.keyCode = keyCode
         self.modifiers = modifiers
+    }
+
+    public init(keyCode: UInt32, flags: NSEvent.ModifierFlags) {
+        var modifiers: UInt32 = 0
+        if flags.contains(.command) { modifiers |= GlobalShortcut.Combo.command }
+        if flags.contains(.control) { modifiers |= GlobalShortcut.Combo.control }
+        if flags.contains(.option) { modifiers |= GlobalShortcut.Combo.option }
+        if flags.contains(.shift) { modifiers |= GlobalShortcut.Combo.shift }
+        self.init(keyCode: keyCode, modifiers: modifiers)
     }
 
     public var combo: GlobalShortcut.Combo {

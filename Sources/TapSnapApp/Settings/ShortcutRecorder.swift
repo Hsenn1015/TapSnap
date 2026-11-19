@@ -1,6 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 import Combine
+import TapSnapActionsBar
 import TapSnapConfig
 import TapSnapSystem
 
@@ -10,7 +11,31 @@ final class ShortcutRecorder: ObservableObject {
         case binding(KeyBinding), cancel, clear, invalid, ignore
     }
 
-    @Published private(set) var action: ShortcutAction?
+    enum Target: Hashable {
+        case global(ShortcutAction)
+        case operation(OperationShortcut)
+
+        var displayName: String {
+            switch self {
+            case .global(let action): return action.displayName
+            case .operation(let operation): return operation.title
+            }
+        }
+
+        var allowsSingleKey: Bool {
+            if case .operation = self { return true }
+            return false
+        }
+
+        func binding(in config: ConfigStore) -> KeyBinding? {
+            switch self {
+            case .global(let action): return config.binding(for: action)
+            case .operation(let operation): return operation.binding(in: config.settings)
+            }
+        }
+    }
+
+    @Published private(set) var action: Target?
     @Published private(set) var preview = "请按组合键"
     @Published private(set) var message: String?
     @Published private(set) var hasError = false
@@ -26,10 +51,10 @@ final class ShortcutRecorder: ObservableObject {
 
     init(center: ShortcutCenter) { self.center = center }
 
-    func begin(_ action: ShortcutAction) {
+    func begin(_ action: Target) {
         cancel()
         self.action = action
-        preview = "请按组合键"
+        preview = action.allowsSingleKey ? "请按快捷键" : "请按组合键"
         message = nil
         hasError = false
         window = NSApp?.keyWindow
@@ -67,9 +92,9 @@ final class ShortcutRecorder: ObservableObject {
         center.endRecording()
     }
 
-    func clear(_ action: ShortcutAction) {
+    func clear(_ action: Target) {
         cancel()
-        message = center.setRecordedBinding(nil, for: action)
+        message = save(nil, for: action)
         hasError = message != nil
         if message == nil { message = "已清除\(action.displayName)快捷键" }
     }
@@ -79,14 +104,14 @@ final class ShortcutRecorder: ObservableObject {
         if event.type == .flagsChanged {
             if pendingKey == nil {
                 let symbols = Self.modifierSymbols(event.modifierFlags)
-                preview = symbols.isEmpty ? "请按组合键" : symbols + "…"
+                preview = symbols.isEmpty ? (action.allowsSingleKey ? "请按快捷键" : "请按组合键") : symbols + "…"
             }
             return
         }
         if event.type == .keyUp {
             guard pendingKey == event.keyCode else { return }
             pendingKey = nil
-            if let error = center.setRecordedBinding(pendingBinding, for: action) {
+            if let error = save(pendingBinding, for: action) {
                 message = error
                 hasError = true
             } else {
@@ -98,7 +123,7 @@ final class ShortcutRecorder: ObservableObject {
             }
             return
         }
-        switch Self.input(from: event) {
+        switch Self.input(from: event, allowsSingleKey: action.allowsSingleKey) {
         case .binding(let binding):
             pendingKey = event.keyCode
             pendingBinding = binding
@@ -117,30 +142,34 @@ final class ShortcutRecorder: ObservableObject {
             hasError = false
         case .invalid:
             pendingKey = nil
-            message = "请搭配 ⌘、⌃ 或 ⌥ 使用，也可以单独使用 F1–F20"
+            message = action.allowsSingleKey ? "回车和 Tab 用于确认与切换焦点，请换一个键位"
+                : "请搭配 ⌘、⌃ 或 ⌥ 使用，也可以单独使用 F1–F20"
             hasError = true
         case .ignore: break
         }
     }
 
-    static func input(from event: NSEvent) -> Input {
+    private func save(_ binding: KeyBinding?, for action: Target) -> String? {
+        switch action {
+        case .global(let action): return center.setRecordedBinding(binding, for: action)
+        case .operation(let operation): return center.setRecordedBinding(binding, for: operation)
+        }
+    }
+
+    static func input(from event: NSEvent, allowsSingleKey: Bool = false) -> Input {
         guard event.type == .keyDown, !event.isARepeat else { return .ignore }
         let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
         if flags.isEmpty {
             if event.keyCode == kVK_Escape { return .cancel }
             if event.keyCode == kVK_Delete || event.keyCode == kVK_ForwardDelete { return .clear }
+            if allowsSingleKey, [kVK_Return, kVK_ANSI_KeypadEnter, kVK_Tab].contains(Int(event.keyCode)) { return .invalid }
         }
         let functionKeys = [kVK_F1, kVK_F2, kVK_F3, kVK_F4, kVK_F5, kVK_F6, kVK_F7, kVK_F8,
                             kVK_F9, kVK_F10, kVK_F11, kVK_F12, kVK_F13, kVK_F14, kVK_F15,
                             kVK_F16, kVK_F17, kVK_F18, kVK_F19, kVK_F20]
-        guard !flags.intersection([.command, .control, .option]).isEmpty
+        guard allowsSingleKey || !flags.intersection([.command, .control, .option]).isEmpty
                 || functionKeys.contains(Int(event.keyCode)) else { return .invalid }
-        var modifiers: UInt32 = 0
-        if flags.contains(.command) { modifiers |= GlobalShortcut.Combo.command }
-        if flags.contains(.control) { modifiers |= GlobalShortcut.Combo.control }
-        if flags.contains(.option) { modifiers |= GlobalShortcut.Combo.option }
-        if flags.contains(.shift) { modifiers |= GlobalShortcut.Combo.shift }
-        return .binding(KeyBinding(keyCode: UInt32(event.keyCode), modifiers: modifiers))
+        return .binding(KeyBinding(keyCode: UInt32(event.keyCode), flags: flags))
     }
 
     private static func modifierSymbols(_ flags: NSEvent.ModifierFlags) -> String {

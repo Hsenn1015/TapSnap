@@ -8,5 +8,8 @@
   <ItemGroup>
     <Compile Include="../../TapSnap.Windows/Capture/SelectionGeometry.cs" Link="SelectionGeometry.cs" />
     <Compile Include="../../TapSnap.Windows/Capture/SelectionToolbarModel.cs" Link="SelectionToolbarModel.cs" />
+    <Compile Include="../../TapSnap.Windows/Platform/Hotkey.cs" Link="Hotkey.cs" />
+    <Compile Include="../../TapSnap.Windows/Platform/OperationShortcut.cs" Link="OperationShortcut.cs" />
+    <Compile Include="../../TapSnap.Windows/Platform/Settings.cs" Link="Settings.cs" />
   </ItemGroup>
 </Project>

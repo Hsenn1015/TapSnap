@@ -161,12 +161,20 @@ internal sealed class SelectionWindow : Window
         canvas.MouseLeave += (_, _) => { lens.Visibility = Visibility.Collapsed; };
         PreviewKeyDown += (_, e) =>
         {
-            if (e.Key == Key.Escape) { e.Handled = true; session.End(); }
-            bool copy = ShowsEditorDock && e.Key == Key.C && Keyboard.Modifiers == ModifierKeys.Control;
-            if ((!copy && e.Key != Key.Enter) || start.HasValue || session.Finishing) return;
+            if (e.Key == Key.Escape) { e.Handled = true; session.End(); return; }
+            if (start.HasValue || session.Finishing) return;
+            var operation = ShowsEditorDock ? OperationShortcut.Match(Shortcuts.FromEvent(e), settings.OperationHotkeys) : null;
+            if (locked && region.HasValue && operation?.Tool is { } tool)
+            {
+                e.Handled = true;
+                if (!e.IsRepeat) _ = Finish(CaptureAction.Edit, tool);
+                return;
+            }
+            CaptureAction? output = operation?.Output;
+            if (output is null && e.Key != Key.Enter) return;
             e.Handled = true;
-            if (region.HasValue) _ = Finish(copy ? CaptureAction.Copy : action);
-            else if (!copy) session.End();
+            if (region.HasValue && (output is null || !e.IsRepeat)) _ = Finish(output ?? action);
+            else if (region is null && output is null) session.End();
         };
     }
 
@@ -498,17 +506,22 @@ internal sealed class SelectionWindow : Window
         dockLayout = (slots, singleScreen);
         buttons.Children.Clear();
         var layout = SelectionToolbarModel.Layout(slots, singleScreen, copyOnConfirm);
-        Button Add(string title, string symbol, Action run)
+        Button Add(string title, string symbol, Action run, string? shortcut = null)
         {
-            var button = ToolbarGlyph.CreateButton(title, symbol, palette);
+            var button = ToolbarGlyph.CreateButton(title, symbol, palette, shortcut);
             button.Click += (_, _) => run();
             buttons.Children.Add(button);
             return button;
         }
         void Choose(ToolbarItem item) => _ = Finish(item.Action, item.Tool);
-        foreach (var item in layout.Tools) Add(item.Title, item.Symbol, () => Choose(item));
+        string? Shortcut(ToolbarItem item)
+        {
+            var operation = item.Tool is { } tool ? OperationShortcut.ForTool(tool) : OperationShortcut.ForOutput(item.Action);
+            return operation?.Binding(settings.OperationHotkeys) is { } key ? Shortcuts.Display(key) : null;
+        }
+        foreach (var item in layout.Tools) Add(item.Title, item.Symbol, () => Choose(item), Shortcut(item));
         buttons.Children.Add(ToolbarGlyph.Divider(palette));
-        foreach (var item in layout.Outputs) Add(item.Title, item.Symbol, () => Choose(item));
+        foreach (var item in layout.Outputs) Add(item.Title, item.Symbol, () => Choose(item), Shortcut(item));
         var more = ToolbarGlyph.CreateButton("更多工具与操作", "⌄", palette);
         more.Click += (_, _) =>
         {
@@ -516,7 +529,8 @@ internal sealed class SelectionWindow : Window
                 Background = palette.Panel, Foreground = palette.Foreground, BorderBrush = palette.Border };
             foreach (var item in layout.More)
             {
-                var entry = new MenuItem { Header = item.Title, Icon = ToolbarGlyph.Make(item.Symbol) };
+                var entry = new MenuItem { Header = item.Title, Icon = ToolbarGlyph.Make(item.Symbol),
+                    InputGestureText = Shortcut(item) ?? "" };
                 entry.Click += (_, _) => Choose(item);
                 menu.Items.Add(entry);
             }
@@ -525,7 +539,8 @@ internal sealed class SelectionWindow : Window
         buttons.Children.Add(more);
         buttons.Children.Add(ToolbarGlyph.Divider(palette));
         Add("取消框选 Esc", "×", session.End);
-        var title = copyOnConfirm ? (RecognitionService.ShouldScanAutomatically ? "检查后复制 Ctrl+C" : "复制 Ctrl+C") : "编辑 ↵";
+        var title = copyOnConfirm ? Shortcuts.WithHint(RecognitionService.ShouldScanAutomatically ? "检查后复制" : "复制",
+            OperationShortcut.Copy.Binding(settings.OperationHotkeys) is { } copyKey ? Shortcuts.Display(copyKey) : null) : "编辑 ↵";
         var confirm = Add(title, "✓", () => _ = Finish(copyOnConfirm ? CaptureAction.Copy : action));
         confirm.Background = palette.Primary;
         confirm.Foreground = palette.PrimaryForeground;

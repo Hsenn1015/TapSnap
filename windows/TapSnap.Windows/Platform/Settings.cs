@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
-using System.Windows.Input;
 
 namespace TapSnap.Windows;
 
@@ -20,6 +19,7 @@ internal sealed class Settings
     public static string[] SaveFormats { get; } = ["png", "jpg", "webp", "avif", "heic", "tiff", "bmp", "gif"];
 
     public Dictionary<string, Hotkey> Hotkeys { get; set; } = Defaults();
+    public Dictionary<string, Hotkey>? OperationHotkeys { get; set; }
     public List<CapturePreset> Presets { get; set; } = [];
     public string OutputFolder { get; set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "TapSnap");
     public bool CopyAfterConfirm { get; set; } = true;

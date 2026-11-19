@@ -220,6 +220,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           $architectures = @{ 'x64' = 0x8664; 'arm64' = 0xAA64 }
+          $tesseractLibraries = @('leptonica-1.82.0.dll', 'tesseract50.dll')
           foreach ($arch in 'x64', 'arm64') {
             $publish = Join-Path $env:RUNNER_TEMP "tapsnap-$arch"
             dotnet publish windows/TapSnap.Windows -c Release -r "win-$arch" --self-contained true "-p:Version=$env:TAPSNAP_VERSION" -o $publish
@@ -231,13 +232,33 @@ jobs:
               throw "TapSnap.exe architecture does not match $arch."
             }
 
+            # The ARM64 OCR fallback invokes an external Tesseract executable.
+            $unusedOcrLibraries = foreach ($folder in ('x86', 'x64' | Where-Object { $_ -ne $arch })) {
+              foreach ($library in $tesseractLibraries) {
+                "$folder/$library"
+              }
+            }
+            foreach ($file in $unusedOcrLibraries) {
+              $path = Join-Path $publish $file
+              if (Test-Path -LiteralPath $path -PathType Leaf) {
+                Remove-Item -LiteralPath $path -ErrorAction Stop
+              }
+            }
+
             $zip = Join-Path (Resolve-Path dist).Path "TapSnap-$($env:PACKAGE_LABEL)-windows-$arch.zip"
-            [IO.Compression.ZipFile]::CreateFromDirectory($publish, $zip)
+            [IO.Compression.ZipFile]::CreateFromDirectory($publish, $zip, [IO.Compression.CompressionLevel]::SmallestSize, $false)
             $archive = [IO.Compression.ZipFile]::OpenRead($zip)
             try {
               $entries = $archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') }
-              foreach ($file in 'TapSnap.exe', 'hostfxr.dll', 'tessdata/eng.traineddata', 'tessdata/chi_sim.traineddata', 'Recognition/Install-Formula.ps1', 'Recognition/KaTeX/katex.js') {
+              $required = @('TapSnap.exe', 'hostfxr.dll', 'tessdata/eng.traineddata', 'tessdata/chi_sim.traineddata', 'Recognition/Install-Formula.ps1', 'Recognition/KaTeX/katex.js')
+              if ($arch -eq 'x64') {
+                $required += $tesseractLibraries | ForEach-Object { "x64/$_" }
+              }
+              foreach ($file in $required) {
                 if ($file -notin $entries) { throw "$file is missing from $zip." }
+              }
+              foreach ($file in $unusedOcrLibraries) {
+                if ($file -in $entries) { throw "$file is unused on $arch and must be excluded from $zip." }
               }
             } finally {
               $archive.Dispose()

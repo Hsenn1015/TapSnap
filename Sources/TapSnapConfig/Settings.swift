@@ -142,6 +142,8 @@ public struct Settings: Codable, Hashable, Sendable {
         set { privacyRules = newValue }
     }
     public var shortcuts: [String: KeyBinding] = [:]
+    /// 缺省时用操作默认键位。保存过的字典里，缺少的动作视为已清除。
+    public var operationShortcuts: [String: KeyBinding]?
     /// 配置结构版本。老文件里没有这个键（解码为 nil），用来判断要不要补默认值。
     public var schemaVersion: Int?
 

@@ -1,4 +1,5 @@
 import AppKit
+import TapSnapActionsBar
 import TapSnapConfig
 import TapSnapCore
 import TapSnapIcons
@@ -532,47 +533,11 @@ private struct ShortcutSettings: View {
 
     var body: some View {
         SettingsPage(title: "快捷键", theme: theme) {
-            Text("点击录制后按下组合键，松开即保存。Esc 取消，Delete 清除。")
+            Text("点击录制后按下快捷键，松开即保存。Esc 取消，Delete 清除。")
                 .font(.system(size: 11))
                 .foregroundStyle(theme.token(.mutedForeground))
-            SnapSettingGroup(theme: theme) {
-                ForEach(Array(ShortcutAction.allCases.enumerated()), id: \.element.rawValue) { index, action in
-                    if index > 0 {
-                        SnapRowDivider(theme: theme)
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
-                        SnapSettingRow(action.displayName, theme: theme) {
-                            HStack(spacing: 8) {
-                                if recorder.action == action {
-                                    SnapKbd(recorder.preview, theme: theme)
-                                    SnapButton("取消", theme: theme, variant: .outline, size: .sm) {
-                                        recorder.cancel()
-                                    }
-                                } else {
-                                    SnapKbd(config.binding(for: action)?.displayString ?? "未设置", theme: theme)
-                                    SnapButton("录制", theme: theme, variant: .outline, size: .sm) {
-                                        recorder.begin(action)
-                                    }
-                                    .accessibilityLabel("录制\(action.displayName)快捷键")
-                                    SnapButton("清除", theme: theme, variant: .ghost, size: .sm,
-                                               isEnabled: config.binding(for: action) != nil) {
-                                        recorder.clear(action)
-                                    }
-                                    .accessibilityLabel("清除\(action.displayName)快捷键")
-                                }
-                            }
-                        }
-                        if recorder.action == action {
-                            Text(recorder.message ?? "等待按键…")
-                                .font(.system(size: 11))
-                                .foregroundStyle(theme.token(recorder.hasError ? .destructive : .mutedForeground))
-                                .fixedSize(horizontal: false, vertical: true)
-                                .padding(.horizontal, 12)
-                                .padding(.bottom, 8)
-                        }
-                    }
-                }
-            }
+            bindings("全局快捷键", for: ShortcutAction.allCases.map(ShortcutRecorder.Target.global))
+            bindings("框选与编辑", for: OperationShortcut.all.map(ShortcutRecorder.Target.operation))
 
             if recorder.action == nil, let message = recorder.message {
                 Text(message)
@@ -585,6 +550,41 @@ private struct ShortcutSettings: View {
             }
         }
         .onDisappear { recorder.cancel() }
+    }
+
+    private func bindings(_ title: String, for actions: [ShortcutRecorder.Target]) -> some View {
+        SnapSettingGroup(title, theme: theme) {
+            ForEach(Array(actions.enumerated()), id: \.element) { index, action in
+                if index > 0 { SnapRowDivider(theme: theme) }
+                VStack(alignment: .leading, spacing: 4) {
+                    SnapSettingRow(action.displayName, theme: theme) {
+                        HStack(spacing: 8) {
+                            if recorder.action == action {
+                                SnapKbd(recorder.preview, theme: theme)
+                                SnapButton("取消", theme: theme, variant: .outline, size: .sm) { recorder.cancel() }
+                            } else {
+                                let binding = action.binding(in: config)
+                                SnapKbd(binding?.displayString ?? "未设置", theme: theme)
+                                SnapButton("录制", theme: theme, variant: .outline, size: .sm) { recorder.begin(action) }
+                                    .accessibilityLabel("录制\(action.displayName)快捷键")
+                                SnapButton("清除", theme: theme, variant: .ghost, size: .sm, isEnabled: binding != nil) {
+                                    recorder.clear(action)
+                                }
+                                .accessibilityLabel("清除\(action.displayName)快捷键")
+                            }
+                        }
+                    }
+                    if recorder.action == action {
+                        Text(recorder.message ?? "等待按键…")
+                            .font(.system(size: 11))
+                            .foregroundStyle(theme.token(recorder.hasError ? .destructive : .mutedForeground))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 8)
+                    }
+                }
+            }
+        }
     }
 }
 

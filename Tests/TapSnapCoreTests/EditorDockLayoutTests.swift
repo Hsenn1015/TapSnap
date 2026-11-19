@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import TapSnapActionsBar
 import TapSnapConfig
 import TapSnapCore
 import TapSnapScreen
@@ -147,7 +148,9 @@ final class EditorDockLayoutTests: XCTestCase {
         XCTAssertEqual(topInset, 6, accuracy: 0.5)
         XCTAssertEqual(bottomInset, 50, accuracy: 0.5)
         XCTAssertEqual(window.subtitle, "1200 × 760")
-        XCTAssertFalse(containsScrollView(host))
+        let viewport = try XCTUnwrap(controller.canvasViewport)
+        XCTAssertFalse(viewport.hasHorizontalScroller)
+        XCTAssertFalse(viewport.hasVerticalScroller)
         let rendered = try controller.document.render()
         XCTAssertEqual(rendered.width, 1200)
         XCTAssertEqual(rendered.height, 760)
@@ -170,7 +173,7 @@ final class EditorDockLayoutTests: XCTestCase {
         XCTAssertEqual(small, CGSize(width: 288, height: 144))
     }
 
-    func testRenderedEditorKeepsCanvasGeometryAcrossSelectionAndHasNoScrollView() throws {
+    func testRenderedEditorKeepsCanvasGeometryAcrossSelectionWithoutScrollbars() throws {
         _ = NSApplication.shared
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -203,15 +206,90 @@ final class EditorDockLayoutTests: XCTestCase {
             XCTAssertEqual(frame, initial)
 
         }
-        XCTAssertFalse(containsScrollView(host), "The dock must not create an NSScrollView, even when macOS always shows scrollbars")
+        let viewport = try XCTUnwrap(controller.canvasViewport)
+        XCTAssertFalse(viewport.hasHorizontalScroller)
+        XCTAssertFalse(viewport.hasVerticalScroller)
+    }
+
+    func testZoomKeepsPointerOnImageAndMapsAnnotationAndCropToOriginalPixels() throws {
+        _ = NSApplication.shared
+        let config = ConfigStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let bitmap = try XCTUnwrap(CGContext(data: nil, width: 800, height: 600, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        let controller = EditController(environment: AppEnvironment(config: config), image: try XCTUnwrap(bitmap.makeImage()),
+                                        scale: 2, style: EditItemStyle())
+        let window = controller.makeWindow()
+        defer { window.delegate = nil; window.close() }
+        let host = try XCTUnwrap(window.contentView)
+        host.layoutSubtreeIfNeeded()
+        let viewport = try XCTUnwrap(controller.canvasViewport)
+        let canvas = try XCTUnwrap(canvasView(in: viewport))
+        let clip = viewport.contentView
+        let initialScale = canvas.displayScale
+        let anchor = CGPoint(x: 110, y: 95)
+
+        func clipPoint(_ p: CGPoint) -> CGPoint { CGPoint(x: clip.bounds.minX + p.x, y: clip.bounds.minY + p.y) }
+        func documentPoint(_ p: CGPoint) -> CGPoint {
+            let point = canvas.convert(clipPoint(p), from: clip)
+            return CGPoint(x: point.x / canvas.displayScale, y: point.y / canvas.displayScale)
+        }
+        func mouse(_ type: NSEvent.EventType, _ p: CGPoint) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.mouseEvent(with: type, location: clip.convert(clipPoint(p), to: nil), modifierFlags: [],
+                timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        }
+        func drag(from: CGPoint, to: CGPoint) throws {
+            canvas.mouseDown(with: try mouse(.leftMouseDown, from))
+            canvas.mouseDragged(with: try mouse(.leftMouseDragged, to))
+            canvas.mouseUp(with: try mouse(.leftMouseUp, to))
+        }
+
+        let originalPoint = documentPoint(anchor)
+        viewport.zoom(by: 2, at: anchor)
+        XCTAssertEqual(canvas.displayScale, initialScale * 2, accuracy: 0.01)
+        XCTAssertEqual(documentPoint(anchor).x, originalPoint.x, accuracy: 0.5)
+        XCTAssertEqual(documentPoint(anchor).y, originalPoint.y, accuracy: 0.5)
+        XCTAssertTrue(viewport.hasHorizontalScroller)
+        XCTAssertTrue(viewport.hasVerticalScroller)
+
+        let end = CGPoint(x: anchor.x + 60, y: anchor.y + 48)
+        let expected = CGRect(origin: documentPoint(anchor),
+                              size: CGSize(width: 60 / canvas.displayScale, height: 48 / canvas.displayScale))
+        controller.perform(.rectangle)
+        try drag(from: anchor, to: end)
+        XCTAssertEqual(controller.document.items.first?.bounds, expected)
+        XCTAssertEqual(try controller.document.render().width, 800)
+        XCTAssertEqual(try controller.document.render().height, 600)
+
+        controller.perform(.crop)
+        try drag(from: anchor, to: end)
+        XCTAssertEqual(controller.document.cropRect, expected)
+        let output = try controller.document.render()
+        XCTAssertEqual(output.width, Int((expected.width * 2).rounded()))
+        XCTAssertEqual(output.height, Int((expected.height * 2).rounded()))
+
+        XCTAssertTrue(canvas.scrollToVisible(CGRect(x: canvas.bounds.maxX - 4, y: canvas.bounds.maxY - 4, width: 4, height: 4)))
+        XCTAssertEqual(canvas.visibleRect.maxX, canvas.bounds.maxX, accuracy: 1)
+        XCTAssertEqual(canvas.visibleRect.maxY, canvas.bounds.maxY, accuracy: 1)
+        config.update {
+            var bindings = OperationShortcut.defaults
+            bindings[OperationShortcut.fitImage.id] = KeyBinding(keyCode: 38, modifiers: 0)
+            $0.operationShortcuts = bindings
+        }
+        let oldFit = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+            timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "0", charactersIgnoringModifiers: "0",
+            isARepeat: false, keyCode: 29))
+        XCTAssertFalse(controller.handleKeyEvent(oldFit))
+        let fit = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "j", charactersIgnoringModifiers: "j",
+            isARepeat: false, keyCode: 38))
+        XCTAssertTrue(controller.handleKeyEvent(fit))
+        XCTAssertEqual(canvas.displayScale, initialScale, accuracy: 0.01)
+        XCTAssertEqual(clip.bounds.origin, .zero)
+        XCTAssertEqual(controller.document.cropRect, expected)
     }
 
     private func canvasView(in view: NSView) -> EditItemLayerView? {
         if let canvas = view as? EditItemLayerView { return canvas }
         return view.subviews.lazy.compactMap { self.canvasView(in: $0) }.first
-    }
-
-    private func containsScrollView(_ view: NSView) -> Bool {
-        view is NSScrollView || view.subviews.contains(where: containsScrollView)
     }
 }

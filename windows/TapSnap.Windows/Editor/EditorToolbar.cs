@@ -17,7 +17,7 @@ namespace TapSnap.Windows;
 public sealed partial class EditorWindow
 {
     private sealed record DockTool(string Title, string Symbol, Action Run, AnnotationTool? Tool = null,
-                                   bool Options = false, bool Export = false, int Priority = 0);
+                                   bool Options = false, bool Export = false, int Priority = 0, string? Shortcut = null);
 
     private readonly Dictionary<Button, DockTool> dockButtons = new();
     private Button? undoButton, redoButton;
@@ -32,7 +32,7 @@ public sealed partial class EditorWindow
             if (longShotOutputs.Count == 0) BuildLongShotToolbar();
             return;
         }
-        int slots = Math.Max(5, (int)((toolbarDock.ActualWidth - 42) / 29));
+        int slots = Math.Max(5, (int)((toolbarDock.ActualWidth - zoomControls.Width - zoomControls.Margin.Left - 42) / 29));
         if (!force && laidOutSlots == slots) return;
         laidOutSlots = slots;
 
@@ -46,9 +46,9 @@ public sealed partial class EditorWindow
         {
             Tool("隐私打码", "shield", AnnotationTool.Privacy, priority: 2),
             Tool("裁剪", "⌗", AnnotationTool.Crop, priority: 3),
-            new("贴图", "pin", () => Export(pin), Export: true, Priority: 3),
-            new("复制", "▢", () => Export(copy), Export: true),
-            new("保存", "↓", () => Export(save), Export: true),
+            new("贴图", "pin", () => Export(pin), Export: true, Priority: 3, Shortcut: ShortcutLabel(OperationShortcut.Pin)),
+            new("复制", "▢", () => Export(copy), Export: true, Shortcut: ShortcutLabel(OperationShortcut.Copy)),
+            new("保存", "↓", () => Export(save), Export: true, Shortcut: ShortcutLabel(OperationShortcut.Save)),
             new("打印", "⎙", Print, Export: true, Priority: 3)
         };
         var overflow = new List<DockTool>();
@@ -67,8 +67,8 @@ public sealed partial class EditorWindow
         var hidden = tools.Concat(actions).Where(item => !visible.Contains(item)).Concat(overflow).ToList();
         foreach (DockTool entry in tools.Where(visible.Contains)) AddButton(entry);
         AddDivider();
-        undoButton = AddButton(new DockTool("撤销（Ctrl+Z）", "↶", () => TraverseHistory(undo, redo)));
-        redoButton = AddButton(new DockTool("重做（Ctrl+Y）", "↷", () => TraverseHistory(redo, undo)));
+        undoButton = AddButton(new DockTool("撤销", "↶", () => TraverseHistory(undo, redo), Shortcut: ShortcutLabel(OperationShortcut.Undo)));
+        redoButton = AddButton(new DockTool("重做", "↷", () => TraverseHistory(redo, undo), Shortcut: ShortcutLabel(OperationShortcut.Redo)));
         AddDivider();
         foreach (DockTool entry in actions.Where(visible.Contains)) AddButton(entry);
         Button more = NewIcon("更多工具与操作", "⌄");
@@ -83,7 +83,8 @@ public sealed partial class EditorWindow
     }
 
     private DockTool Tool(string title, string symbol, AnnotationTool kind, bool options = true, int priority = 0) =>
-        new(title, symbol, () => PickTool(kind), kind, options, Priority: priority);
+        new(title, symbol, () => PickTool(kind), kind, options, Priority: priority,
+            Shortcut: ShortcutLabel(OperationShortcut.ForTool(kind)));
 
     private void SwitchCapture(Action begin)
     {
@@ -93,16 +94,16 @@ public sealed partial class EditorWindow
 
     private Button AddButton(DockTool tool)
     {
-        Button button = NewIcon(tool.Title, tool.Symbol);
+        Button button = NewIcon(tool.Title, tool.Symbol, tool.Shortcut);
         button.Click += (_, _) => Activate(tool, button);
         toolbar.Children.Add(button);
         dockButtons.Add(button, tool);
         return button;
     }
 
-    private Button NewIcon(string label, string symbol)
+    private Button NewIcon(string label, string symbol, string? shortcut = null)
     {
-        var control = ToolbarGlyph.CreateButton(label, symbol, palette);
+        var control = ToolbarGlyph.CreateButton(label, symbol, palette, shortcut);
         control.ToolTipOpening += (_, e) => e.Handled = stylePopup?.IsOpen == true;
         return control;
     }
@@ -141,6 +142,7 @@ public sealed partial class EditorWindow
         foreach (DockTool entry in contents)
         {
             var item = new MenuItem { Header = entry.Title, Icon = ToolbarGlyph.Make(entry.Symbol),
+                InputGestureText = entry.Shortcut ?? "",
                 IsEnabled = !entry.Export || !scanning };
             item.Click += (_, _) => _ = Dispatcher.BeginInvoke(() => Activate(entry, anchor), DispatcherPriority.Background);
             menu.Items.Add(item);

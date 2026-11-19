@@ -98,7 +98,10 @@ public final class ConfigStore: ObservableObject {
     }
 
     public func resetShortcutsToDefaults() {
-        update { $0.shortcuts = Settings.withDefaultShortcuts().shortcuts }
+        update {
+            $0.shortcuts = Settings.withDefaultShortcuts().shortcuts
+            $0.operationShortcuts = nil
+        }
     }
 
     public func binding(for action: ShortcutAction) -> KeyBinding? {

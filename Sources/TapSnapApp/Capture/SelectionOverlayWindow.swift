@@ -60,10 +60,12 @@ final class SelectionOverlayView: NSView {
     var selectionScale: CGFloat?
     var onSelectionChange: ((CGRect?, CGPoint, Bool) -> Void)?
     private var receivingSelection = false
+    private var synchronizedDrag = false
     private var displaysToolbar = true
     private var dragBounds: CGRect { desktopDragBounds ?? bounds }
     var quickToolbarTheme: Theme = .dark { didSet { updateBar() } }
     var quickToolbarToolTip: (ActionKind) -> String = { $0.title } { didSet { hideQuickToolbarTip() } }
+    var shortcutConfig: ConfigStore?
     var quickConfirmationCopies = true { didSet { updateBar() } }
     var confirmationTitle = "确认 ⏎" { didSet { updateBar() } }
 
@@ -115,8 +117,9 @@ final class SelectionOverlayView: NSView {
     }
     private var cursor: CGPoint = .zero
 
-    func synchronizeSelection(_ rect: CGRect?, showToolbar: Bool) {
+    func synchronizeSelection(_ rect: CGRect?, showToolbar: Bool, dragging: Bool = false) {
         receivingSelection = true
+        synchronizedDrag = dragging
         displaysToolbar = showToolbar
         if selection != rect { selection = rect } else { updateBar() }
         receivingSelection = false
@@ -395,12 +398,12 @@ final class SelectionOverlayView: NSView {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        handleCopyShortcut(event) || super.performKeyEquivalent(with: event)
+        handleDockShortcut(event) || super.performKeyEquivalent(with: event)
     }
 
     override func keyDown(with event: NSEvent) {
         guard pendingAction == nil else { return }
-        if handleCopyShortcut(event) { return }
+        if handleDockShortcut(event) { return }
         switch event.keyCode {
         case 53: // Esc
             performBarAction(.cancel)
@@ -414,13 +417,14 @@ final class SelectionOverlayView: NSView {
         }
     }
 
-    private func handleCopyShortcut(_ event: NSEvent) -> Bool {
-        guard onQuickAction != nil || onCopy != nil,
-              event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command,
-              event.charactersIgnoringModifiers?.lowercased() == "c" else { return false }
+    private func handleDockShortcut(_ event: NSEvent) -> Bool {
+        guard let action = OperationShortcut.matching(event, in: shortcutConfig?.settings ?? Settings(),
+                                                      selection: true)?.selectionAction else { return false }
         if onQuickAction != nil {
-            performQuickAction(.copy)
-        } else if barLayout()?.buttons.contains(where: { $0.action == .copy }) == true {
+            return event.isARepeat || performQuickAction(action) || action == .copy
+        }
+        guard action == .copy, onCopy != nil else { return false }
+        if !event.isARepeat, barLayout()?.buttons.contains(where: { $0.action == .copy }) == true {
             performBarAction(.copy)
         }
         return true
@@ -449,13 +453,15 @@ final class SelectionOverlayView: NSView {
         }
     }
 
-    func performQuickAction(_ action: ActionKind) {
-        guard pendingAction == nil, let onQuickAction, let selection, !isDragging,
-              quickToolbarLayout() != nil || (action == .copy && !displaysToolbar) else { return }
+    @discardableResult
+    func performQuickAction(_ action: ActionKind) -> Bool {
+        let canUseMirroredSelection = !displaysToolbar && OperationShortcut.action(action).selectionAction != nil
+        guard pendingAction == nil, let onQuickAction, let selection, !isDragging, !synchronizedDrag,
+              quickToolbarLayout() != nil || canUseMirroredSelection else { return false }
         switch action {
         case .cancel: performBarAction(.cancel)
         case .confirm where !quickConfirmationCopies: performBarAction(.confirm)
-        case .undo, .redo: return
+        case .undo, .redo: return false
         default:
             if window?.isVisible == true {
                 pendingAction = .confirm
@@ -463,6 +469,7 @@ final class SelectionOverlayView: NSView {
             }
             onQuickAction(action == .confirm ? .copy : action, selection)
         }
+        return true
     }
 
     private func startPoint(of mode: Mode) -> CGPoint? {
@@ -775,7 +782,6 @@ final class SelectionOverlayView: NSView {
 
     private func editorDockToolTip(for action: ActionKind) -> String {
         switch action {
-        case .copy: return "复制 ⌘C"
         case .edit: return "编辑 ⏎"
         case .cancel: return "取消框选 Esc"
         case .confirm: return confirmationTitle

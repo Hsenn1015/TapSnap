@@ -139,8 +139,6 @@ public struct ActionsBarView: View {
             return isOutputBlocked ? "正在扫描隐私内容" : confirmationTitle
         }
         if action.exportsImage && isOutputBlocked { return "\(action.title) · 正在扫描隐私内容" }
-        if action == .undo { return "撤销 ⌘Z" }
-        if action == .redo { return "重做 ⇧⌘Z" }
         if action == .cancel { return cancellationTitle }
         return toolTip(action)
     }
@@ -221,7 +219,7 @@ public struct ActionsBarView: View {
                     // Wait for the native menu to release its mouse tracking before showing the popover.
                     DispatchQueue.main.async { activate(action) }
                 } label: {
-                    Label(action.title, systemImage: selectedTool == action ? "checkmark" : action.icon.systemName)
+                    Label(hint(for: action), systemImage: selectedTool == action ? "checkmark" : action.icon.systemName)
                 }
                 .disabled(isOutputBlocked && action.exportsImage)
             }

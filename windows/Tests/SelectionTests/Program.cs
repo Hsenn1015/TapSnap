@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Text.Json;
 using TapSnap.Windows;
 
 var leftMonitor = new Rectangle(-2560, -180, 2560, 1440);
@@ -45,6 +46,33 @@ foreach (int width in new[] { 240, 396, 760, 1600 })
     Check(all.Any(i => i.Action == CaptureAction.Edit && i.Tool == null) == copies &&
           all.Any(i => i.Action == CaptureAction.Copy) != copies, "普通截图以勾选复制，预设或隐私截图保留编辑确认");
 }
+
+foreach (AnnotationTool tool in Enum.GetValues<AnnotationTool>())
+{
+    var shortcut = OperationShortcut.ForTool(tool);
+    Check(shortcut is { Default.Modifiers: 0 } && OperationShortcut.Match(shortcut.Default, null)?.Tool == tool,
+        $"标注工具 {tool} 的提示和单键绑定一致");
+}
+Check(OperationShortcut.Match(new(0, 'C'), null)?.Tool == AnnotationTool.Crop &&
+      OperationShortcut.Match(new(0, 'T'), null)?.Tool == AnnotationTool.Text &&
+      OperationShortcut.Match(new(0, '1'), null) is null, "框选识别裁剪和文字单键，忽略未绑定的键");
+Check(OperationShortcut.Match(new(4, 'P'), null)?.Output == CaptureAction.Pin &&
+      OperationShortcut.Match(new(0, 'P'), null)?.Tool == AnnotationTool.Polygon, "Shift+P 贴图，单按 P 保留多边形工具");
+var oldSettings = JsonSerializer.Deserialize<Settings>("{}")!;
+Check(OperationShortcut.Pin.Binding(oldSettings.OperationHotkeys) == new Hotkey(4, 'P'),
+    "旧配置自动使用默认操作键位");
+oldSettings.OperationHotkeys = new(OperationShortcut.Defaults) { [OperationShortcut.Pin.Id] = new(0, 'J') };
+oldSettings.OperationHotkeys.Remove(OperationShortcut.Copy.Id);
+var reloaded = JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(oldSettings))!;
+Check(OperationShortcut.Match(new(0, 'J'), reloaded.OperationHotkeys)?.Output == CaptureAction.Pin &&
+      OperationShortcut.Match(new(4, 'P'), reloaded.OperationHotkeys) is null &&
+      OperationShortcut.Copy.Binding(reloaded.OperationHotkeys) is null &&
+      OperationShortcut.Save.Binding(reloaded.OperationHotkeys) == OperationShortcut.Save.Default,
+    "自定义键位和清除状态重启后保留");
+Check(OperationShortcut.Match(new(6, 'Z'), null) == OperationShortcut.Redo &&
+      OperationShortcut.Match(new(2, 0xbb), null) == OperationShortcut.ZoomIn &&
+      OperationShortcut.Match(new(2, 0xbb), new Dictionary<string, Hotkey>()) is null,
+    "重做和缩放的默认备用键会随清除而停用");
 
 static void Check(bool passed, string description)
 {

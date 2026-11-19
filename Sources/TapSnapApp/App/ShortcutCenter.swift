@@ -1,6 +1,7 @@
 import Carbon.HIToolbox
 import Combine
 import Foundation
+import TapSnapActionsBar
 import TapSnapConfig
 import TapSnapCore
 import TapSnapSystem
@@ -166,6 +167,9 @@ final class ShortcutCenter {
            }) {
             return "与“\(conflict.displayName)”使用相同组合键，请更换组合键"
         }
+        if let binding, let conflict = OperationShortcut.all.first(where: { $0.binding(in: config.settings) == binding }) {
+            return "与操作快捷键“\(conflict.title)”相同，请更换组合键"
+        }
         let wasRecording = isRecording
         if !wasRecording { beginRecording() }
         defer { if !wasRecording { endRecording() } }
@@ -179,6 +183,23 @@ final class ShortcutCenter {
             }
         }
         config.setBinding(binding, for: action)
+        return nil
+    }
+
+    func setRecordedBinding(_ binding: KeyBinding?, for operation: OperationShortcut) -> String? {
+        if let binding {
+            if let conflict = ShortcutAction.allCases.first(where: { config.binding(for: $0) == binding }) {
+                return "与全局快捷键“\(conflict.displayName)”相同，请更换组合键"
+            }
+            if let conflict = OperationShortcut.all.first(where: { $0 != operation && $0.binding(in: config.settings) == binding }) {
+                return "与操作快捷键“\(conflict.title)”相同，请更换组合键"
+            }
+        }
+        config.update { settings in
+            var keys = settings.operationShortcuts ?? OperationShortcut.defaults
+            keys[operation.id] = binding
+            settings.operationShortcuts = keys
+        }
         return nil
     }
 

@@ -135,7 +135,8 @@ final class CaptureCoordinator {
                             screens[i].id == screen.id || !area.intersection(screens[i].frame).isEmpty
                                 ? local(area, on: screens[i]) : nil
                         }
-                        peer.synchronizeSelection(rect, showToolbar: !dragging && (toolbarIndex.map { $0 == i } ?? (screens[i].id == screen.id)))
+                        peer.synchronizeSelection(rect, showToolbar: !dragging && (toolbarIndex.map { $0 == i } ?? (screens[i].id == screen.id)),
+                                                  dragging: dragging)
                     }
                 }
             }
@@ -153,6 +154,7 @@ final class CaptureCoordinator {
             view.borderStyle = captureSettings.selectionBorderStyle
             view.showsMagnifier = captureSettings.showMagnifier
             view.showsSizeLabel = captureSettings.showSelectionSize
+            view.shortcutConfig = environment.config
             view.onFinish = { [weak self] rect in
                 self?.finish(rect: rect, screen: screen, sessionID: id)
             }
@@ -160,7 +162,8 @@ final class CaptureCoordinator {
                 let copiesOnConfirm = session?.outputOptions == nil && !forcePrivacy
                 view.quickConfirmationCopies = copiesOnConfirm
                 if copiesOnConfirm {
-                    view.confirmationTitle = environment.config.settings.privacy.enabled ? "检查后复制 ⌘C" : "复制 ⌘C"
+                    let title = environment.config.settings.privacy.enabled ? "检查后复制" : "复制"
+                    view.confirmationTitle = OperationShortcut.action(.copy).displayTitle(in: environment.config.settings, title: title)
                 } else {
                     view.confirmationTitle = "编辑 ⏎"
                 }

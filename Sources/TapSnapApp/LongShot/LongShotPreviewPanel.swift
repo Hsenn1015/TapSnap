@@ -352,13 +352,15 @@ final class ClosureTarget: NSObject {
 final class LongShotPreviewView: NSView {
     var image: CGImage?
     var displayScale: CGFloat = 1
+    var editorImageRect: CGRect?
     var highlightHeight: CGFloat = 0
     var showsHighlight = false
     private var editLayer: EditItemLayerView?
     override var isFlipped: Bool { true }
-    override var isOpaque: Bool { true }
+    override var isOpaque: Bool { editorImageRect == nil }
 
     private var imageRect: CGRect {
+        if let editorImageRect { return editorImageRect }
         guard let image else { return .zero }
         let width = CGFloat(image.width) * displayScale
         return CGRect(x: max(0, (bounds.width - width) / 2), y: 0,
@@ -396,8 +398,10 @@ final class LongShotPreviewView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
-        context.setFillColor(NSColor.underPageBackgroundColor.cgColor)
-        context.fill(dirtyRect)
+        if isOpaque {
+            context.setFillColor(NSColor.underPageBackgroundColor.cgColor)
+            context.fill(dirtyRect)
+        }
         guard let image else { return }
         let rect = imageRect
         context.saveGState()
