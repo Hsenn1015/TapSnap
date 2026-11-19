@@ -10,6 +10,44 @@ static void Require(bool condition, string name)
     Console.WriteLine($"通过 {name}");
 }
 
+static RecognizedLine OcrLine(string text, int x, int y, int width, int height = 16) =>
+    new(text, new RectangleF(x, y, width, height), [new RecognizedWord(text, new RectangleF(x, y, width, height))]);
+
+var paragraphs = OcrTextDocument.From([
+    OcrLine("识别结果可以按段整理", 10, 10, 184),
+    OcrLine("也保留原图行。", 10, 30, 96),
+    OcrLine("Another paragraph starts here", 10, 63, 187),
+    OcrLine("and is joined with a space.", 10, 83, 173)
+]);
+Require(paragraphs.Paragraphs.Length == 2 && paragraphs.LineRows.Length == 4 &&
+    paragraphs.Paragraphs[0].Text == "识别结果可以按段整理也保留原图行。" &&
+    paragraphs.Paragraphs[0].Bounds == new RectangleF(10, 10, 184, 36) &&
+    paragraphs.Paragraphs[1].Text == "Another paragraph starts here and is joined with a space." &&
+    paragraphs.CopyText(true).Split(Environment.NewLine).Length == 4, "OCR 可按版面合并中英文段落并保留原图行和定位框");
+
+var columns = OcrTextDocument.From([
+    OcrLine("Across two columns", 10, 0, 415, 24),
+    OcrLine("Right column sentence", 230, 41, 142),
+    OcrLine("Left column sentence", 10, 40, 148),
+    OcrLine("continued on the left.", 10, 60, 143),
+    OcrLine("continued on the right.", 230, 61, 154)
+]);
+Require(columns.Paragraphs.Select(row => row.Text).SequenceEqual(new[] {
+    "Across two columns", "Left column sentence continued on the left.", "Right column sentence continued on the right."
+}) && columns.LineRows[1].Text.StartsWith("Left"), "OCR 段落先读完左栏，原图行沿横向位置排序");
+
+var ruled = OcrTextDocument.From([
+    OcrLine("# 数据摘要", 8, 0, 120, 20), OcrLine("名称", 8, 40, 60),
+    OcrLine("数量", 118, 40, 60), OcrLine("样例", 8, 72, 60), OcrLine("3", 118, 72, 20)
+]);
+var ruledGrid = new TableGrid([30, 64, 100], [0, 100, 200]);
+Require(OcrMarkdown.Source(ruled, () => OcrTable.Read(ruledGrid, ruled.OriginalLines)) ==
+    "# 数据摘要\n\n| 名称 | 数量 |\n| --- | --- |\n| 样例 | 3 |", "Markdown 同时保留可见标题与表格网格");
+var literal = OcrTextDocument.From([OcrLine("| 名称 | 值 |", 10, 10, 130),
+    OcrLine("| --- | --- |", 10, 30, 130), OcrLine("| A | B |", 10, 50, 130)]);
+Require(OcrMarkdown.Source(literal, () => throw new InvalidOperationException()) ==
+    "| 名称 | 值 |\n| --- | --- |\n| A | B |", "截图已有 Markdown 表格时保留原语法");
+
 var settings = new RecognitionSettings();
 var positioned = PrivacyRules.Match([Line("邮箱: demo@example.com")], settings).Single();
 Require(positioned.Bounds == new RectangleF(52, 10, 128, 16) && positioned.ApplyAutomatically, "只定位邮箱值的原图坐标");

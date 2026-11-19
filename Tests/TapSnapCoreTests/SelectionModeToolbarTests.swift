@@ -91,7 +91,7 @@ final class SelectionModeToolbarTests: XCTestCase {
             $0.operationShortcuts = keys
         }
         let view = makeView()
-        view.shortcutConfig = config
+        view.config = config
         var calls: [ActionKind] = []
         view.onQuickAction = { action, _ in calls.append(action) }
         try drag(view, from: CGPoint(x: 100, y: 100), to: CGPoint(x: 400, y: 250))
@@ -291,6 +291,66 @@ final class SelectionModeToolbarTests: XCTestCase {
                 XCTAssertFalse(layout.actions.overflow.contains(action))
             }
         }
+    }
+
+    func testSavedToolbarUsesChosenOrderAndKeepsHiddenActionsAvailable() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("settings.json")
+        let config = ConfigStore(fileURL: url)
+        config.update { $0.capture.showSelectionSize = false }
+
+        let view = makeView()
+        var invoked: [ActionKind] = []
+        view.config = ConfigStore(fileURL: url)
+        view.onQuickAction = { action, _ in invoked.append(action) }
+        try drag(view, from: CGPoint(x: 100, y: 100), to: CGPoint(x: 400, y: 250))
+        let defaultLayout = try XCTUnwrap(view.quickToolbarLayout()?.actions)
+        XCTAssertNil(view.config?.settings.capture.selectionToolbarActions)
+        XCTAssertNotNil(defaultLayout.annotationTools.first)
+
+        config.update {
+            $0.capture.selectionToolbarActions = ["ocr", "pen", "pin", "ocr", "obsolete", "confirm", "copy"]
+        }
+        view.config = ConfigStore(fileURL: url)
+        let custom = try XCTUnwrap(view.quickToolbarLayout()?.actions)
+        XCTAssertEqual(custom.outputActions, [.ocr, .pen, .pin])
+        XCTAssertFalse(custom.showsAnnotationDivider)
+        XCTAssertEqual(Set(custom.outputActions + custom.overflow), Set(SelectionToolbar.availableActions))
+        XCTAssertEqual(custom.outputActions.count + custom.overflow.count, SelectionToolbar.availableActions.count)
+        XCTAssertEqual(view.config?.settings.capture.showSelectionSize, false)
+
+        XCTAssertTrue(view.performKeyEquivalent(with: try key(1, .command, characters: "s")))
+        XCTAssertTrue(view.performQuickAction(.confirm))
+        XCTAssertEqual(invoked, [.save, .copy])
+
+        config.update { $0.capture.selectionToolbarActions = [] }
+        view.config = ConfigStore(fileURL: url)
+        let minimal = try XCTUnwrap(view.quickToolbarLayout()?.actions)
+        XCTAssertTrue(minimal.outputActions.isEmpty)
+        XCTAssertEqual(minimal.overflow, SelectionToolbar.availableActions)
+
+        config.update { $0.capture.selectionToolbarActions = nil }
+        view.config = ConfigStore(fileURL: url)
+        XCTAssertEqual(view.quickToolbarLayout()?.actions, defaultLayout)
+    }
+
+    func testCustomToolbarPrioritizesLeftmostButtonsAndFiltersSingleScreenModes() {
+        let actions: [ActionKind] = [.record, .ocr, .pin, .longShot, .pen]
+        let narrow = SelectionToolbar.layout(availableWidth: 166, pinned: actions)
+        XCTAssertLessThanOrEqual(narrow.width, 166)
+        XCTAssertEqual(narrow.outputActions, [.record, .ocr])
+        XCTAssertEqual(Array(narrow.overflow.prefix(3)), [.pin, .longShot, .pen])
+
+        let crossScreen = SelectionToolbar.layout(availableWidth: 166, pinned: actions, singleScreen: false)
+        XCTAssertLessThanOrEqual(crossScreen.width, 166)
+        XCTAssertEqual(crossScreen.outputActions, [.ocr, .pin])
+        XCTAssertFalse(crossScreen.overflow.contains(.record))
+        XCTAssertFalse(crossScreen.overflow.contains(.longShot))
+        XCTAssertTrue(crossScreen.overflow.contains(.pen))
+
+        let preset = SelectionToolbar.layout(availableWidth: 396, pinned: actions, copiesOnConfirm: false)
+        XCTAssertEqual(preset, SelectionToolbar.layout(availableWidth: 396, copiesOnConfirm: false))
     }
 
     func testQuickToolbarCheckmarkCopiesAndEditIsSeparate() throws {

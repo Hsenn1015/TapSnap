@@ -43,6 +43,8 @@ internal static partial class Program
                 Require(after.Report.MeanRgbError <= before.Report.MeanRgbError + 2, "GIF color error regressed.");
                 using var preview = (RecordingPreview)after.Preview;
                 await CheckStaticFrameEdits(args[2]);
+                await CheckRecognitionImagePreview();
+                await CheckTextRecognitionWindow();
                 await CheckEditorZoom();
                 await CheckSelection(host, args[2]);
                 await CheckHistoryFilters(host, args[2]);
@@ -114,6 +116,70 @@ internal static partial class Program
 
     [DllImport("user32.dll")]
     private static extern bool SetCursorPos(int x, int y);
+
+    private static async Task CheckRecognitionImagePreview()
+    {
+        const int width = 160, height = 1200;
+        var bitmap = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, new byte[width * height * 4], width * 4);
+        var preview = new RecognitionImagePreview(bitmap);
+        var window = new Window { Content = preview, Width = 340, Height = 300, ShowInTaskbar = false };
+        window.Show();
+        try
+        {
+            window.UpdateLayout();
+            var viewport = Descendants<ScrollViewer>(preview).Single();
+            var artwork = (Canvas)viewport.Content;
+            var highlight = artwork.Children.OfType<System.Windows.Shapes.Rectangle>().Single();
+            var area = new Rect(24, 1120, 88, 26);
+            preview.Locate(area);
+            await Until(() => viewport.VerticalOffset > 0, "the OCR image scrolled to the line");
+            double y = Canvas.GetTop(highlight);
+            Require(Math.Abs(y - area.Y * artwork.Width / width) < 1, "The OCR line was mapped to the wrong image coordinates.");
+            Require(y >= viewport.VerticalOffset - 1 && y + highlight.Height <= viewport.VerticalOffset + viewport.ViewportHeight + 1,
+                "The highlighted line is outside the original-image viewport.");
+        }
+        finally { window.Close(); }
+    }
+
+    private static async Task CheckTextRecognitionWindow()
+    {
+        const int width = 280, height = 640;
+        var bitmap = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, new byte[width * height * 4], width * 4);
+        var lines = Enumerable.Range(0, 250).Select(index => new RecognizedLine(
+            index == 0 ? "# OCR 示例" : index == 18 ? "需要核对的这一行" : $"测试行 {index:000}",
+            new System.Drawing.RectangleF(12, 5 + index * 32, 150, 16), [])).ToArray();
+        var window = new TextRecognitionWindow(bitmap);
+        await window.SetDocumentAsync(OcrTextDocument.From(lines));
+        window.Show();
+        try
+        {
+            var rows = (ListBox)window.FindName("Rows");
+            var search = (TextBox)window.FindName("Search");
+            await Until(() => rows.ItemContainerGenerator.ContainerFromIndex(0) is not null, "OCR result rows render");
+            Require(Descendants<ListBoxItem>(rows).Count() < lines.Length / 2, "The OCR reader must virtualize long lists.");
+            ((RadioButton)window.FindName("LineMode")).IsChecked = true;
+            search.Text = "需要核对";
+            await Until(() => rows.Items.Count == 1 && rows.ItemContainerGenerator.ContainerFromIndex(0) is not null, "OCR search filters results");
+            var locate = Descendants<Button>(rows).Single(button => AutomationProperties.GetName(button) == "在原图定位");
+            locate.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var original = (ContentControl)window.FindName("OriginalHost");
+            var viewport = Descendants<ScrollViewer>(original).Single();
+            await Until(() => viewport.VerticalOffset > 0, "OCR row locates the image");
+
+            ((RadioButton)window.FindName("MarkdownMode")).IsChecked = true;
+            var reader = (FlowDocumentScrollViewer)window.FindName("MarkdownReader");
+            await Until(() => reader.Visibility == Visibility.Visible && reader.Document is not null, "Markdown is rendered without a browser");
+            ((RadioButton)window.FindName("SourceMode")).IsChecked = true;
+            var editor = (TextBox)window.FindName("MarkdownEditor");
+            Require(editor.IsVisible && editor.Text.StartsWith("# OCR 示例"), "The Markdown source is readable and editable.");
+            editor.Text = "## 改过的标题";
+            ((RadioButton)window.FindName("PreviewMode")).IsChecked = true;
+            await Until(() => reader.Visibility == Visibility.Visible, "Markdown preview refreshes after editing");
+            var text = new System.Windows.Documents.TextRange(reader.Document!.ContentStart, reader.Document.ContentEnd);
+            Require(text.Text.Contains("改过的标题"), "The same edited Markdown is used for preview and copy.");
+        }
+        finally { window.Close(); }
+    }
 
     private static async Task CheckEditorZoom()
     {

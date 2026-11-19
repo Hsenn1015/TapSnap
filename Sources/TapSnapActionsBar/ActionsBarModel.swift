@@ -81,6 +81,7 @@ public struct ActionsBarLayout: Equatable, Sendable {
     public let annotationTools: [ActionKind]
     public let outputActions: [ActionKind]
     public let overflow: [ActionKind]
+    public let showsAnnotationDivider: Bool
     public let width: CGFloat
 
     public static let buttonSize: CGFloat = 28
@@ -93,10 +94,11 @@ public struct ActionsBarLayout: Equatable, Sendable {
         self.annotationTools = annotationTools
         self.outputActions = outputActions
         self.overflow = overflow
+        showsAnnotationDivider = showsHistory || !annotationTools.isEmpty
         let historyCount = showsHistory ? 2 : 0
         let buttonCount = annotationTools.count + outputActions.count
             + (overflow.isEmpty ? 0 : 1) + historyCount + 2 // Cancel and Confirm never collapse.
-        let dividerCount = showsHistory ? 3 : 2
+        let dividerCount = showsHistory ? 3 : (showsAnnotationDivider ? 2 : 1)
         width = CGFloat(buttonCount) * Self.buttonSize + CGFloat(dividerCount) * Self.dividerWidth
             + CGFloat(buttonCount + dividerCount - 1) * Self.spacing
             + Self.horizontalPadding * 2 + Self.confirmLeadingPadding

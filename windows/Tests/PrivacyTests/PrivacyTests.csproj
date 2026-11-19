@@ -10,5 +10,7 @@
     <Compile Include="../../TapSnap.Windows/Recognition/AiTextProtection.cs" Link="AiTextProtection.cs" />
     <Compile Include="../../TapSnap.Windows/Recognition/TesseractCli.cs" Link="TesseractCli.cs" />
     <Compile Include="../../TapSnap.Windows/Recognition/TableGrid.cs" Link="TableGrid.cs" />
+    <Compile Include="../../TapSnap.Windows/Recognition/OcrTextDocument.cs" Link="OcrTextDocument.cs" />
+    <Compile Include="../../TapSnap.Windows/Recognition/OcrMarkdown.cs" Link="OcrMarkdown.cs" />
   </ItemGroup>
 </Project>

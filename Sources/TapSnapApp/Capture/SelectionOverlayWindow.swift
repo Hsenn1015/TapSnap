@@ -65,7 +65,7 @@ final class SelectionOverlayView: NSView {
     private var dragBounds: CGRect { desktopDragBounds ?? bounds }
     var quickToolbarTheme: Theme = .dark { didSet { updateBar() } }
     var quickToolbarToolTip: (ActionKind) -> String = { $0.title } { didSet { hideQuickToolbarTip() } }
-    var shortcutConfig: ConfigStore?
+    var config: ConfigStore?
     var quickConfirmationCopies = true { didSet { updateBar() } }
     var confirmationTitle = "确认 ⏎" { didSet { updateBar() } }
 
@@ -141,12 +141,6 @@ final class SelectionOverlayView: NSView {
         let toolbar: CGRect
     }
 
-    private static let captureModes: [ActionKind] = [.longShot, .record]
-    private static let dockModel = ActionsBarModel(outputActions: captureModes + ActionsBarModel.defaultOutputActions)
-    private static let copyConfirmationDockModel = ActionsBarModel(
-        outputActions: captureModes + [.edit] + ActionsBarModel.defaultOutputActions.filter { $0 != .copy }
-    )
-    private static let dockPriority: Set<ActionKind> = [.copy, .edit, .pin, .save]
     private var pressedBarButton: BarButton?
     private var hoveredBarButton: BarButton?
     private var hoverTip: DispatchWorkItem?
@@ -418,7 +412,7 @@ final class SelectionOverlayView: NSView {
     }
 
     private func handleDockShortcut(_ event: NSEvent) -> Bool {
-        guard let action = OperationShortcut.matching(event, in: shortcutConfig?.settings ?? Settings(),
+        guard let action = OperationShortcut.matching(event, in: config?.settings ?? Settings(),
                                                       selection: true)?.selectionAction else { return false }
         if onQuickAction != nil {
             return event.isARepeat || performQuickAction(action) || action == .copy
@@ -670,19 +664,12 @@ final class SelectionOverlayView: NSView {
         let gap: CGFloat = 8 // 超过描边外侧的手柄命中范围。
         // 小选区也给常用输出按钮留够空间，窄屏再收纳低频工具。
         let widthLimit = min(area.width, max(selection.width, thickness * 9))
-        var model = quickConfirmationCopies ? Self.copyConfirmationDockModel : Self.dockModel
-        let fixedModes: Set<ActionKind> = bounds.contains(selected) ? Set(Self.captureModes) : []
-        if fixedModes.isEmpty {
-            model.outputActions.removeAll(where: Self.captureModes.contains)
-            model.overflow.removeAll(where: Self.captureModes.contains)
-        }
-        var actions = model.layout(availableWidth: widthLimit, priorityOutputs: Self.dockPriority,
-                                   fixedOutputs: quickConfirmationCopies ? fixedModes.union([.edit]) : fixedModes,
-                                   showsHistory: false)
-        if quickConfirmationCopies, actions.width > widthLimit {
-            actions = model.layout(availableWidth: widthLimit, priorityOutputs: Self.dockPriority,
-                                   fixedOutputs: fixedModes, showsHistory: false)
-        }
+        let actions = SelectionToolbar.layout(
+            availableWidth: widthLimit,
+            pinned: SelectionToolbar.pinnedActions(from: config?.settings.capture.selectionToolbarActions),
+            singleScreen: bounds.contains(selected),
+            copiesOnConfirm: quickConfirmationCopies
+        )
         let width = actions.width
         guard width <= area.width, thickness <= area.height else { return nil }
         let x = min(max(area.minX, selected.midX - width / 2), area.maxX - width)
@@ -803,7 +790,7 @@ final class SelectionOverlayView: NSView {
         for action in actions.annotationTools {
             if let match = hit(editorDockToolTip(for: action)) { return match }
         }
-        x += divider
+        if actions.showsAnnotationDivider { x += divider }
         for action in actions.outputActions {
             if let match = hit(editorDockToolTip(for: action)) { return match }
         }

@@ -728,6 +728,11 @@ internal sealed class TapSnapHost : IDisposable
             SettingsLayout.Row(group, title, list);
         }
 
+        var selectionTools = SettingsLayout.Group(captureOptions, "框选工具栏");
+        SettingsLayout.Row(selectionTools, "常用按钮",
+            RecordingWindow.Button("自定义…", () => new SelectionToolbarSettingsWindow(settings) { Owner = window }.ShowDialog()),
+            "选择普通截图时直接显示的按钮");
+
         var borders = SettingsLayout.Group(captureOptions, "选区边框");
         var preview = new SelectionBorder(settings.SelectionBorder);
         var sample = new Grid { Height = 108, IsHitTestVisible = false, ClipToBounds = true, UseLayoutRounding = true };

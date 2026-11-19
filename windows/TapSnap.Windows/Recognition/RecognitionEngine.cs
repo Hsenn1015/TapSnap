@@ -231,24 +231,17 @@ internal static class RecognitionEngine
         System.Threading.CancellationToken cancellationToken = default)
     {
         var frozen = Freeze(source);
-        var grid = await Task.Run(() => TableGrid.Detect(Pixels(frozen, PixelFormats.Gray8, 1),
-            frozen.PixelWidth, frozen.PixelHeight), cancellationToken);
+        var grid = await Task.Run(() => DetectTable(frozen), cancellationToken);
         if (grid is null)
             throw new InvalidOperationException("没有检测到表格线，试试框选得更紧一些。");
         var lines = await ReadAsync(frozen, language, cancellationToken);
         if (lines.Count == 0) return "";
-        var cells = new string?[grid.RowCount, grid.ColumnCount];
-        foreach (var line in lines)
-            foreach (var word in line.Words)
-            {
-                int row = grid.Row(word.Bounds.Y + word.Bounds.Height / 2);
-                int column = grid.Column(word.Bounds.X + word.Bounds.Width / 2);
-                if (row < 0 || column < 0) continue;
-                cells[row, column] = cells[row, column] is { } previous ? previous + " " + word.Text : word.Text;
-            }
-        return string.Join(Environment.NewLine, Enumerable.Range(0, grid.RowCount).Select(row =>
-            string.Join(',', Enumerable.Range(0, grid.ColumnCount).Select(column => CsvField(cells[row, column])))));
+        var table = OcrTable.Read(grid, lines);
+        return string.Join(Environment.NewLine, table.Cells.Select(row => string.Join(',', row.Select(CsvField))));
     }
+
+    internal static TableGrid? DetectTable(BitmapSource image) =>
+        TableGrid.Detect(Pixels(image, PixelFormats.Gray8, 1), image.PixelWidth, image.PixelHeight);
 
     private static string CsvField(string? value)
     {

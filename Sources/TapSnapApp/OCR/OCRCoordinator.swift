@@ -66,7 +66,7 @@ final class OCRCoordinator {
             environment.toast.success("已复制 \(text.count) 个字符")
         }
 
-        environment.ocrResultPanel.show(document: result, markdownSource: { [ocr = environment.ocr] in
+        environment.ocrResultPanel.show(document: result, image: image, markdownSource: { [ocr = environment.ocr] in
             let tables = await ocr.recognizeTables(in: result, image: image)
             return await Task.detached(priority: .userInitiated) {
                 OCRMarkdown.source(from: result, tables: tables)

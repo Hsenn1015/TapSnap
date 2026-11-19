@@ -8,6 +8,8 @@ Windows 版和 macOS 版同仓库维护。Windows 使用独立的 C# / WPF 解�
 
 建议在 Windows 11 上使用。GitHub 构建的 ZIP 自带 .NET 运行时。Intel 或 AMD 电脑选择 `windows-x64`，Windows on Arm 电脑选择 `windows-arm64`。完整解压后运行 `TapSnap.exe`，双击系统托盘图标进入框选，右键可查看其他功能。安装 .NET 10 SDK 后，也可在仓库根目录构建和运行。
 
+使用 EXE 安装包时，按电脑架构选择 x64 或 ARM64。安装包带有 .NET 运行时，安装完成后可从开始菜单打开 TapSnap，也可以在「设置 → 应用」卸载。截图设置和历史资料保存在当前用户的 TapSnap 数据目录。
+
 ```powershell
 dotnet build windows/TapSnap.Windows.slnx -c Release
 dotnet run --project windows/TapSnap.Windows -c Release
@@ -39,7 +41,9 @@ ARM64 版使用 `win-arm64`，并输出到单独目录。
 
 区域截图默认 `Ctrl+1`，长截图和录屏分别是 `Ctrl+Shift+L`、`Ctrl+Shift+R`。如果遇到普通快捷键冲突，可在「设置 → 快捷键」启用优先响应，Windows 保留组合仍由系统处理。录屏首选 Windows Graphics Capture，不可用时使用桌面抓屏。录制过程使用本地临时文件，首次打开预览时会准备有声视频。
 
-框选后或标注完成后，默认按 `Shift+P` 贴图。底栏的 `−` 和 `+` 用于缩放画布，按住 `Ctrl` 滚动可围绕指针缩放，点击百分比恢复适合窗口。在「设置 → 快捷键 → 框选与编辑」可录制贴图、缩放和各标注工具的键位。
+普通框选的底栏可在「设置 → 截图 → 框选工具栏」自定义。在预览中核对顺序后保存，收起或放不下的工具可从「更多」使用，勾选用于复制。框选后或标注完成后，默认按 `Shift+P` 贴图。底栏的 `−` 和 `+` 用于缩放画布，按住 `Ctrl` 滚动可围绕指针缩放，点击百分比恢复适合窗口。在「设置 → 快捷键 → 框选与编辑」可录制贴图、缩放和各标注工具的键位。
+
+文字识别结果左侧显示可缩放的原图，右侧可按段、按原图行或按 Markdown 阅读。按 `Ctrl+F` 搜索文字，点每段或每行旁的定位图标可滚到原图对应位置。Markdown 支持预览和编辑源码，顶部复制按钮读取当前模式的完整内容。
 
 ## 可选本机组件
 

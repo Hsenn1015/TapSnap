@@ -154,7 +154,7 @@ final class CaptureCoordinator {
             view.borderStyle = captureSettings.selectionBorderStyle
             view.showsMagnifier = captureSettings.showMagnifier
             view.showsSizeLabel = captureSettings.showSelectionSize
-            view.shortcutConfig = environment.config
+            view.config = environment.config
             view.onFinish = { [weak self] rect in
                 self?.finish(rect: rect, screen: screen, sessionID: id)
             }

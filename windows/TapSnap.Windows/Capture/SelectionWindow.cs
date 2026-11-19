@@ -505,7 +505,7 @@ internal sealed class SelectionWindow : Window
         if (dockLayout == (slots, singleScreen)) return;
         dockLayout = (slots, singleScreen);
         buttons.Children.Clear();
-        var layout = SelectionToolbarModel.Layout(slots, singleScreen, copyOnConfirm);
+        var layout = SelectionToolbarModel.Layout(slots, singleScreen, copyOnConfirm, settings.SelectionToolbarActions);
         Button Add(string title, string symbol, Action run, string? shortcut = null)
         {
             var button = ToolbarGlyph.CreateButton(title, symbol, palette, shortcut);
@@ -520,7 +520,7 @@ internal sealed class SelectionWindow : Window
             return operation?.Binding(settings.OperationHotkeys) is { } key ? Shortcuts.Display(key) : null;
         }
         foreach (var item in layout.Tools) Add(item.Title, item.Symbol, () => Choose(item), Shortcut(item));
-        buttons.Children.Add(ToolbarGlyph.Divider(palette));
+        if (layout.Tools.Length > 0) buttons.Children.Add(ToolbarGlyph.Divider(palette));
         foreach (var item in layout.Outputs) Add(item.Title, item.Symbol, () => Choose(item), Shortcut(item));
         var more = ToolbarGlyph.CreateButton("更多工具与操作", "⌄", palette);
         more.Click += (_, _) =>

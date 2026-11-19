@@ -11,8 +11,8 @@ final class OCRResultPanelTests: XCTestCase {
         let line = OCRTextLine(text: "这是一段可选中和复制的文字。", normalizedBounds: .zero, confidence: 1)
         let block = OCRTextBlock(lines: [line], normalizedBounds: .zero)
         let document = OCRDocument(blocks: [block], languages: ["zh-Hans"], sourceSize: .zero)
-        let frame = CGRect(x: 80, y: 80, width: 456, height: 486)
-        let panel = controller.makeWindow(document: document, frame: frame) { _ in }
+        let frame = CGRect(x: 80, y: 80, width: 740, height: 486)
+        let panel = controller.makeWindow(document: document, image: image(), frame: frame) { _ in }
         defer { panel.close() }
 
         XCTAssertTrue(panel.isMovable)
@@ -41,8 +41,8 @@ final class OCRResultPanelTests: XCTestCase {
         _ = NSApplication.shared
         let controller = OCRResultPanel(theme: { .light })
         let document = OCRDocument(blocks: [], languages: ["zh-Hans"], sourceSize: .zero)
-        let frame = CGRect(x: 80, y: 80, width: 456, height: 486)
-        let panel = controller.makeWindow(document: document, frame: frame) { _ in }
+        let frame = CGRect(x: 80, y: 80, width: 740, height: 486)
+        let panel = controller.makeWindow(document: document, image: image(), frame: frame) { _ in }
         defer { panel.close() }
         let host = try XCTUnwrap(panel.contentView)
 
@@ -50,11 +50,11 @@ final class OCRResultPanelTests: XCTestCase {
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             XCTAssertNotEqual(panel.standardWindowButton(button)?.isHidden, false)
         }
-        XCTAssertEqual(panel.contentMinSize, CGSize(width: 360, height: 250))
+        XCTAssertEqual(panel.contentMinSize, CGSize(width: 660, height: 310))
         XCTAssertEqual(panel.frame, frame)
         XCTAssertEqual(host.bounds.size, frame.size)
 
-        let largerFrame = CGRect(x: 80, y: 80, width: 640, height: 600)
+        let largerFrame = CGRect(x: 80, y: 80, width: 860, height: 600)
         panel.setFrame(largerFrame, display: false)
         RunLoop.current.run(until: Date().addingTimeInterval(0.03))
         host.layoutSubtreeIfNeeded()
@@ -69,10 +69,48 @@ final class OCRResultPanelTests: XCTestCase {
         let visible = CGRect(x: -800, y: -320, width: 760, height: 450)
         let frame = OCRResultPanel.panelFrame(near: CGPoint(x: visible.maxX, y: visible.minY), in: visible)
         XCTAssertTrue(visible.contains(frame))
-        XCTAssertEqual(frame.width, 456)
+        XCTAssertEqual(frame.width, 736)
         XCTAssertEqual(frame.maxX, visible.maxX - 12)
         XCTAssertEqual(frame.minY, visible.minY + 12)
         XCTAssertEqual(frame.maxY, visible.maxY - 12)
+    }
+
+    func testSearchPreservesOCRGeometryAndCopyAll() {
+        let first = OCRTextLine(text: "第一行 Alpha", normalizedBounds: CGRect(x: 0.1, y: 0.8, width: 0.6, height: 0.03), confidence: 1)
+        let second = OCRTextLine(text: "第二行 Beta", normalizedBounds: CGRect(x: 0.1, y: 0.2, width: 0.5, height: 0.03), confidence: 1)
+        let block = OCRTextBlock(lines: [first, second], normalizedBounds: first.normalizedBounds.union(second.normalizedBounds))
+        let document = OCRDocument(blocks: [block], languages: ["zh-Hans"], sourceSize: CGSize(width: 200, height: 1200))
+        let lines = OCRResultDisplayMode.originalLines.reviewRows(in: document, matching: "  BETA ")
+        XCTAssertEqual(lines.map(\.id), [second.id])
+        XCTAssertEqual(lines.first?.bounds, second.normalizedBounds)
+        let paragraphs = OCRResultDisplayMode.paragraphs.reviewRows(in: document, matching: "Alpha")
+        XCTAssertEqual(paragraphs.first?.bounds, block.normalizedBounds)
+        XCTAssertEqual(OCRResultDisplayMode.originalLines.copyText(in: document), "\(first.text)\n\(second.text)")
+    }
+
+    func testLocatingAResultScrollsToTheCorrectPartOfTheOriginalImage() throws {
+        _ = NSApplication.shared
+        let view = OCRSourceViewport(image: image())
+        view.frame = CGRect(x: 0, y: 0, width: 250, height: 180)
+        view.layoutSubtreeIfNeeded()
+        let bounds = CGRect(x: 0.1, y: 0.06, width: 0.3, height: 0.03)
+        let w = view.contentView.bounds.width
+        let canvas = CGRect(x: 0, y: 0, width: w, height: 6 * w)
+        let mapped = try XCTUnwrap(OCRSourceViewport.region(bounds, in: canvas))
+        XCTAssertEqual(mapped.minY, canvas.height * 0.91, accuracy: 0.001)
+        XCTAssertEqual(mapped.minX, w * 0.1, accuracy: 0.001)
+        XCTAssertFalse(view.documentVisibleRect.contains(mapped))
+        let rowID = UUID()
+        view.update(zoom: 1, location: OCRSourceLocation(rowID: rowID, bounds: bounds))
+        XCTAssertTrue(view.documentVisibleRect.contains(mapped))
+        view.contentView.scroll(to: .zero)
+        view.update(zoom: 1, location: OCRSourceLocation(rowID: rowID, bounds: bounds))
+        XCTAssertTrue(view.documentVisibleRect.contains(mapped))
+    }
+
+    private func image() -> CGImage {
+        CGContext(data: nil, width: 200, height: 1200, bitsPerComponent: 8, bytesPerRow: 0,
+                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!.makeImage()!
     }
 
     private func findDragView(in view: NSView) -> WindowDragView? {

@@ -15,6 +15,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="DesktopWorkflowTests" />
+    <PackageReference Include="Markdig" Version="1.6.0" />
     <PackageReference Include="Magick.NET-Q8-AnyCPU" Version="15.0.0" />
     <PackageReference Include="Tesseract" Version="5.2.0" />
     <PackageReference Include="ZXing.Net" Version="0.16.11" />
@@ -22,6 +23,7 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3537.50" />
     <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
     <Resource Include="TapSnap.ico" />
+    <Content Include="Recognition/Markdig-LICENSE.txt" Link="Licenses/Markdig.txt" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Recognition/formula_recognize.py;Recognition/Install-*.ps1" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Recognition/tessdata/**/*" Link="tessdata/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../Resources/KaTeX/**/*" Link="Recognition/KaTeX/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />

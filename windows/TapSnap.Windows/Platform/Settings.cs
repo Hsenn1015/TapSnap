@@ -38,6 +38,7 @@ internal sealed class Settings
     public bool ShowMagnifier { get; set; } = true;
     public bool ShowSelectionSize { get; set; } = true;
     public string SelectionBorder { get; set; } = "极光";
+    public string[]? SelectionToolbarActions { get; set; }
     public string SaveFormat { get; set; } = "png";
     public bool LongShotAutoScroll { get; set; } = true;
     public int LongShotStepPixels { get; set; } = 200;

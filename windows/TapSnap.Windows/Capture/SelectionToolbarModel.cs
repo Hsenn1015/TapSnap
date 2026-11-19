@@ -11,7 +11,10 @@ internal enum AnnotationTool
     Spotlight, Eraser, Magnifier, Watermark, PathTag, Privacy, Crop
 }
 
-internal sealed record ToolbarItem(string Title, string Symbol, AnnotationTool? Tool = null, CaptureAction Action = CaptureAction.Edit);
+internal sealed record ToolbarItem(string Title, string Symbol, AnnotationTool? Tool = null, CaptureAction Action = CaptureAction.Edit)
+{
+    public string Id => Tool is { } tool ? $"tool:{tool}" : $"action:{Action}";
+}
 
 internal static class SelectionToolbarModel
 {
@@ -52,28 +55,44 @@ internal static class SelectionToolbarModel
     private static readonly ToolbarItem Copy = new("复制", "▢", Action: CaptureAction.Copy);
     private static readonly ToolbarItem Privacy = new("隐私打码", "shield", AnnotationTool.Privacy);
     private static readonly ToolbarItem Crop = new("裁剪", "⌗", AnnotationTool.Crop);
+    private static readonly ToolbarItem Pin = new("贴图", "pin", Action: CaptureAction.Pin);
+    private static readonly ToolbarItem Save = new("保存", "↓", Action: CaptureAction.Save);
+    private static readonly ToolbarItem Print = new("打印", "⎙", Action: CaptureAction.Print);
+    private static readonly ToolbarItem Text = new("文字识别", "⌑", Action: CaptureAction.Text);
     private static readonly ToolbarItem[] Other = [
         new("翻译", "译", Action: CaptureAction.Translation), new("二维码／条码", "码", Action: CaptureAction.Barcode),
         new("表格识别", "表", Action: CaptureAction.Table), new("公式识别", "ƒ", Action: CaptureAction.Formula),
         new("水印", "水", AnnotationTool.Watermark), new("路径标签", "⌁", AnnotationTool.PathTag)
     ];
     internal static readonly ToolbarItem[] EditableTools = [.. DrawingTools, Privacy, Crop, .. Other.Where(item => item.Tool.HasValue)];
+    internal static readonly ToolbarItem[] AvailableActions = [.. DrawingTools, .. Modes, Edit, Privacy, Crop, Pin, Save, Print, Text, .. Other];
 
     // Two dividers, outer padding, More, Cancel and Confirm use fixed space.
     internal static int Slots(double width) => Math.Max(0, (int)((width - 30) / 29) - 3);
 
-    internal static (ToolbarItem[] Tools, ToolbarItem[] Outputs, ToolbarItem[] More) Layout(int slots, bool singleScreen, bool copyOnConfirm)
+    internal static ToolbarItem[] PinnedActions(IEnumerable<string> identifiers) =>
+        identifiers.Select(id => Array.Find(AvailableActions, item => item.Id == id)).OfType<ToolbarItem>().Distinct().ToArray();
+
+    internal static (ToolbarItem[] Tools, ToolbarItem[] Outputs, ToolbarItem[] More) Layout(
+        int slots, bool singleScreen, bool copyOnConfirm, string[]? pinned = null)
     {
+        if (copyOnConfirm && pinned is not null)
+        {
+            var available = singleScreen ? AvailableActions : AvailableActions.Except(Modes).ToArray();
+            var chosen = PinnedActions(pinned).Where(available.Contains).ToArray();
+            return ([], chosen.Take(slots).ToArray(), [.. chosen.Skip(slots), .. available.Except(chosen)]);
+        }
+
         var outputs = new List<ToolbarItem>();
         if (singleScreen) outputs.AddRange(Modes);
         if (copyOnConfirm) outputs.Add(Edit);
         outputs.Add(Privacy);
         outputs.Add(Crop);
-        outputs.Add(new("贴图", "pin", Action: CaptureAction.Pin));
+        outputs.Add(Pin);
         if (!copyOnConfirm) outputs.Add(Copy);
-        outputs.Add(new("保存", "↓", Action: CaptureAction.Save));
-        outputs.Add(new("打印", "⎙", Action: CaptureAction.Print));
-        outputs.Add(new("文字识别", "⌑", Action: CaptureAction.Text));
+        outputs.Add(Save);
+        outputs.Add(Print);
+        outputs.Add(Text);
         var priority = outputs.Where(i => Modes.Contains(i) || i == Edit)
             .Concat(DrawingTools.Take(4)).Concat(outputs.Where(i => i.Action is CaptureAction.Copy or CaptureAction.Pin or CaptureAction.Save))
             .Concat(DrawingTools.Skip(4)).Concat(outputs).Distinct().Take(slots).ToHashSet();

@@ -40,6 +40,8 @@ public struct Settings: Codable, Hashable, Sendable {
             get { selectionBorder.flatMap(SelectionBorderStyle.init(rawValue:)) ?? .aurora }
             set { selectionBorder = newValue == .aurora ? nil : newValue.rawValue }
         }
+        /// 从左到右的常用按钮。nil 使用默认布局，空数组将所有可选按钮放进「更多」。
+        public var selectionToolbarActions: [String]?
         /// 上次确认的选区（屏幕全局坐标），用来在下次截图时回显。
         public var lastSelection: CGRect?
 

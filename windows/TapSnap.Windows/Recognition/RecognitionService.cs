@@ -30,6 +30,7 @@ public static class RecognitionService
     private static string SettingsPath => Path.Combine(SettingsDirectory, "recognition.json");
     private static RecognitionSettings? cachedSettings;
     private static RecognitionSettingsWindow? settingsWindow;
+    private static TextRecognitionWindow? textWindow;
     private static readonly ConditionalWeakTable<BitmapSource, CachedText> CachedOcr = new();
     private sealed record CachedText(string Language, IReadOnlyList<RecognizedLine> Lines);
 
@@ -83,14 +84,14 @@ public static class RecognitionService
         var candidates = new List<PrivacyCandidate>();
         if (textEnabled)
         {
-            var lines = await ReadPrivacyTextAsync(image, settings.OcrLanguages, cancellationToken);
+            var lines = await ReadTextAsync(image, settings.OcrLanguages, cancellationToken);
             candidates.AddRange(await Task.Run(() => TextCandidates(lines, settings, cancellationToken), cancellationToken));
         }
         candidates.AddRange(await AddVisualCandidatesAsync(image, settings, cancellationToken));
         return PaddedCandidates(image, candidates);
     }
 
-    internal static async Task<IReadOnlyList<RecognizedLine>> ReadPrivacyTextAsync(BitmapSource image, string language,
+    internal static async Task<IReadOnlyList<RecognizedLine>> ReadTextAsync(BitmapSource image, string language,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -192,8 +193,16 @@ public static class RecognitionService
 
     public static void OpenResult(BitmapSource image, RecognitionMode mode)
     {
-        var result = new RecognitionResultWindow(RecognitionEngine.Freeze(image), mode);
-        result.Show();
+        image = RecognitionEngine.Freeze(image);
+        if (mode == RecognitionMode.Text)
+        {
+            textWindow?.Close();
+            var window = new TextRecognitionWindow(image);
+            textWindow = window;
+            window.Closed += (_, _) => textWindow = null;
+            window.Show();
+        }
+        else new RecognitionResultWindow(image, mode).Show();
     }
 
     public static async Task<string> FormulaAsync(BitmapSource source, CancellationToken cancellationToken = default)
@@ -263,7 +272,6 @@ internal sealed class RecognitionResultWindow : Window
     private readonly ComboBox target = new() { ItemsSource = Languages, SelectedIndex = 0, Width = 105 };
     private readonly CancellationTokenSource lifetime = new();
     private readonly CancellationTokenSource recognition = new();
-    private readonly StackPanel textRows = new();
     private WebView2? formulaView;
     private Button? copyFormula;
     private Button? cancelFormula;
@@ -285,11 +293,12 @@ internal sealed class RecognitionResultWindow : Window
             RecognitionMode.Barcode => "二维码和条形码",
             RecognitionMode.Formula => "公式识别",
             RecognitionMode.Translation => "截图翻译",
-            _ => "文字识别"
+            _ => "识别结果"
         });
-        Width = mode == RecognitionMode.Text ? 380 : 690;
-        Height = mode == RecognitionMode.Text ? 460 : 520;
-        MinWidth = 350; MinHeight = 310;
+        Width = 690;
+        Height = 520;
+        MinWidth = 350;
+        MinHeight = 310;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         SnapTheme.StyleWindow(this);
 
@@ -302,7 +311,6 @@ internal sealed class RecognitionResultWindow : Window
         {
             RecognitionMode.Table => "复制 CSV",
             RecognitionMode.Formula => "复制 LaTeX",
-            RecognitionMode.Text => "复制全部",
             _ => "复制文字"
         });
         copy.SetResourceReference(StyleProperty, "SnapPrimary");
@@ -351,10 +359,6 @@ internal sealed class RecognitionResultWindow : Window
             Grid.SetColumn(outputPane, 2);
             panels.Children.Add(outputPane);
             layout.Children.Add(panels);
-        }
-        else if (mode == RecognitionMode.Text)
-        {
-            layout.Children.Add(new ScrollViewer { Content = textRows, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
         }
         else if (mode == RecognitionMode.Formula)
         {
@@ -422,25 +426,6 @@ internal sealed class RecognitionResultWindow : Window
         try
         {
             var config = RecognitionService.Settings;
-            if (mode == RecognitionMode.Text)
-            {
-                var lines = await RecognitionEngine.ReadAsync(image, config.OcrLanguages, cancellationToken);
-                result.Text = RecognitionEngine.Text(lines);
-                foreach (var line in lines)
-                {
-                    var button = Button(line.Text);
-                    button.Content = new TextBlock { Text = line.Text, TextWrapping = TextWrapping.Wrap };
-                    button.HorizontalContentAlignment = HorizontalAlignment.Left;
-                    button.ToolTip = "复制此行";
-                    button.Click += (_, _) => Copy(line.Text);
-                    textRows.Children.Add(button);
-                }
-                status.Text = lines.Count == 0 ? "未识别到文字" : $"识别结果 · {lines.Count} 行";
-                if (config.OcrAutoCopy && lines.Count > 0)
-                    Copy(config.OcrCollapseNewlines ? string.Join(" ", lines.Select(line => line.Text)) : result.Text,
-                         $"识别结果 · {lines.Count} 行 · 已复制");
-                return;
-            }
             result.Text = mode switch
             {
                 RecognitionMode.Formula => await RecognitionService.FormulaAsync(image, cancellationToken),
@@ -477,10 +462,10 @@ internal sealed class RecognitionResultWindow : Window
         finally { translate.IsEnabled = source.IsEnabled = target.IsEnabled = result.IsEnabled = true; }
     }
 
-    private void Copy(string value, string confirmation = "已复制")
+    private void Copy(string value)
     {
         if (value.Length == 0) return;
-        try { Clipboard.SetText(value); status.Text = confirmation; }
+        try { Clipboard.SetText(value); status.Text = "已复制"; }
         catch (System.Runtime.InteropServices.ExternalException) { status.Text = "剪贴板正忙，请重试。"; }
     }
 

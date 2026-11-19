@@ -169,7 +169,7 @@ internal static class RecognitionAi
                             "AI 隐私补查", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
             return;
         progress?.Report("正在本机识别…");
-        var lines = await RecognitionService.ReadPrivacyTextAsync(source, settings.OcrLanguages, cancellationToken);
+        var lines = await RecognitionService.ReadTextAsync(source, settings.OcrLanguages, cancellationToken);
         var local = await Task.Run(() => RecognitionService.TextCandidates(lines, settings, cancellationToken), cancellationToken);
         if (settings.Mode(PrivacyRuleKind.Barcode) != PrivacyRuleMode.Off ||
             settings.Mode(PrivacyRuleKind.Face) != PrivacyRuleMode.Off)

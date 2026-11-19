@@ -3,7 +3,7 @@ import TapSnapOCR
 import TapSnapTheme
 import SwiftUI
 
-/// 文字识别结果面板。支持按段阅读、按原图行核对和 Markdown 预览。
+/// 并排显示 OCR 原图和结果，支持按段、按原图行和 Markdown。
 final class OCRResultPanel {
     private let theme: () -> Theme
     private var window: NSWindow?
@@ -12,14 +12,15 @@ final class OCRResultPanel {
         self.theme = theme
     }
 
-    func show(document: OCRDocument, markdownSource: (() async -> String)? = nil, onCopy: @escaping (String) -> Void) {
+    func show(document: OCRDocument, image: CGImage, markdownSource: (() async -> String)? = nil,
+              onCopy: @escaping (String) -> Void) {
         close()
 
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
         let visible = screen?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
         let panel = makeWindow(
-            document: document, frame: Self.panelFrame(near: mouse, in: visible),
+            document: document, image: image, frame: Self.panelFrame(near: mouse, in: visible),
             markdownSource: markdownSource, onCopy: onCopy
         )
         panel.orderFrontRegardless()
@@ -28,11 +29,12 @@ final class OCRResultPanel {
     }
 
     func makeWindow(
-        document: OCRDocument, frame: CGRect, markdownSource: (() async -> String)? = nil,
+        document: OCRDocument, image: CGImage, frame: CGRect, markdownSource: (() async -> String)? = nil,
         onCopy: @escaping (String) -> Void
     ) -> NSPanel {
         let view = OCRResultView(
             document: document,
+            image: image,
             theme: theme(),
             makeMarkdownSource: markdownSource,
             onCopy: onCopy,
@@ -52,7 +54,7 @@ final class OCRResultPanel {
         panel.titlebarAppearsTransparent = true
         panel.titlebarSeparatorStyle = .none
         panel.contentViewController = hosting
-        panel.contentMinSize = CGSize(width: min(360, frame.width), height: min(250, frame.height))
+        panel.contentMinSize = CGSize(width: min(660, frame.width), height: min(310, frame.height))
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
@@ -72,8 +74,8 @@ final class OCRResultPanel {
 
     static func panelFrame(near mouse: CGPoint, in visible: CGRect) -> CGRect {
         let available = visible.insetBy(dx: 12, dy: 12)
-        let width = min(456, available.width)
-        let height = min(486, available.height)
+        let width = min(860, available.width)
+        let height = min(540, available.height)
         return CGRect(
             x: min(max(available.minX, mouse.x - width / 2), available.maxX - width),
             y: min(max(available.minY, mouse.y - height - 12), available.maxY - height),
@@ -107,10 +109,31 @@ enum OCRResultDisplayMode: Hashable {
         case .markdownPreview, .markdownSource: return markdownSource ?? OCRMarkdown.source(from: document)
         }
     }
+
+    func reviewRows(in document: OCRDocument, matching query: String) -> [OCRReviewRow] {
+        let rows: [OCRReviewRow]
+        switch self {
+        case .paragraphs:
+            rows = document.blocks.map { OCRReviewRow(id: $0.id, text: $0.paragraphText, bounds: $0.normalizedBounds) }
+        case .originalLines:
+            rows = document.originalLines.map { OCRReviewRow(id: $0.id, text: $0.text, bounds: $0.normalizedBounds) }
+        case .markdownPreview, .markdownSource:
+            return []
+        }
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return term.isEmpty ? rows : rows.filter { $0.text.localizedStandardContains(term) }
+    }
+}
+
+struct OCRReviewRow: Identifiable {
+    let id: UUID
+    let text: String
+    let bounds: CGRect
 }
 
 private struct OCRResultView: View {
     let document: OCRDocument
+    let image: CGImage
     let theme: Theme
     let makeMarkdownSource: (() async -> String)?
     let onCopy: (String) -> Void
@@ -118,29 +141,22 @@ private struct OCRResultView: View {
     @State private var mode: OCRResultDisplayMode = .paragraphs
     @State private var markdownSource: String?
     @State private var isLoadingMarkdown = false
+    @State private var query = ""
+    @State private var location: OCRSourceLocation?
+    @State private var imageZoom: CGFloat = 1
 
     var body: some View {
         let outline = RoundedRectangle(cornerRadius: 16, style: .continuous)
         VStack(spacing: 0) {
             header
-            modeBar
-            Group {
-                if mode.isMarkdown && markdownSource == nil {
-                    ProgressView("正在整理 Markdown…")
-                        .controlSize(.small)
-                } else {
-                    reader
+            GeometryReader { proxy in
+                HStack(spacing: 10) {
+                    imagePane
+                        .frame(width: (proxy.size.width - 10) * 0.44)
+                    resultPane
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(theme.token(.card))
-            .clipShape(.rect(cornerRadius: 10))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(theme.token(.border), lineWidth: 1)
-                    .allowsHitTesting(false)
-            }
-            .padding([.horizontal, .bottom], 10)
+            .padding(10)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .foregroundStyle(theme.token(.foreground))
@@ -151,6 +167,60 @@ private struct OCRResultView: View {
                 .allowsHitTesting(false)
         }
         .onExitCommand(perform: onClose)
+    }
+
+    private var imagePane: some View {
+        card {
+            HStack(spacing: 5) {
+                Text("原图").font(.system(size: 12, weight: .semibold))
+                Spacer(minLength: 4)
+                iconButton("缩小原图", icon: "minus") { imageZoom = max(0.5, imageZoom / 1.5) }
+                    .disabled(imageZoom <= 0.5)
+                modeButton("适合宽度", selected: imageZoom == 1) { imageZoom = 1 }
+                iconButton("放大原图", icon: "plus") { imageZoom = min(4, imageZoom * 1.5) }
+                    .disabled(imageZoom >= 4)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 43)
+            Divider()
+            OCRSourcePreview(image: image, zoom: imageZoom, location: location)
+        }
+    }
+
+    private var resultPane: some View {
+        card {
+            modeBar
+            if !mode.isMarkdown {
+                TextField("搜索识别结果", text: $query)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("搜索识别结果")
+                    .padding([.horizontal, .bottom], 10)
+            }
+            Divider()
+            Group {
+                if mode.isMarkdown && markdownSource == nil {
+                    ProgressView("正在整理 Markdown…")
+                        .controlSize(.small)
+                } else {
+                    reader
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .onChange(of: query) { _, _ in location = nil }
+        .onChange(of: mode) { _, _ in location = nil }
+    }
+
+    private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(spacing: 0, content: content)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(theme.token(.card))
+            .clipShape(.rect(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(theme.token(.border), lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
     }
 
     @ViewBuilder
@@ -164,22 +234,22 @@ private struct OCRResultView: View {
                 set: { markdownSource = $0 }
             ))
         case .paragraphs, .originalLines:
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    if mode == .paragraphs {
-                        ForEach(document.blocks) { block in
-                            textRow(block.paragraphText, copyLabel: "复制此段", separated: block.id != document.blocks.first?.id)
-                        }
-                    } else {
-                        let lines = document.originalLines
-                        ForEach(lines) { line in
-                            textRow(line.text, copyLabel: "复制此行", separated: line.id != lines.first?.id)
+            let rows = mode.reviewRows(in: document, matching: query)
+            if rows.isEmpty && !document.isEmpty {
+                Text("没有匹配的文字")
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.token(.mutedForeground))
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(rows) { row in
+                            textRow(row, separated: row.id != rows.first?.id)
                         }
                     }
                 }
+                .id(mode)
+                .scrollBounceBehavior(.basedOnSize)
             }
-            .id(mode)
-            .scrollBounceBehavior(.basedOnSize)
         }
     }
 
@@ -291,18 +361,23 @@ private struct OCRResultView: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    private func textRow(_ text: String, copyLabel: String, separated: Bool) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Text(text)
+    private func textRow(_ row: OCRReviewRow, separated: Bool) -> some View {
+        let unit = mode == .paragraphs ? "段" : "行"
+        return HStack(alignment: .top, spacing: 6) {
+            Text(row.text)
                 .font(.system(size: 14))
                 .textSelection(.enabled)
                 .lineSpacing(4)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
-            iconButton(copyLabel, icon: "document.on.document") { onCopy(text) }
+            iconButton("在原图定位此\(unit)", icon: "scope") {
+                location = OCRSourceLocation(rowID: row.id, bounds: row.bounds)
+            }
+            iconButton("复制此\(unit)", icon: "document.on.document") { onCopy(row.text) }
         }
         .padding(.horizontal, 13)
         .padding(.vertical, 10)
+        .background(location?.rowID == row.id ? theme.token(.primary).opacity(0.08) : .clear)
         .overlay(alignment: .top) {
             if separated {
                 Divider().padding(.horizontal, 13).allowsHitTesting(false)

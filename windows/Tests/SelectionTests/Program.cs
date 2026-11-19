@@ -59,6 +59,24 @@ Check(OperationShortcut.Match(new(0, 'C'), null)?.Tool == AnnotationTool.Crop &&
 Check(OperationShortcut.Match(new(4, 'P'), null)?.Output == CaptureAction.Pin &&
       OperationShortcut.Match(new(0, 'P'), null)?.Tool == AnnotationTool.Polygon, "Shift+P 贴图，单按 P 保留多边形工具");
 var oldSettings = JsonSerializer.Deserialize<Settings>("{}")!;
+Check(oldSettings.SelectionToolbarActions is null, "旧配置继续采用默认框选工具栏");
+oldSettings.SelectionToolbarActions = ["action:Text", "tool:Text", "action:Pin", "action:Record", "action:Text", "unknown", "action:Copy"];
+var configured = JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(oldSettings))!;
+var custom = SelectionToolbarModel.Layout(3, true, true, configured.SelectionToolbarActions);
+Check(custom.Outputs.Select(item => item.Id).SequenceEqual(new[] { "action:Text", "tool:Text", "action:Pin" }) &&
+      custom.More[0].Action == CaptureAction.Record &&
+      custom.Outputs.Concat(custom.More).ToHashSet().SetEquals(SelectionToolbarModel.AvailableActions) &&
+      custom.Outputs.Length + custom.More.Length == SelectionToolbarModel.AvailableActions.Length,
+    "自定义顺序持久化，区分文字识别和文字标注，其余项目收进更多且无重复");
+var cross = SelectionToolbarModel.Layout(10, false, true, configured.SelectionToolbarActions);
+Check(!cross.Outputs.Concat(cross.More).Any(item => item.Action is CaptureAction.Record or CaptureAction.LongShot),
+    "跨屏框选从自定义工具栏和更多中移除录屏与长截图");
+var minimal = SelectionToolbarModel.Layout(10, true, true, []);
+var presetDock = SelectionToolbarModel.Layout(10, true, false, configured.SelectionToolbarActions);
+Check(minimal.Outputs.Length == 0 && minimal.Tools.Length == 0 &&
+      minimal.More.Length == SelectionToolbarModel.AvailableActions.Length &&
+      presetDock.Outputs.SequenceEqual(SelectionToolbarModel.Layout(10, true, false).Outputs),
+    "允许只显示固定操作，预设截图保留自己的确认流程");
 Check(OperationShortcut.Pin.Binding(oldSettings.OperationHotkeys) == new Hotkey(4, 'P'),
     "旧配置自动使用默认操作键位");
 oldSettings.OperationHotkeys = new(OperationShortcut.Defaults) { [OperationShortcut.Pin.Id] = new(0, 'J') };

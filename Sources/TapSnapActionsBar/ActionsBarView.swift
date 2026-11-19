@@ -76,7 +76,9 @@ public struct ActionsBarView: View {
             ForEach(layout.annotationTools, id: \.self) { action in
                 toolButton(action)
             }
-            PanelDivider(theme: theme)
+            if layout.showsAnnotationDivider {
+                PanelDivider(theme: theme)
+            }
             if showsHistory {
                 toolButton(.undo, enabled: canUndo)
                 toolButton(.redo, enabled: canRedo)

@@ -8,6 +8,7 @@
 | KaTeX 0.16.22 | [KaTeX](https://katex.org/docs/browser.html)，MIT | JS/CSS/字体本地捆绑，CSP 禁止网络连接，关闭可信 HTML 指令 |
 | pix2tex 0.1.4 / LaTeX-OCR | [作者项目](https://github.com/lukas-blecher/LaTeX-OCR)，MIT | 独立 Python 3.12 环境按需启动，退出即释放模型；依赖版本在 Resources/formula-requirements.txt |
 | Apple Translation | [TranslationSession](https://developer.apple.com/documentation/Translation/TranslationSession) | macOS 15+；系统按需下载语言包，正文不上传到自建服务 |
+| Markdig 1.6.0 | [Windows OCR 的 Markdown 解析](https://github.com/xoofx/markdig/tree/1.6.0)，BSD-2-Clause | 使用本地 WPF 预览，Windows 包内含 `Licenses/Markdig.txt` |
 
 源归档 SHA-256：
 

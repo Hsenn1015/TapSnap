@@ -240,6 +240,7 @@ private struct GeneralSettings: View {
 private struct CaptureSettings: View {
     let environment: AppEnvironment
     @ObservedObject private var config: ConfigStore
+    @State private var customizesSelectionToolbar = false
     private var theme: Theme { environment.theme }
 
     init(environment: AppEnvironment) {
@@ -249,6 +250,13 @@ private struct CaptureSettings: View {
 
     var body: some View {
         SettingsPage(title: "截图", theme: theme) {
+            SnapSettingGroup(theme: theme) {
+                SnapSettingRow("框选工具栏", subtitle: "选择普通截图时直接显示的按钮", theme: theme) {
+                    SnapButton("自定义…", theme: theme, variant: .outline, size: .sm) {
+                        customizesSelectionToolbar = true
+                    }
+                }
+            }
             SnapSettingGroup("选区边框", theme: theme) {
                 SnapSettingRow("边框样式", theme: theme) {
                     Picker("边框样式", selection: bind(\.capture.selectionBorderStyle)) {
@@ -306,6 +314,11 @@ private struct CaptureSettings: View {
                         }
                     }
                 }
+            }
+        }
+        .sheet(isPresented: $customizesSelectionToolbar) {
+            SelectionToolbarSettings(theme: theme, identifiers: config.settings.capture.selectionToolbarActions) { identifiers in
+                config.update { $0.capture.selectionToolbarActions = identifiers }
             }
         }
     }
