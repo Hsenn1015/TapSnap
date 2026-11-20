@@ -136,11 +136,11 @@ internal static class Desktop
         return null;
     }
 
-    public static void Place(Window window, Rectangle bounds, bool keepSize = false)
+    public static void Place(Window window, Rectangle bounds, bool keepSize = false, bool raiseTopmost = false)
     {
         IntPtr handle = new WindowInteropHelper(window).EnsureHandle();
-        if (!SetWindowPos(handle, IntPtr.Zero, bounds.X, bounds.Y, bounds.Width, bounds.Height,
-                          0x0004 | 0x0010 | (keepSize ? 0x0001u : 0)))
+        if (!SetWindowPos(handle, raiseTopmost ? new IntPtr(-1) : IntPtr.Zero, bounds.X, bounds.Y, bounds.Width, bounds.Height,
+                          0x0010 | (raiseTopmost ? 0 : 0x0004u) | (keepSize ? 0x0001u : 0)))
             throw new Win32Exception(Marshal.GetLastWin32Error());
     }
 

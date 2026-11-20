@@ -31,4 +31,21 @@ internal static class SelectionGeometry
         selection.Offset(-display.X, -display.Y);
         return selection;
     }
+
+    public static Rectangle PlaceRecordingControls(Rectangle workArea, Rectangle selection, Size size, int inset)
+    {
+        int lastLeft = Math.Max(workArea.Left, workArea.Right - size.Width);
+        int lastTop = Math.Max(workArea.Top, workArea.Bottom - size.Height);
+        var bounds = new Rectangle(workArea.Left + (lastLeft - workArea.Left) / 2,
+            Math.Min(workArea.Top + inset, lastTop), size.Width, size.Height);
+        if (!bounds.IntersectsWith(selection)) return bounds;
+
+        if (selection.Right + inset <= lastLeft)
+            bounds.X = selection.Right + inset;
+        else if (selection.Left - inset - size.Width >= workArea.Left)
+            bounds.X = selection.Left - inset - size.Width;
+        else if (selection.Bottom + inset <= lastTop)
+            bounds.Y = selection.Bottom + inset;
+        return bounds;
+    }
 }

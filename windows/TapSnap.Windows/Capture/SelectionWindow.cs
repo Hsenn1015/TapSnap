@@ -478,14 +478,17 @@ internal sealed class SelectionWindow : Window
         rim.Intersect(full);
         if (rim.IsEmpty) return;
         Rect available = full;
-        if (ShowsEditorDock)
+        if (ShowsEditorDock || action == CaptureAction.Record)
         {
             var work = System.Windows.Forms.Screen.FromRectangle(monitor).WorkingArea;
             available = new Rect(Local(work.Location), Local(new DrawingPoint(work.Right, work.Bottom)));
+        }
+        if (ShowsEditorDock)
+        {
             double limit = Math.Min(available.Width - 16, Math.Max(rim.Width, 44 * 9));
             UpdateDock(SelectionToolbarModel.Slots(limit), monitor.Contains(r));
         }
-        else buttons.MaxWidth = Math.Max(1, ActualWidth - 28);
+        else buttons.MaxWidth = Math.Max(1, available.Width - 28);
         toolbar.Visibility = Visibility.Visible;
         toolbar.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         double height = toolbar.DesiredSize.Height;

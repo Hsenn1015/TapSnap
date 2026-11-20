@@ -32,6 +32,23 @@ Check(SelectionGeometry.Resize(selected, leftMonitor, 3, 6000, -900) == Rectangl
 Check(SelectionGeometry.Resize(selected, leftMonitor, 5, 0, -1000).Height == 2,
     "缩过对边时保留最小有效尺寸");
 
+var laptopWorkArea = new Rectangle(0, 0, 1920, 1040);
+var laptopRecording = new Rectangle(280, 150, 1280, 720);
+Check(SelectionGeometry.PlaceRecordingControls(laptopWorkArea, laptopRecording, new(244, 58), 5) ==
+      new Rectangle(838, 5, 244, 58), "普通屏幕上录屏按钮保留在顶部中央");
+var largeWorkArea = new Rectangle(-3840, -2070, 3840, 2070);
+var wideRecording = new Rectangle(-3840, -2160, 3840, 1750);
+var largeControls = SelectionGeometry.PlaceRecordingControls(largeWorkArea, wideRecording, new(488, 116), 10);
+Check(largeWorkArea.Contains(largeControls) && largeControls.Size == new Size(488, 116) &&
+      !largeControls.IntersectsWith(wideRecording), "200% 缩放的 4K 副屏上，完整的录屏按钮避开宽选区和任务栏");
+var fullHeightRecording = new Rectangle(-3400, -2160, 2800, 2160);
+var sideControls = SelectionGeometry.PlaceRecordingControls(largeWorkArea, fullHeightRecording, new(366, 87), 8);
+Check(largeWorkArea.Contains(sideControls) && !sideControls.IntersectsWith(fullHeightRecording),
+    "150% 缩放时，录满高度的选区旁仍有空间显示录屏按钮");
+var fullScreenControls = SelectionGeometry.PlaceRecordingControls(largeWorkArea, largeWorkArea, new(488, 116), 10);
+Check(fullScreenControls == new Rectangle(-2164, -2060, 488, 116),
+    "录满显示器时，录屏按钮完整地留在录制显示器内");
+
 foreach (bool singleScreen in new[] { true, false })
 foreach (bool copies in new[] { true, false })
 foreach (int width in new[] { 240, 396, 760, 1600 })

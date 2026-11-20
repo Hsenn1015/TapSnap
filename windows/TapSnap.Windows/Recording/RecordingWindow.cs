@@ -38,6 +38,7 @@ internal sealed class RecordingWindow : Window
     private readonly Ellipse pulse = new() { Width = 12, Height = 12, Stroke = Brushes.IndianRed, StrokeThickness = 2 };
     private bool started;
     private bool finishing;
+    private bool controlsExcluded;
     private Window? outline;
     private GraphicsCapture? nativeCapture;
     private RecordingCamera? camera;
@@ -107,18 +108,20 @@ internal sealed class RecordingWindow : Window
             if (e.Key == Key.Escape && !finishing) { Close(); e.Handled = true; }
             else if (e.Key == Key.Enter && started && !finishing) { Finish(); e.Handled = true; }
         };
-        SourceInitialized += (_, _) => Desktop.Exclude(this);
+        SourceInitialized += (_, _) =>
+        {
+            Desktop.Place(this, System.Windows.Forms.Screen.FromRectangle(captureRegion).WorkingArea, keepSize: true);
+            controlsExcluded = Desktop.Exclude(this);
+        };
+        DpiChanged += (_, _) => Dispatcher.InvokeAsync(() =>
+        {
+            if (!closed && IsLoaded) PlaceControls();
+        }, DispatcherPriority.Input);
         Loaded += async (_, _) =>
         {
             try
             {
-                var screen = monitor.IsEmpty ? Desktop.CursorMonitor : monitor;
-                var area = System.Windows.Forms.Screen.FromPoint(new System.Drawing.Point(screen.X + 1, screen.Y + 1)).WorkingArea;
-                double dpi = Desktop.ScaleForMonitor(screen);
-                int width = (int)Math.Round(Width * dpi), height = (int)Math.Round(Height * dpi);
-                int x = area.Left + Math.Max(0, (area.Width - width) / 2);
-                int y = area.Top + (int)Math.Round(5 * dpi);
-                Desktop.Place(this, new ScreenRect(x, y, width, height));
+                PlaceControls();
                 if (settings.RecordCamera)
                 {
                     var pendingCamera = new RecordingCamera();
@@ -131,6 +134,7 @@ internal sealed class RecordingWindow : Window
                     audio = new RecordingAudio(settings.RecordMicrophone, settings.RecordSystemAudio, frames.Folder);
                 if (!monitor.IsEmpty) nativeCapture = GraphicsCapture.StartMonitor(monitor);
                 ShowOutline(region);
+                PlaceControls();
                 clock.Start();
                 audio?.SetPaused(false);
                 timer.Start();
@@ -171,6 +175,15 @@ internal sealed class RecordingWindow : Window
             }
         };
         timer.Tick += (_, _) => CaptureFrame();
+    }
+
+    private void PlaceControls()
+    {
+        if (!Desktop.TryWindowBounds(this, out var current)) return;
+        var area = System.Windows.Forms.Screen.FromRectangle(captureRegion).WorkingArea;
+        int inset = (int)Math.Round(5 * VisualTreeHelper.GetDpi(this).DpiScaleY);
+        var bounds = SelectionGeometry.PlaceRecordingControls(area, captureRegion, current.Size, inset);
+        Desktop.Place(this, bounds, keepSize: true, raiseTopmost: true);
     }
 
     private void TogglePause()
@@ -261,7 +274,7 @@ internal sealed class RecordingWindow : Window
                     captureRegion.Width, captureRegion.Height));
             else
             {
-                bool overlaps = Desktop.TryWindowBounds(this, out var bounds) && bounds.IntersectsWith(captureRegion);
+                bool overlaps = !controlsExcluded && Desktop.TryWindowBounds(this, out var bounds) && bounds.IntersectsWith(captureRegion);
                 double opacity = Opacity;
                 if (overlaps) { Opacity = 0; Desktop.Flush(); }
                 try { source = Desktop.Capture(captureRegion); }
