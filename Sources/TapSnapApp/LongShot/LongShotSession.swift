@@ -653,19 +653,21 @@ final class LongShotSession: NSObject {
     private func presentResult(_ image: CGImage) {
         state = .result
         let scale = screen?.scale ?? 1
+        let document = EditDocument(baseImage: image, scale: scale, sourceTopLeft: selectionRect?.origin)
         let editor = EditController(environment: environment, image: image, scale: scale,
-                                    style: environment.defaultEditStyle, scrollsLongImage: true)
+                                    style: environment.defaultEditStyle, scrollsLongImage: true, restoring: document)
         privacyEditor = editor
         if forcePrivacy || environment.config.settings.privacy.enabled { editor.scanPrivacy() }
         preview.showResult(image, actions: [
             ("贴图", { [weak self] in
-                guard let self, let output = self.privacyEditor?.renderedImage() else { return }
-                self.environment.pinGroups.show(output, scale: scale)
+                guard let self, let editor = self.privacyEditor, let output = editor.renderedImage() else { return }
+                self.environment.pinGroups.show(output, from: editor.outputTopLeft, scale: scale)
                 self.cancel()
             }),
             ("复制", { [weak self] in
-                guard let self, let output = self.privacyEditor?.renderedImage() else { return }
-                self.environment.pinTransfer.copy(output, successMessage: "已复制长图")
+                guard let self, let editor = self.privacyEditor, let output = editor.renderedImage() else { return }
+                self.environment.pinTransfer.copy(output, scale: scale, sourceTopLeft: editor.outputTopLeft,
+                                                  kind: .longShot, successMessage: "已复制长图")
             }),
             ("保存", { [weak self] in
                 guard let self, let output = self.privacyEditor?.renderedImage() else { return }

@@ -178,12 +178,41 @@ final class PinGroupManager: ObservableObject {
     }
 
     @discardableResult
-    func show(_ image: CGImage, at origin: CGPoint? = nil, scale: CGFloat = 1, group: String? = nil) -> PinItem {
+    func show(_ image: CGImage, from sourceTopLeft: CGPoint? = nil, scale: CGFloat = 1) -> PinItem {
+        let screens = NSScreen.screens
+        let pointer = NSEvent.mouseLocation
+        let desktopTop = screens.first?.frame.maxY ?? CGDisplayBounds(CGMainDisplayID()).height
+        let visible = screens.first { $0.frame.contains(pointer) }?.visibleFrame
+            ?? NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
         let scale = max(0.1, scale)
         let size = CGSize(width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale)
-        let item = PinItem(image: image, frame: CGRect(origin: origin ?? defaultOrigin(for: size), size: size),
-                           opacity: pinSettings.defaultOpacity, isAlwaysOnTop: pinSettings.alwaysOnTop,
-                           scale: scale, group: group)
+        let frame = Self.initialFrame(size: size, sourceTopLeft: sourceTopLeft, desktopTop: desktopTop,
+                                      screens: screens.map(\.frame), pointer: pointer, visible: visible)
+        return add(image, frame: frame, scale: scale)
+    }
+
+    /// 原图有位置时保持其左上角；普通剪贴板图片靠近指针，尽量让整张图可见。
+    static func initialFrame(size: CGSize, sourceTopLeft: CGPoint?, desktopTop: CGFloat,
+                             screens: [CGRect], pointer: CGPoint, visible: CGRect) -> CGRect {
+        if let top = sourceTopLeft, top.x.isFinite, top.y.isFinite {
+            let source = CGRect(x: top.x, y: desktopTop - top.y - size.height, width: size.width, height: size.height)
+            if screens.contains(where: { !$0.intersection(source).isEmpty }) { return source }
+        }
+        let x = max(visible.minX, min(pointer.x - size.width / 2, visible.maxX - size.width))
+        let top = min(visible.maxY, max(pointer.y + size.height / 2, visible.minY + size.height))
+        return CGRect(x: x, y: top - size.height, width: size.width, height: size.height)
+    }
+
+    @discardableResult
+    func show(_ image: CGImage, at origin: CGPoint, scale: CGFloat = 1, group: String? = nil) -> PinItem {
+        let scale = max(0.1, scale)
+        let size = CGSize(width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale)
+        return add(image, frame: CGRect(origin: origin, size: size), scale: scale, group: group)
+    }
+
+    private func add(_ image: CGImage, frame: CGRect, scale: CGFloat, group: String? = nil) -> PinItem {
+        let item = PinItem(image: image, frame: frame, opacity: pinSettings.defaultOpacity,
+                           isAlwaysOnTop: pinSettings.alwaysOnTop, scale: scale, group: group)
         add(item)
         return item
     }
@@ -268,7 +297,7 @@ final class PinGroupManager: ObservableObject {
     }
 
     func updatePosition(_ id: UUID, frame: CGRect) {
-        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        guard let index = items.firstIndex(where: { $0.id == id }), items[index].frame != frame else { return }
         let screen = NSScreen.screens.first { $0.visibleFrame.intersects(frame) }
         let adjusted = pinSettings.snapToEdges && screen != nil
             ? Self.snapped(frame, to: screen!.visibleFrame) : frame
@@ -376,18 +405,11 @@ final class PinGroupManager: ObservableObject {
                               groups: groupNames, hiddenGroups: Array(hiddenGroups), isHidden: isHidden,
                               hideForFullScreen: hidesForFullScreen), images: images)
     }
-    func copyToPasteboard(_ id: UUID) {
-        guard let item = items.first(where: { $0.id == id }) else { return }
-        let pasteboard = NSPasteboard.general
+    func copyToPasteboard(_ id: UUID, to pasteboard: NSPasteboard = .general) {
+        guard let pin = items.first(where: { $0.id == id }),
+              let item = PinTransfer.pasteboardItem(for: pin.image, metadata: pin.clipMeta) else { return }
         pasteboard.clearContents()
-        let bitmap = NSBitmapImageRep(cgImage: item.image)
-        if let data = bitmap.representation(using: .png, properties: [:]) {
-            pasteboard.setData(data, forType: .png)
-        }
-        pasteboard.setString(
-            String(data: (try? JSONEncoder().encode(item.clipMeta)) ?? Data(), encoding: .utf8) ?? "",
-            forType: NSPasteboard.PasteboardType(ClipMetaData.pasteboardType)
-        )
+        pasteboard.writeObjects([item])
     }
 
     /// 右键「另存为…」。
@@ -441,15 +463,6 @@ final class PinGroupManager: ObservableObject {
         panels[id]?.setContentSize(items[index].frame.size)
         updatePanel(items[index])
         persist()
-    }
-
-    private func defaultOrigin(for size: CGSize) -> CGPoint {
-        let mouse = NSEvent.mouseLocation
-        let visible = NSScreen.screens.first { $0.visibleFrame.contains(mouse) }?.visibleFrame
-            ?? NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
-        let offset = CGFloat(items.count % 8) * 18
-        return CGPoint(x: max(visible.minX, visible.maxX - size.width - 40 - offset),
-                       y: max(visible.minY, visible.maxY - size.height - 60 - offset))
     }
 
     deinit { fullScreenMonitor.stop(); archive.flush() }

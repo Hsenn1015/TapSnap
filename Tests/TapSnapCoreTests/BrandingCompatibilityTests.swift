@@ -102,6 +102,7 @@ final class BrandingCompatibilityTests: XCTestCase {
         """
         let metadata = try JSONDecoder().decode(ClipMetaData.self, from: Data(legacyJSON.utf8))
         XCTAssertEqual(metadata.kind, .longShot)
+        XCTAssertNil(metadata.sourceTopLeft)
         XCTAssertEqual(metadata.logicalSize, CGSize(width: 300, height: 900))
         XCTAssertTrue(metadata.isPinned)
         XCTAssertEqual(metadata.opacity, 0.75)

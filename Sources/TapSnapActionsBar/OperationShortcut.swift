@@ -31,7 +31,7 @@ public enum OperationShortcut: Hashable, Identifiable, Sendable {
     }
 
     private static let keys: [(OperationShortcut, Int, NSEvent.ModifierFlags)] = [
-        (.action(.pin), kVK_ANSI_P, .shift),
+        (.action(.pin), kVK_ANSI_T, .command),
         (.action(.copy), kVK_ANSI_C, .command),
         (.action(.save), kVK_ANSI_S, .command),
         (.action(.undo), kVK_ANSI_Z, .command),
@@ -63,8 +63,20 @@ public enum OperationShortcut: Hashable, Identifiable, Sendable {
         ($0.id, KeyBinding(keyCode: UInt32($1), flags: $2))
     })
 
+    public static func bindings(in settings: Settings) -> [String: KeyBinding] {
+        if let configured = settings.operationShortcuts { return configured }
+        // 旧配置可能只自定义了全局 ⌘T，保留该全局动作以及此前仍可用的贴图键。
+        let pin = Self.action(.pin).id
+        var bindings = defaults
+        if let preferred = bindings[pin], settings.shortcuts.values.contains(preferred) {
+            let previous = KeyBinding(keyCode: UInt32(kVK_ANSI_P), flags: .shift)
+            bindings[pin] = settings.shortcuts.values.contains(previous) ? nil : previous
+        }
+        return bindings
+    }
+
     public func binding(in settings: Settings) -> KeyBinding? {
-        (settings.operationShortcuts ?? Self.defaults)[id]
+        Self.bindings(in: settings)[id]
     }
 
     public func displayTitle(in settings: Settings, title: String? = nil) -> String {
@@ -76,7 +88,8 @@ public enum OperationShortcut: Hashable, Identifiable, Sendable {
     public static func matching(_ event: NSEvent, in settings: Settings, selection: Bool = false) -> Self? {
         guard event.type == .keyDown else { return nil }
         let input = KeyBinding(keyCode: UInt32(event.keyCode), flags: event.modifierFlags)
-        if let operation = all.first(where: { (!selection || $0.selectionAction != nil) && $0.binding(in: settings) == input }) {
+        let bindings = bindings(in: settings)
+        if let operation = all.first(where: { (!selection || $0.selectionAction != nil) && bindings[$0.id] == input }) {
             return operation
         }
         guard !selection else { return nil }
@@ -88,7 +101,7 @@ public enum OperationShortcut: Hashable, Identifiable, Sendable {
         case kVK_ANSI_Keypad0: alternative = .fitImage
         default: return nil
         }
-        return input.combo.cocoaModifiers == .command && alternative.binding(in: settings) == defaults[alternative.id]
+        return input.combo.cocoaModifiers == .command && bindings[alternative.id] == defaults[alternative.id]
             ? alternative : nil
     }
 }

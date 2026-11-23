@@ -51,8 +51,8 @@ final class InlineTextEditorTests: XCTestCase {
         let editor = try XCTUnwrap(view.inlineTextEditor)
         XCTAssertTrue(window.firstResponder === editor)
         XCTAssertFalse(controller.handleKeyEvent(brush), "文字输入期间 B 应交给输入框")
-        XCTAssertFalse(controller.handleKeyEvent(try key(35, text: "P", modifiers: .shift, window: window)),
-                       "文字输入期间 Shift+P 应交给输入框")
+        XCTAssertFalse(controller.handleKeyEvent(try key(17, text: "t", modifiers: .command, window: window)),
+                       "文字输入期间 ⌘T 应交给输入框")
         XCTAssertEqual(controller.selectedTool, .text)
         XCTAssertNotNil(controller.textEditingItem)
         XCTAssertTrue(controller.document.items.isEmpty)

@@ -297,7 +297,8 @@ final class CaptureCoordinator {
         }
         let checksPrivacy = forcePrivacy || environment.config.settings.privacy.enabled
         let document = EditDocument(baseImage: cropped, scale: session.outputScale,
-                                    capturedAt: session.frame(for: screen)?.timestamp ?? session.startedAt)
+                                    capturedAt: session.frame(for: screen)?.timestamp ?? session.startedAt,
+                                    sourceTopLeft: globalRect.origin.rounded(to: session.outputScale))
         if outcome != .longShot && outcome != .record {
             environment.rememberCapture(document, privateCapture: checksPrivacy)
         }
@@ -315,9 +316,9 @@ final class CaptureCoordinator {
         case .edit:
             break
         case .copy:
-            environment.pinTransfer.copy(cropped)
+            environment.pinTransfer.copy(cropped, scale: document.scale, sourceTopLeft: document.sourceTopLeft)
         case .pin:
-            environment.pinGroups.show(cropped, scale: document.scale)
+            environment.pinGroups.show(cropped, from: document.sourceTopLeft, scale: document.scale)
         case .save:
             if !environment.saveScreenshot(cropped, formatOverride: session.outputOptions?.format, chooseLocation: true) {
                 environment.openEditor(image: cropped, scale: document.scale, captureRect: globalRect, captureScreen: screen,

@@ -70,7 +70,7 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
          restoring document: EditDocument? = nil) {
         self.environment = environment
         self.scrollsLongImage = scrollsLongImage
-        let document = document ?? EditDocument(baseImage: image, scale: scale)
+        let document = document ?? EditDocument(baseImage: image, scale: scale, sourceTopLeft: captureRect?.origin)
         self.document = document
         self.style = style
         var options = EditToolOptions()
@@ -90,6 +90,7 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     var theme: Theme { environment.theme }
+    var outputTopLeft: CGPoint? { document.outputTopLeft }
 
     var nextSerialIndex: Int {
         (document.items.compactMap { ($0 as? SerialItem)?.index }.max() ?? 0) + 1
@@ -884,7 +885,8 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
     @discardableResult
     private func copyToPasteboard() -> Bool {
         guard let image = renderedImage() else { return false }
-        return environment.pinTransfer.copy(image)
+        return environment.pinTransfer.copy(image, scale: document.scale, sourceTopLeft: outputTopLeft,
+                                            kind: .annotatedScreenshot)
     }
 
     @discardableResult
@@ -911,7 +913,7 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
 
     private func pinToScreen() {
         guard let image = renderedImage() else { return }
-        environment.pinGroups.show(image, scale: document.scale)
+        environment.pinGroups.show(image, from: outputTopLeft, scale: document.scale)
         close()
     }
 

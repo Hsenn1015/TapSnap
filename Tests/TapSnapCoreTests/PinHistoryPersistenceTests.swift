@@ -1,6 +1,7 @@
 import AppKit
 import XCTest
 import TapSnapConfig
+import TapSnapCore
 import TapSnapSystem
 @testable import TapSnapApp
 
@@ -21,6 +22,49 @@ final class PinHistoryPersistenceTests: XCTestCase {
         context.setFillColor(CGColor(gray: shade, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: size, height: size))
         return context.makeImage()!
+    }
+
+    func testMovedPinPublishesItsCurrentTopLeftAndScale() throws {
+        let root = directory()
+        let config = config(at: root)
+        config.update { $0.pin.snapToEdges = false }
+        let manager = PinGroupManager(config: config, storageDirectory: root.appendingPathComponent("pins"),
+                                      presentsWindows: false)
+        let pin = manager.show(image(), at: .zero, scale: 2)
+        manager.updatePosition(pin.id, frame: CGRect(x: -350, y: 70, width: 4, height: 4))
+        let moved = try XCTUnwrap(manager.items.first)
+        let copied = try XCTUnwrap(PinTransfer.pasteboardItem(for: moved.image, metadata: moved.clipMeta))
+        let (decoded, metadata) = try XCTUnwrap(PinTransfer.bitmapPayload(from: [copied]))
+        let desktopTop = NSScreen.screens.first?.frame.maxY ?? CGDisplayBounds(CGMainDisplayID()).height
+        XCTAssertEqual(metadata?.sourceTopLeft, CGPoint(x: -350, y: desktopTop - 74))
+        XCTAssertEqual(metadata?.scale, 2)
+        XCTAssertEqual(metadata?.kind, .pin)
+        XCTAssertEqual(decoded.height, 8)
+    }
+
+    func testExternalAndIncompatibleClipboardMetadataKeepImageWithoutPlacement() throws {
+        let image = image()
+        let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+        let meta = ClipMetaData(kind: .screenshot, pixelWidth: image.width, pixelHeight: image.height, scale: 2,
+                                sourceTopLeft: CGPoint(x: -120, y: 310))
+        let metadataType = NSPasteboard.PasteboardType(ClipMetaData.pasteboardType)
+        var mismatched = meta
+        mismatched.pixelWidth += 1
+        var badScale = meta
+        badScale.scale = 0
+        for stored in [nil, mismatched, badScale, meta] {
+            let item = NSPasteboardItem()
+            item.setData(png, forType: .png)
+            if let stored {
+                item.setString(String(decoding: try JSONEncoder().encode(stored), as: UTF8.self), forType: metadataType)
+            }
+            // Another item can carry valid metadata for a different image.
+            let other = NSPasteboardItem()
+            other.setString(String(decoding: try JSONEncoder().encode(meta), as: UTF8.self), forType: metadataType)
+            let (decoded, placement) = try XCTUnwrap(PinTransfer.bitmapPayload(from: [other, item]))
+            XCTAssertEqual(decoded.width, image.width)
+            XCTAssertEqual(placement, stored == meta ? meta : nil)
+        }
     }
 
     func testPinsAndClosedStackRestoreImagesGroupsAndEditedState() throws {
@@ -232,6 +276,59 @@ final class PinHistoryPersistenceTests: XCTestCase {
         XCTAssertFalse(restored.canRestoreLastClosed)
         XCTAssertFalse(FileManager.default.fileExists(atPath: storage.appendingPathComponent(closed.imageID.uuidString + ".png").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: storage.appendingPathComponent(active.imageID.uuidString + ".png").path))
+    }
+
+    func testSourcePinningKeepsGlobalTopLeftAcrossDisplaysAndCrops() {
+        let primary = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        let secondary = CGRect(x: -600, y: 650, width: 600, height: 500)
+        let screens = [primary, secondary]
+        let capture = CGPoint(x: -75, y: -40)
+        let doc = EditDocument(baseImage: image(size: 400), scale: 2, sourceTopLeft: capture)
+        func frame(_ size: CGSize) -> CGRect {
+            PinGroupManager.initialFrame(size: size, sourceTopLeft: doc.outputTopLeft, desktopTop: primary.maxY,
+                                         screens: screens, pointer: primary.origin, visible: primary)
+        }
+        // 左上角位于偏移副屏，右下角跨到主屏，要保持整个选区的位置。
+        XCTAssertEqual(frame(doc.canvasSize), CGRect(x: -75, y: 640, width: 200, height: 200))
+        doc.cropRect = CGRect(x: 3.5, y: 20, width: 50, height: 80)
+        XCTAssertEqual(frame(CGSize(width: 50, height: 80)), CGRect(x: -71.5, y: 740, width: 50, height: 80))
+        XCTAssertEqual(frame(CGSize(width: 50, height: 1800)).maxY, 820)
+    }
+
+    func testMissingOrDisconnectedPinSourceFallsBackToPointer() {
+        let screen = CGRect(x: -800, y: 0, width: 800, height: 600)
+        let pointer = CGPoint(x: -420, y: 360)
+        for source: CGPoint? in [nil, CGPoint(x: 4000, y: 3000)] {
+            let frame = PinGroupManager.initialFrame(size: CGSize(width: 240, height: 180), sourceTopLeft: source,
+                                                     desktopTop: 600, screens: [screen], pointer: pointer, visible: screen)
+            XCTAssertEqual(CGPoint(x: frame.midX, y: frame.midY), pointer)
+        }
+        let large = PinGroupManager.initialFrame(size: CGSize(width: 1300, height: 1800), sourceTopLeft: nil,
+                                                 desktopTop: 600, screens: [screen], pointer: pointer, visible: screen)
+        XCTAssertEqual(large.minX, screen.minX)
+        XCTAssertEqual(large.maxY, screen.maxY)
+    }
+
+    @MainActor
+    func testOpeningPinNearEdgeKeepsCapturePositionUntilDragged() throws {
+        let app = NSApplication.shared
+        guard let primary = NSScreen.screens.first else { throw XCTSkip("需要 macOS WindowServer") }
+        let root = directory()
+        let manager = PinGroupManager(config: config(at: root), storageDirectory: root.appendingPathComponent("pins"))
+        defer { manager.closeAll(); manager.flushPersistence() }
+        let expected = CGRect(x: primary.visibleFrame.minX + 6, y: primary.visibleFrame.midY.rounded(), width: 40, height: 40)
+        let top = CGPoint(x: expected.minX, y: primary.frame.maxY - expected.maxY)
+        let item = manager.show(image(size: 80), from: top, scale: 2)
+        let panel = try XCTUnwrap(app.windows.compactMap { $0 as? PinPanel }.first {
+            ($0.contentView as? PinImageView)?.item.id == item.id
+        })
+        XCTAssertEqual(panel.frame, expected)
+        panel.windowDidMove(Notification(name: NSWindow.didMoveNotification, object: panel))
+        XCTAssertEqual(manager.items.first(where: { $0.id == item.id })?.frame, expected)
+        XCTAssertEqual(panel.contentView?.acceptsFirstMouse(for: nil), true)
+        panel.setFrameOrigin(CGPoint(x: expected.minX + 54, y: expected.minY - 20))
+        panel.windowDidMove(Notification(name: NSWindow.didMoveNotification, object: panel))
+        XCTAssertEqual(manager.items.first(where: { $0.id == item.id })?.frame, expected.offsetBy(dx: 54, dy: -20))
     }
 
     func testEdgeSnapAndDisconnectedDisplayRecoveryUseAppKitCoordinates() {

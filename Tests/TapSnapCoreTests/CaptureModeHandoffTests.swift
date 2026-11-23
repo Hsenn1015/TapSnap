@@ -1,7 +1,6 @@
 import AppKit
 import XCTest
 import TapSnapCore
-import TapSnapImageIO
 import TapSnapScreen
 @testable import TapSnapApp
 
@@ -87,8 +86,12 @@ final class CaptureModeHandoffTests: XCTestCase {
         session.select(viewRect: CGRect(x: 40, y: 60, width: 120, height: 80), on: screen)
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
-        XCTAssertTrue(AppEnvironment().pinTransfer.copy(try XCTUnwrap(session.croppedImage()), to: board))
-        let copied = try ImageCodec.decode(XCTUnwrap(board.data(forType: .png)))
+        let transfer = AppEnvironment().pinTransfer
+        XCTAssertTrue(transfer.copy(try XCTUnwrap(session.croppedImage()), scale: session.outputScale,
+                                    sourceTopLeft: session.selectionRect?.origin, to: board))
+        let (copied, meta) = try XCTUnwrap(transfer.imagePayload(from: board))
+        XCTAssertEqual(meta?.sourceTopLeft, try XCTUnwrap(session.selectionRect).origin)
+        XCTAssertEqual(meta?.scale, 2)
         XCTAssertEqual(copied.width, 240)
         XCTAssertEqual(copied.height, 160)
         let bitmap = NSBitmapImageRep(cgImage: copied)

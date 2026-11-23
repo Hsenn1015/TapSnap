@@ -37,7 +37,7 @@ final class SelectionModeToolbarTests: XCTestCase {
         var selections: [CGRect] = []
         view.onQuickAction = { action, rect in actions.append(action); selections.append(rect) }
         let pen = try key(11, characters: "b")
-        let pin = try key(35, .shift, characters: "P")
+        let pin = try key(17, .command, characters: "t")
         XCTAssertFalse(view.performKeyEquivalent(with: pen))
         XCTAssertFalse(view.performKeyEquivalent(with: pin))
         view.mouseDown(with: try mouse(.leftMouseDown, at: CGPoint(x: 100, y: 100)))
@@ -56,8 +56,9 @@ final class SelectionModeToolbarTests: XCTestCase {
         XCTAssertFalse(view.performKeyEquivalent(with: try key(1, [.command, .shift], characters: "s")))
         XCTAssertTrue(view.performKeyEquivalent(with: try key(35, characters: "p")))
         XCTAssertFalse(view.performKeyEquivalent(with: try key(35, [.command, .shift], characters: "P")))
+        XCTAssertFalse(view.performKeyEquivalent(with: try key(35, .shift, characters: "P")))
         XCTAssertTrue(view.performKeyEquivalent(with: pin))
-        XCTAssertTrue(view.performKeyEquivalent(with: try key(35, .shift, characters: "P", isRepeat: true)))
+        XCTAssertTrue(view.performKeyEquivalent(with: try key(17, .command, characters: "t", isRepeat: true)))
         XCTAssertEqual(actions, [.pen, .watermark, .crop, .copy, .save, .polygon, .pin])
         XCTAssertEqual(selections, Array(repeating: CGRect(x: 100, y: 100, width: 250, height: 150), count: 7))
     }
@@ -77,7 +78,7 @@ final class SelectionModeToolbarTests: XCTestCase {
         view.synchronizeSelection(rect, showToolbar: false)
         XCTAssertTrue(view.performKeyEquivalent(with: text))
         XCTAssertEqual(selected, .text)
-        XCTAssertTrue(view.performKeyEquivalent(with: try key(35, .shift, characters: "P")))
+        XCTAssertTrue(view.performKeyEquivalent(with: try key(17, .command, characters: "t")))
         XCTAssertEqual(selected, .pin)
     }
 
@@ -95,7 +96,7 @@ final class SelectionModeToolbarTests: XCTestCase {
         var calls: [ActionKind] = []
         view.onQuickAction = { action, _ in calls.append(action) }
         try drag(view, from: CGPoint(x: 100, y: 100), to: CGPoint(x: 400, y: 250))
-        XCTAssertFalse(view.performKeyEquivalent(with: try key(35, .shift, characters: "P")))
+        XCTAssertFalse(view.performKeyEquivalent(with: try key(17, .command, characters: "t")))
         XCTAssertTrue(view.performKeyEquivalent(with: try key(38, .shift, characters: "J")))
         XCTAssertEqual(calls, [.pin])
     }

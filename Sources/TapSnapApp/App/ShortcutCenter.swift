@@ -205,7 +205,7 @@ final class ShortcutCenter: ObservableObject {
             }
         }
         config.update { settings in
-            var keys = settings.operationShortcuts ?? OperationShortcut.defaults
+            var keys = OperationShortcut.bindings(in: settings)
             keys[operation.id] = binding
             settings.operationShortcuts = keys
         }

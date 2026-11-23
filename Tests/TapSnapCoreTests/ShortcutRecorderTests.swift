@@ -169,9 +169,12 @@ final class ShortcutRecorderTests: XCTestCase {
         let (config, _, recorder) = makeController(at: directory)
         let configFile = directory.appendingPathComponent("config.json")
         let pin = OperationShortcut.action(.pin)
-        let original = event(kVK_ANSI_P, [.shift])
+        let original = event(kVK_ANSI_T, [.command])
         let custom = event(kVK_ANSI_J)
         XCTAssertEqual(OperationShortcut.matching(original, in: config.settings), pin)
+        XCTAssertEqual(OperationShortcut.matching(original, in: config.settings, selection: true), pin)
+        XCTAssertEqual(OperationShortcut.matching(event(kVK_ANSI_T), in: config.settings), .action(.text))
+        XCTAssertNil(OperationShortcut.matching(event(kVK_ANSI_P, .shift), in: config.settings))
         recorder.begin(.operation(pin))
         recorder.handle(custom)
         XCTAssertEqual(recorder.preview, "J")
@@ -192,6 +195,17 @@ final class ShortcutRecorderTests: XCTestCase {
         XCTAssertNil(OperationShortcut.matching(custom, in: config.settings))
         config.resetShortcutsToDefaults()
         XCTAssertEqual(OperationShortcut.matching(original, in: config.settings), pin)
+    }
+
+    func testRecordingAnUnrelatedOperationKeepsLegacyPinWhenCommandTIsUsedGlobally() {
+        let (config, center, _) = makeController()
+        let global = KeyBinding(keyCode: UInt32(kVK_ANSI_T), flags: .command)
+        config.setBinding(global, for: .showHistory)
+        let previous = KeyBinding(keyCode: UInt32(kVK_ANSI_P), flags: .shift)
+        XCTAssertEqual(OperationShortcut.action(.pin).binding(in: config.settings), previous)
+        XCTAssertNil(center.setRecordedBinding(nil, for: OperationShortcut.action(.ellipse)))
+        XCTAssertEqual(OperationShortcut.action(.pin).binding(in: config.settings), previous)
+        XCTAssertEqual(config.binding(for: .showHistory), global)
     }
 
     func testOperationBindingRejectsConflictsAndAcceptsShiftOnly() {

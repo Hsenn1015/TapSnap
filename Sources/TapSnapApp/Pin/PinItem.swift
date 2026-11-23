@@ -48,11 +48,13 @@ struct PinItem: Identifiable {
     }
 
     var clipMeta: ClipMetaData {
-        ClipMetaData(
+        let desktopTop = NSScreen.screens.first?.frame.maxY ?? CGDisplayBounds(CGMainDisplayID()).height
+        return ClipMetaData(
             kind: .pin,
             pixelWidth: image.width,
             pixelHeight: image.height,
             scale: scale,
+            sourceTopLeft: CGPoint(x: frame.minX, y: desktopTop - frame.maxY),
             createdAt: createdAt,
             isPinned: isAlwaysOnTop,
             opacity: opacity

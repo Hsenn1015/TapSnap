@@ -11,6 +11,7 @@ final class PinPanel: NSPanel, NSWindowDelegate {
     var onFrameChanged: ((CGRect) -> Void)?
     private var halo: PinHaloPanel?
     private var haloEnabled = false
+    private var placingInitialFrame = true
 
     init(frame: CGRect) {
         super.init(
@@ -30,7 +31,13 @@ final class PinPanel: NSPanel, NSWindowDelegate {
         hidesOnDeactivate = false
         // 贴图自身不应出现在截图结果里。
         sharingType = .none
+        if self.frame != frame { setFrame(frame, display: false) }
         delegate = self
+    }
+
+    // 截图可跨屏或覆盖菜单栏，长图也可以从源选区向屏幕下方延伸。
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        placingInitialFrame ? frameRect : super.constrainFrameRect(frameRect, to: screen)
     }
 
     func windowDidMove(_ notification: Notification) { onFrameChanged?(frame) }
@@ -57,6 +64,7 @@ final class PinPanel: NSPanel, NSWindowDelegate {
 
     override func orderFrontRegardless() {
         super.orderFrontRegardless()
+        placingInitialFrame = false
         updateHalo(enabled: haloEnabled)
     }
 
@@ -133,6 +141,7 @@ final class PinImageView: NSView {
         window?.performDrag(with: event)
     }
 
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
     /// 点中贴图后按 Delete / 退格删掉它，Esc 也能关。

@@ -166,6 +166,8 @@ final class PrivacyMaskItem: EditItem {
 final class EditDocument {
     let id = UUID()
     let capturedAt: Date
+    /// Quartz 全局坐标中的原图左上角，来自文件或外部剪贴板时可能未知。
+    let sourceTopLeft: CGPoint?
     let baseImage: CGImage
     let scale: CGFloat
     private(set) var items: [any EditItem]
@@ -174,8 +176,10 @@ final class EditDocument {
     /// 裁剪框（画布坐标），nil 表示不裁剪。
     var cropRect: CGRect?
 
-    init(baseImage: CGImage, scale: CGFloat = 1, items: [any EditItem] = [], capturedAt: Date = Date()) {
+    init(baseImage: CGImage, scale: CGFloat = 1, items: [any EditItem] = [], capturedAt: Date = Date(),
+         sourceTopLeft: CGPoint? = nil) {
         self.capturedAt = capturedAt
+        self.sourceTopLeft = sourceTopLeft
         self.baseImage = baseImage
         self.scale = scale
         self.items = items
@@ -236,6 +240,12 @@ final class EditDocument {
         guard let cropRect, cropRect.width > 0, cropRect.height > 0 else { return full }
         let crop = cropRect.applying(CGAffineTransform(scaleX: scale, y: scale)).integral.intersection(full)
         return crop.isEmpty ? full : crop
+    }
+
+    var outputTopLeft: CGPoint? {
+        guard let sourceTopLeft else { return nil }
+        let crop = outputPixelBounds
+        return CGPoint(x: sourceTopLeft.x + crop.minX / scale, y: sourceTopLeft.y + crop.minY / scale)
     }
 
     func drawItems(in context: CGContext, excluding excludedID: UUID? = nil, dirtyRect: CGRect? = nil) {

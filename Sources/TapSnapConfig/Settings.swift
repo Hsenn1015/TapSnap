@@ -149,7 +149,7 @@ public struct Settings: Codable, Hashable, Sendable {
     /// 配置结构版本。老文件里没有这个键（解码为 nil），用来判断要不要补默认值。
     public var schemaVersion: Int?
 
-    public static let currentSchemaVersion = 5
+    public static let currentSchemaVersion = 6
 
     public init() {}
 
@@ -159,7 +159,7 @@ public struct Settings: Codable, Hashable, Sendable {
         settings.schemaVersion = currentSchemaVersion
         // 长截图用 L，避开 macOS 自带的 ⌘⇧3 全屏截图。
         settings.shortcuts[ShortcutAction.screenshot.rawValue] =
-            KeyBinding(keyCode: 18, modifiers: GlobalShortcut.Combo.control)
+            KeyBinding(keyCode: 18, modifiers: GlobalShortcut.Combo.command | GlobalShortcut.Combo.shift)
         settings.shortcuts[ShortcutAction.screenshotAndPin.rawValue] =
             KeyBinding(keyCode: 19, modifiers: GlobalShortcut.Combo.command | GlobalShortcut.Combo.shift)
         settings.shortcuts[ShortcutAction.longShot.rawValue] =

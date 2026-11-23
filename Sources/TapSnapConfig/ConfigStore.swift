@@ -22,54 +22,49 @@ public final class ConfigStore: ObservableObject {
         do {
             var loaded = try store.load() ?? Settings.withDefaultShortcuts()
             // 老配置里没有新加的默认快捷键：补一次，之后用户删掉就不会再加回来。
-            var needsSave = false
             let version = loaded.schemaVersion ?? 0
+            func isAvailable(_ binding: KeyBinding) -> Bool {
+                !loaded.shortcuts.values.contains(binding) && loaded.operationShortcuts?.values.contains(binding) != true
+            }
             if version < 1 {
                 for (key, binding) in Settings.withDefaultShortcuts().shortcuts
-                where loaded.shortcuts[key] == nil {
+                where loaded.shortcuts[key] == nil && isAvailable(binding) {
                     loaded.shortcuts[key] = binding
                 }
-                needsSave = true
             }
             if version < 2 {
                 let oldDefault = KeyBinding(keyCode: 20, modifiers: 768) // 旧版 ⌘⇧3
                 let replacement = Settings.withDefaultShortcuts().shortcuts[ShortcutAction.longShot.rawValue]!
                 // 只迁移旧版发放的默认组合；不恢复用户取消的绑定，也不占用其自定义组合。
                 if loaded.shortcuts[ShortcutAction.longShot.rawValue] == oldDefault,
-                   !loaded.shortcuts.values.contains(replacement) {
+                   isAvailable(replacement) {
                     loaded.shortcuts[ShortcutAction.longShot.rawValue] = replacement
                 }
-                needsSave = true
-            }
-            if version < 3 {
-                let oldDefault = KeyBinding(keyCode: 18, modifiers: 768) // 旧版 ⌘⇧1
-                let replacement = Settings.withDefaultShortcuts().shortcuts[ShortcutAction.screenshot.rawValue]!
-                if loaded.shortcuts[ShortcutAction.screenshot.rawValue] == oldDefault,
-                   !loaded.shortcuts.values.contains(replacement) {
-                    loaded.shortcuts[ShortcutAction.screenshot.rawValue] = replacement
-                }
-                needsSave = true
-            }
-            if version < 4 {
-                let oldDefault = KeyBinding(keyCode: 18, modifiers: 256) // 版本 3 的 ⌘1
-                let replacement = Settings.withDefaultShortcuts().shortcuts[ShortcutAction.screenshot.rawValue]!
-                if version == 3,
-                   loaded.shortcuts[ShortcutAction.screenshot.rawValue] == oldDefault,
-                   !loaded.shortcuts.values.contains(replacement) {
-                    loaded.shortcuts[ShortcutAction.screenshot.rawValue] = replacement
-                }
-                needsSave = true
             }
             if version < 5 {
                 // Replace the old default texture. Users can still choose it from the style panel.
                 if loaded.privacy.appearance.style == .mosaic {
                     loaded.privacy.appearance.style = .frosted
                 }
+            }
+            if version < 6 {
+                // 普通截图在版本 0–2、3、4–5 分别使用 ⌘⇧1、⌘1、⌃1。
+                // 版本 0–2 的默认值已经是这次的目标；其余版本只替换当时发放的键位。
+                let screenshot = ShortcutAction.screenshot.rawValue
+                let previousScreenshot = KeyBinding(keyCode: 18, flags: version == 3 ? .command : .control)
+                let commandShiftOne = KeyBinding(keyCode: 18, flags: [.command, .shift])
+                if version >= 3, loaded.shortcuts[screenshot] == previousScreenshot, isAvailable(commandShiftOne) {
+                    loaded.shortcuts[screenshot] = commandShiftOne
+                }
+                let shiftP = KeyBinding(keyCode: 35, flags: .shift)
+                let commandT = KeyBinding(keyCode: 17, flags: .command)
+                if loaded.operationShortcuts?["pin"] == shiftP, isAvailable(commandT) {
+                    loaded.operationShortcuts?["pin"] = commandT
+                }
                 loaded.schemaVersion = Settings.currentSchemaVersion
-                needsSave = true
+                try? store.save(loaded)
             }
             self.settings = loaded
-            if needsSave { try? store.save(loaded) }
         } catch {
             logger.error("读取配置失败，使用默认值：\(error.localizedDescription)")
             self.settings = Settings.withDefaultShortcuts()

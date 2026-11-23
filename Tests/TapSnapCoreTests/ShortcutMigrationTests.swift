@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import TapSnapActionsBar
 import TapSnapConfig
 import TapSnapSystem
 
@@ -20,18 +21,22 @@ final class ShortcutMigrationTests: XCTestCase {
                        KeyBinding(keyCode: 37, modifiers: modifiers))
     }
 
-    func testDefaultScreenshotUsesControlOne() {
-        XCTAssertEqual(Settings.withDefaultShortcuts().shortcuts["screenshot"],
-                       KeyBinding(keyCode: 18, modifiers: GlobalShortcut.Combo.control))
+    func testDefaultGlobalsUseCommandAndLeaveCommandTToTheFrontmostApp() {
+        let defaults = Settings.withDefaultShortcuts().shortcuts
+        XCTAssertEqual(defaults["screenshot"], KeyBinding(keyCode: 18, modifiers: modifiers))
+        XCTAssertEqual(defaults["pinFromClipboard"], KeyBinding(keyCode: 9, modifiers: modifiers))
+        XCTAssertTrue(defaults.values.allSatisfy { $0.combo.cocoaModifiers.contains(.command) })
+        XCTAssertFalse(defaults.values.contains(KeyBinding(keyCode: 17, flags: .command)))
     }
 
-    func testOldShippedScreenshotBindingMigratesToControlOne() throws {
+    func testOldShippedScreenshotBindingMigratesToCommandShiftOne() throws {
         var settings = Settings.withDefaultShortcuts()
-        for (version, oldModifiers) in [(2, modifiers), (3, GlobalShortcut.Combo.command)] {
+        for (version, oldModifiers) in [(2, modifiers), (3, GlobalShortcut.Combo.command),
+                                        (4, GlobalShortcut.Combo.control), (5, GlobalShortcut.Combo.control)] {
             settings.schemaVersion = version
             settings.shortcuts["screenshot"] = KeyBinding(keyCode: 18, modifiers: oldModifiers)
             let config = try load(settings)
-            XCTAssertEqual(config.binding(for: .screenshot), KeyBinding(keyCode: 18, modifiers: GlobalShortcut.Combo.control))
+            XCTAssertEqual(config.binding(for: .screenshot), KeyBinding(keyCode: 18, modifiers: modifiers))
             XCTAssertEqual(config.settings.schemaVersion, Settings.currentSchemaVersion)
             XCTAssertEqual(config.binding(for: .longShot), settings.shortcuts["longShot"])
         }
@@ -47,22 +52,60 @@ final class ShortcutMigrationTests: XCTestCase {
     }
 
     func testScreenshotMigrationDoesNotTakeAnotherActionsBinding() throws {
-        var settings = Settings.withDefaultShortcuts()
-        for (version, oldModifiers) in [(2, modifiers), (3, GlobalShortcut.Combo.command)] {
+        for (version, oldModifiers) in [(3, GlobalShortcut.Combo.command), (5, GlobalShortcut.Combo.control)] {
+            var settings = Settings.withDefaultShortcuts()
             settings.schemaVersion = version
             settings.shortcuts["screenshot"] = KeyBinding(keyCode: 18, modifiers: oldModifiers)
-            settings.shortcuts["showHistory"] = KeyBinding(keyCode: 18, modifiers: GlobalShortcut.Combo.control)
+            settings.shortcuts["showHistory"] = KeyBinding(keyCode: 18, modifiers: modifiers)
+            XCTAssertEqual(try load(settings).binding(for: .screenshot), settings.shortcuts["screenshot"])
+            settings.shortcuts.removeValue(forKey: "showHistory")
+            settings.operationShortcuts = ["pin": KeyBinding(keyCode: 18, modifiers: modifiers)]
             XCTAssertEqual(try load(settings).binding(for: .screenshot), settings.shortcuts["screenshot"])
         }
     }
 
     func testBindingsThatWereCustomForTheirVersionArePreserved() throws {
-        for (version, customModifiers) in [(2, GlobalShortcut.Combo.command), (3, modifiers)] {
+        for (version, customModifiers) in [(2, GlobalShortcut.Combo.control), (3, GlobalShortcut.Combo.control),
+                                           (5, GlobalShortcut.Combo.command)] {
             var settings = Settings.withDefaultShortcuts()
             settings.schemaVersion = version
             settings.shortcuts["screenshot"] = KeyBinding(keyCode: 18, modifiers: customModifiers)
             XCTAssertEqual(try load(settings).binding(for: .screenshot), settings.shortcuts["screenshot"])
         }
+    }
+
+    func testPinMigrationPreservesOtherEditsAndExplicitlyClearedBindings() throws {
+        let pin = OperationShortcut.action(.pin)
+        let old = KeyBinding(keyCode: 35, flags: .shift)
+        let new = KeyBinding(keyCode: 17, flags: .command)
+        let custom = KeyBinding(keyCode: 38, flags: .option)
+        var settings = Settings.withDefaultShortcuts()
+        settings.schemaVersion = 5
+        XCTAssertEqual(pin.binding(in: try load(settings).settings), new)
+        settings.operationShortcuts = ["pin": old, "save": custom]
+        XCTAssertEqual(try load(settings).settings.operationShortcuts, ["pin": new, "save": custom])
+        settings.operationShortcuts = ["pin": custom]
+        XCTAssertEqual(pin.binding(in: try load(settings).settings), custom)
+        settings.operationShortcuts = [:]
+        XCTAssertNil(pin.binding(in: try load(settings).settings))
+    }
+
+    func testPinMigrationHonorsExistingCommandTInEitherScope() throws {
+        let pin = OperationShortcut.action(.pin)
+        let old = KeyBinding(keyCode: 35, flags: .shift)
+        let new = KeyBinding(keyCode: 17, flags: .command)
+        var settings = Settings.withDefaultShortcuts()
+        settings.schemaVersion = 5
+        settings.shortcuts["showHistory"] = new
+        for keys in [nil, ["pin": old]] {
+            settings.operationShortcuts = keys
+            let config = try load(settings)
+            XCTAssertEqual(config.binding(for: .showHistory), new)
+            XCTAssertEqual(pin.binding(in: config.settings), old)
+        }
+        settings.shortcuts.removeValue(forKey: "showHistory")
+        settings.operationShortcuts = ["pin": old, "save": new]
+        XCTAssertEqual(try load(settings).settings.operationShortcuts, settings.operationShortcuts)
     }
 
     func testOldShippedLongShotBindingMigratesToL() throws {
@@ -72,7 +115,7 @@ final class ShortcutMigrationTests: XCTestCase {
         settings.shortcuts["screenshot"] = KeyBinding(keyCode: 18, modifiers: modifiers)
         let config = try load(settings)
         XCTAssertEqual(config.binding(for: .longShot), KeyBinding(keyCode: 37, modifiers: modifiers))
-        XCTAssertEqual(config.binding(for: .screenshot), KeyBinding(keyCode: 18, modifiers: GlobalShortcut.Combo.control))
+        XCTAssertEqual(config.binding(for: .screenshot), KeyBinding(keyCode: 18, modifiers: modifiers))
     }
 
     func testCustomAndDisabledBindingsArePreserved() throws {

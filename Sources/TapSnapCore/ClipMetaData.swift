@@ -17,6 +17,8 @@ public struct ClipMetaData: Codable, Hashable, Sendable {
     public var pixelWidth: Int
     public var pixelHeight: Int
     public var scale: Double
+    /// 图像左上角在 Quartz 全局屏幕坐标系中的位置（点）。旧版本和外部图片可能没有位置。
+    public var sourceTopLeft: CGPoint?
     public var createdAt: Date
     /// 若是贴图，记录它原本的置顶状态与透明度，粘回来时还原。
     public var isPinned: Bool
@@ -27,6 +29,7 @@ public struct ClipMetaData: Codable, Hashable, Sendable {
         pixelWidth: Int,
         pixelHeight: Int,
         scale: Double = 1,
+        sourceTopLeft: CGPoint? = nil,
         createdAt: Date = Date(),
         isPinned: Bool = false,
         opacity: Double = 1
@@ -35,6 +38,7 @@ public struct ClipMetaData: Codable, Hashable, Sendable {
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
         self.scale = scale
+        self.sourceTopLeft = sourceTopLeft
         self.createdAt = createdAt
         self.isPinned = isPinned
         self.opacity = opacity

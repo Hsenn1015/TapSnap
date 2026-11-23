@@ -166,7 +166,8 @@ final class AppEnvironment {
 
     func rememberReviewedImage(_ image: CGImage, from document: EditDocument) {
         guard recentSourceID == document.id, recentScreenshot !== document else { return }
-        recentScreenshot = EditDocument(baseImage: image, scale: document.scale, capturedAt: document.capturedAt)
+        recentScreenshot = EditDocument(baseImage: image, scale: document.scale, capturedAt: document.capturedAt,
+                                        sourceTopLeft: document.outputTopLeft)
     }
 
     func editRecentScreenshot() {
@@ -186,8 +187,10 @@ final class AppEnvironment {
     }
 
     func editClipboardImage() {
-        guard let image = pinTransfer.image(from: .general) else { toast.info("剪贴板里没有图片"); return }
-        openEditor(image: image, scale: 1)
+        guard let (image, meta) = pinTransfer.imagePayload(from: .general) else { toast.info("剪贴板里没有图片"); return }
+        let document = EditDocument(baseImage: image, scale: meta?.scale ?? 1, capturedAt: meta?.createdAt ?? Date(),
+                                    sourceTopLeft: meta?.sourceTopLeft)
+        openEditor(image: image, scale: document.scale, restoring: document)
     }
 
     func presentEditor(_ controller: EditController, initialAction: ActionKind? = nil) {

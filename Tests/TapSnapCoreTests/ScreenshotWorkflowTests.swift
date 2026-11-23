@@ -106,7 +106,7 @@ final class ScreenshotWorkflowTests: XCTestCase {
         let image = try bitmap(8, 8) { _ in }
         let env = AppEnvironment(config: ConfigStore(fileURL: FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString).appendingPathComponent("settings.json")))
-        let doc = EditDocument(baseImage: image, scale: 1)
+        let doc = EditDocument(baseImage: image, scale: 1, sourceTopLeft: CGPoint(x: -120, y: 60))
         env.rememberCapture(doc, privateCapture: false)
         doc.append(ArrowItem(start: .zero, end: CGPoint(x: 4, y: 4)))
         doc.cropRect = CGRect(x: 1, y: 2, width: 5, height: 3)
@@ -118,6 +118,7 @@ final class ScreenshotWorkflowTests: XCTestCase {
         XCTAssertEqual(env.recentScreenshot?.items.count, 0)
         XCTAssertEqual(env.recentScreenshot?.baseImage.width, 5)
         XCTAssertEqual(env.recentScreenshot?.capturedAt, doc.capturedAt)
+        XCTAssertEqual(env.recentScreenshot?.sourceTopLeft, CGPoint(x: -119, y: 62))
         let newer = EditDocument(baseImage: image)
         env.rememberCapture(newer, privateCapture: true)
         env.rememberReviewedImage(image, from: doc)
@@ -276,7 +277,7 @@ final class ScreenshotWorkflowTests: XCTestCase {
             destination = url
             XCTAssertTrue(env.saveScreenshot(result, chooseLocation: true))
             XCTAssertTrue(env.pinTransfer.copy(result, to: clipboard))
-            for readback in [try ImageCodec.decode(Data(contentsOf: url)), try XCTUnwrap(env.pinTransfer.image(from: clipboard))] {
+            for readback in [try ImageCodec.decode(Data(contentsOf: url)), try XCTUnwrap(env.pinTransfer.imagePayload(from: clipboard)?.image)] {
                 let pixels = NSBitmapImageRep(cgImage: readback)
                 let mid = readback.width / 2
                 XCTAssertGreaterThan(try XCTUnwrap(pixels.colorAt(x: mid - 3, y: 15)?.usingColorSpace(.sRGB)).redComponent, 0.85)
