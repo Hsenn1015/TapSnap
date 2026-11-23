@@ -25,10 +25,15 @@ public enum CaptureError: LocalizedError {
     case noDisplays
     case captureFailed(underlying: Error?)
 
+    public static func isPermissionDenied(_ error: Error) -> Bool {
+        if case CaptureError.permissionDenied = error { return true }
+        return (error as? SCStreamError)?.code == .userDeclined
+    }
+
     public var errorDescription: String? {
         switch self {
         case .permissionDenied:
-            return "缺少屏幕录制权限，请在「系统设置 › 隐私与安全性 › 屏幕录制」里勾选 TapSnap"
+            return "录屏权限尚未开启"
         case .noDisplays:
             return "没有可抓取的屏幕"
         case .captureFailed(let error):
@@ -105,17 +110,18 @@ public final class ScreenCaptureService {
 
     // MARK: - ScreenCaptureKit
 
-    /// 没有屏幕录制权限时先触发一次系统授权弹窗，再抛错。
+    /// 由调用此服务的操作决定何时引导用户授权。
     private func ensureScreenCaptureAccess() throws {
-        guard !CGPreflightScreenCaptureAccess() else { return }
-        CGRequestScreenCaptureAccess()
-        throw CaptureError.permissionDenied
+        guard CGPreflightScreenCaptureAccess() else { throw CaptureError.permissionDenied }
     }
 
     private func shareableContent() async throws -> SCShareableContent {
         do {
             return try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         } catch {
+            if CaptureError.isPermissionDenied(error) || !CGPreflightScreenCaptureAccess() {
+                throw CaptureError.permissionDenied
+            }
             throw CaptureError.captureFailed(underlying: error)
         }
     }

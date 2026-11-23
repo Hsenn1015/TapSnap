@@ -33,6 +33,7 @@ final class AppEnvironment {
 
     @MainActor lazy var toastPresenter = ToastPresenter(center: toast, theme: { [weak self] in self?.theme ?? .dark })
     lazy var captureCoordinator = CaptureCoordinator(environment: self)
+    @MainActor lazy var screenPermission = ScreenPermissionController(environment: self)
     lazy var longShot = LongShotSession(environment: self)
     lazy var record = RecordController(environment: self)
     lazy var ocrCoordinator = OCRCoordinator(environment: self)
@@ -63,6 +64,7 @@ final class AppEnvironment {
     private var recentSourceID: UUID?
     private var settingsWindow: NSWindow?
     private var settingsAppearanceObservation: AnyCancellable?
+    private var isShowingPermissionGuide = false
 
     @MainActor
     var isUpdateInteractionBusy: Bool {
@@ -229,14 +231,28 @@ final class AppEnvironment {
         }
     }
 
-    /// 启动时检查一次关键权限，缺了就提示（不阻塞启动）。
-    /// 摄像头/麦克风只在用到录屏时才检查，不在这里打扰用户。
-    func verifyPermissions(atLaunch: Bool = true) {
-        let required: [SystemPermission] = [.screenCapture, .accessibility]
-        let missing = required.filter { Permissions.status(of: $0) != .authorized }
-        guard !missing.isEmpty else { return }
-        if atLaunch || missing.contains(.screenCapture) {
-            toast.warning("缺少\(missing.map(\.displayName).joined(separator: "、"))权限")
+    @MainActor
+    func guideScreenCapturePermission(for error: Error, resuming capture: PendingScreenCapture) -> Bool {
+        guard CaptureError.isPermissionDenied(error) else { return false }
+        screenPermission.request(for: capture)
+        return true
+    }
+
+    func showPermissionGuide(_ permission: SystemPermission, for operation: String) {
+        Task { @MainActor in
+            guard !isShowingPermissionGuide else { return }
+            isShowingPermissionGuide = true
+            defer { isShowingPermissionGuide = false }
+
+            let alert = NSAlert()
+            alert.messageText = "\(operation)需要「\(permission.displayName)」权限"
+            alert.informativeText = "在系统设置中允许 TapSnap。"
+            alert.addButton(withTitle: "打开系统设置")
+            alert.addButton(withTitle: "稍后")
+            NSApp.activate(ignoringOtherApps: true)
+            if alert.runModal() == .alertFirstButtonReturn {
+                Permissions.openSettingsPanel(for: permission)
+            }
         }
     }
 }

@@ -7,7 +7,7 @@ import TapSnapScreen
 ///
 /// 独立记录捕获模式、冻结帧和选区，可在不同窗口之间传递。
 struct ScreenshotSession {
-    enum Mode: String, Sendable {
+    enum Mode: String, Codable, Sendable {
         /// 框选区域
         case region
         /// 窗口（鼠标悬停高亮整个窗口）
@@ -121,7 +121,7 @@ struct ScreenshotPreset: Codable, Hashable, Identifiable, Sendable {
 }
 
 /// 仅作用于本次截图的预设输出，不覆盖全局设置。
-struct ScreenshotOutputOptions: Equatable, Sendable {
+struct ScreenshotOutputOptions: Codable, Equatable, Sendable {
     var format: String
     var autoSave: Bool
 }

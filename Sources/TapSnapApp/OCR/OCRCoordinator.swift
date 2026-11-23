@@ -33,6 +33,8 @@ final class OCRCoordinator {
                 }
                 try await run(frame.image)
             } catch {
+                let capture = PendingScreenCapture(outcome: .ocr, mode: .fullScreen)
+                guard !environment.guideScreenCapturePermission(for: error, resuming: capture) else { return }
                 environment.toast.error("识别失败：\(error.localizedDescription)")
             }
         }

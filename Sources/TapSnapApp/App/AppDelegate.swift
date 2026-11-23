@@ -53,9 +53,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.menuBar?.performDesktopBarAction(action)
         }
 
-        environment.verifyPermissions()
         updater.start()
         Log.shared.info("TapSnap \(AppInfo.version) 已启动")
+        environment.screenPermission.restoreOnLaunch()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

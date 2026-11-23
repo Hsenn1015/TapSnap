@@ -3,14 +3,13 @@ import Foundation
 import TapSnapActionsBar
 import TapSnapCore
 import TapSnapScreen
-import TapSnapSystem
 import TapSnapTheme
 import TapSnapVision
 
 /// 截图流程编排：抓屏 -> 每屏盖一层覆盖层 -> 等用户框选 -> 按用途分发。
 final class CaptureCoordinator {
     /// 框选完之后把图交给谁。
-    enum Outcome {
+    enum Outcome: String, Codable {
         /// 进编辑窗口
         case edit
         /// 仅复制当前选区
@@ -78,23 +77,16 @@ final class CaptureCoordinator {
             } catch {
                 guard session?.id == id else { return }
                 session = nil
-                handleCaptureFailure(error)
+                handleCaptureFailure(error, resuming: .init(outcome: outcome, mode: mode,
+                    options: outputOptions, forcePrivacy: forcePrivacy))
             }
         }
     }
 
-    /// 截图失败时的用户可见反馈。
-    ///
-    /// 缺权限是最常见的一种：系统弹窗只会出现一次，之后只能由用户去
-    /// 「系统设置 › 隐私与安全性 › 屏幕录制」手动勾选，所以这里直接把
-    /// 那个面板打开，省掉用户自己找。
-    private func handleCaptureFailure(_ error: Error) {
-        if case CaptureError.permissionDenied = error {
-            environment.toast.warning("截图需要「屏幕录制」权限，已打开系统设置，请勾选 TapSnap")
-            Permissions.openSettingsPanel(for: .screenCapture)
-        } else {
-            environment.toast.error("截图失败：\(error.localizedDescription)")
-        }
+    @MainActor
+    private func handleCaptureFailure(_ error: Error, resuming capture: PendingScreenCapture) {
+        guard !environment.guideScreenCapturePermission(for: error, resuming: capture) else { return }
+        environment.toast.error("截图失败：\(error.localizedDescription)")
     }
 
     private func presentOverlays() {
@@ -270,8 +262,11 @@ final class CaptureCoordinator {
                     session.frames = [frame]
                 } catch {
                     guard self.session?.id == id else { return }
+                    let shouldReviewPrivacy = forcePrivacy
                     cancel()
-                    handleCaptureFailure(error)
+                    handleCaptureFailure(error, resuming: .init(outcome: selectedOutcome,
+                        options: session.outputOptions, forcePrivacy: shouldReviewPrivacy,
+                        rect: session.selectionRect, displayID: screen.id))
                     return
                 }
             }
@@ -404,7 +399,8 @@ final class CaptureCoordinator {
             } catch {
                 guard session?.id == pending.id else { return }
                 cancel()
-                handleCaptureFailure(error)
+                handleCaptureFailure(error, resuming: .init(outcome: outcome,
+                    options: outputOptions, forcePrivacy: forcePrivacy, rect: clipped, displayID: screen.id))
             }
         }
     }

@@ -104,6 +104,7 @@ final class RecordController {
                         regionOverlay?.close()
                         regionOverlay = nil
                     case .failed(let message):
+                        guard startup?.id != requestID else { return }
                         teardown()
                         environment.toast.error("录制失败：\(message)")
                     default: break
@@ -116,9 +117,9 @@ final class RecordController {
             } catch {
                 guard token == current else { return }
                 teardown()
-                if !(error is CancellationError) {
-                    environment.toast.error("无法开始录制：\(error.localizedDescription)")
-                }
+                guard !(error is CancellationError),
+                      !environment.guideScreenCapturePermission(for: error, resuming: .init(outcome: .record)) else { return }
+                environment.toast.error("无法开始录制：\(error.localizedDescription)")
             }
         }
         startup = (requestID, task)

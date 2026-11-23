@@ -293,14 +293,14 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
         environment.openSettings()
     }
 
+    @MainActor
     @objc private func checkPermissions() {
-        let missing = [SystemPermission.screenCapture, .accessibility]
-            .filter { Permissions.status(of: $0) != .authorized }
-        if missing.isEmpty {
-            environment.toast.success("所有权限已授权")
+        if Permissions.status(of: .screenCapture) != .authorized {
+            environment.screenPermission.request()
+        } else if Permissions.status(of: .accessibility) != .authorized {
+            environment.showPermissionGuide(.accessibility, for: "辅助操作")
         } else {
-            environment.toast.warning("待授权：\(missing.map(\.displayName).joined(separator: "、"))")
-            Permissions.openSettingsPanel(for: missing[0])
+            environment.toast.success("屏幕录制和辅助功能已授权")
         }
     }
 

@@ -10,6 +10,10 @@ import TapSnapSystem
 @main
 enum TapSnapMain {
     static func main() {
+        if CommandLine.arguments.dropFirst().first == ScreenPermissionContinuation.probeArgument {
+            exit(Permissions.status(of: .screenCapture) == .authorized ? 0 : 1)
+        }
+
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
