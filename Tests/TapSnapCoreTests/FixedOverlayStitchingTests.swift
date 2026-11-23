@@ -176,6 +176,63 @@ final class FixedOverlayStitchingTests: XCTestCase {
         try verifyRecoverableContent(hasRightSideContent: true, offsets: [0, 360, 720], paleControl: true)
     }
 
+    private func verifyTranslucentEdge(atTop: Bool, withFadingScrollbar: Bool = false,
+                                       file: StaticString = #filePath, line: UInt = #line) throws {
+        let edgeHeight = 48
+        let scrollbarWidth = withFadingScrollbar ? 8 : 0
+        let offsets = [0, 26, 63, 131, 203]
+        let page = page(hasRightSideContent: true, height: viewportHeight + offsets.last!)
+        let stitcher = FrameStitcher()
+        for (index, offset) in offsets.enumerated() {
+            let bounds = CGRect(x: 0, y: 0, width: width, height: viewportHeight)
+            let clean = page.cropping(to: bounds.offsetBy(dx: 0, dy: CGFloat(offset)))!
+            let context = context(width: width, height: viewportHeight)
+            context.draw(clean, in: bounds)
+            // 渐变固定在视口边缘，透过它看到的正文随滚动变化。
+            let edgeY = atTop ? viewportHeight - edgeHeight : 0
+            context.saveGState()
+            context.clip(to: CGRect(x: 0, y: edgeY, width: width, height: edgeHeight))
+            context.setAlpha(0.35)
+            context.draw(clean, in: bounds.offsetBy(dx: 0, dy: 2))
+            context.draw(clean, in: bounds.offsetBy(dx: 0, dy: -2))
+            context.setAlpha(1)
+            for distance in 0..<edgeHeight {
+                let y = atTop ? viewportHeight - 1 - distance : distance
+                let opacity = 0.40 - 0.25 * CGFloat(distance) / CGFloat(edgeHeight)
+                context.setFillColor(CGColor(gray: 0.86, alpha: opacity))
+                context.fill(CGRect(x: 0, y: y, width: width, height: 1))
+            }
+            context.restoreGState()
+            if withFadingScrollbar {
+                context.setFillColor(CGColor(gray: 0.35 + 0.12 * CGFloat(index), alpha: 1))
+                context.fill(CGRect(x: width - scrollbarWidth, y: 0, width: scrollbarWidth, height: viewportHeight))
+            }
+            let image = try stitcher.append(context.makeImage()!)
+            XCTAssertEqual(image.height, viewportHeight + offset, file: file, line: line)
+        }
+        let result = try stitcher.finish()
+        guard result.width == page.width, result.height == page.height else {
+            return XCTFail("成图尺寸应与原页一致", file: file, line: line)
+        }
+        // 这个区间的每个像素在至少一个输入帧中清晰可见。
+        let recoverable = CGRect(x: 0, y: atTop ? edgeHeight : 0,
+                                 width: width - scrollbarWidth, height: page.height - edgeHeight)
+        XCTAssertEqual(differentPixels(rgba(result), rgba(page), in: recoverable), 0,
+                       "滚动正文中应保留清晰的原始像素", file: file, line: line)
+    }
+
+    func testTranslucentTopEdgeDoesNotReplaceClearTextWithBlur() throws {
+        try verifyTranslucentEdge(atTop: true)
+    }
+
+    func testTranslucentBottomEdgeDoesNotLeaveBlurredTextInTheBody() throws {
+        try verifyTranslucentEdge(atTop: false)
+    }
+
+    func testFadingScrollbarDoesNotLeaveTopEdgeBlurInTheBody() throws {
+        try verifyTranslucentEdge(atTop: true, withFadingScrollbar: true)
+    }
+
     func testChangingClockInFixedHeaderDoesNotDuplicateHeaderOrLoseChatRows() throws {
         let headerHeight = 44
         let offsets = [0, 137, 274, 411]

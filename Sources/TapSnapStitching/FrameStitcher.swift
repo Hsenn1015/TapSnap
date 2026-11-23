@@ -135,6 +135,7 @@ public final class DisplacementEstimator {
         let middle = count / 2
         var oldCost = [Int](repeating: 0, count: count)
         var newCost = [Int](repeating: 0, count: count)
+        var hasVisibleDifference = false
 
         func hasDetail(_ frame: GrayFrame, x: Int, y: Int) -> Bool {
             let index = y * frame.width + x
@@ -154,6 +155,7 @@ public final class DisplacementEstimator {
                 let av = Int(a.bytes[previous]), bv = Int(b.bytes[current])
                 let difference = abs(av - bv)
                 guard difference > 2 else { continue }
+                hasVisibleDifference = true
                 let oldStable = abs(av - Int(b.bytes[previous])) <= 1
                 let newStable = abs(bv - Int(a.bytes[current])) <= 1
                 // 单侧稳定也可能是遮住文字的纯色底；双侧都稳定时用纹理区分控件和空白。
@@ -168,6 +170,7 @@ public final class DisplacementEstimator {
             }
         }
 
+        guard hasVisibleDifference else { return top + middle }
         var cost = newCost.reduce(0, +)
         var bestCost = cost
         var seam = 0
@@ -178,7 +181,69 @@ public final class DisplacementEstimator {
                 seam = boundary
             }
         }
-        return top + seam
+        return top + seamAvoidingSoftEdge(seam, previous: a, next: b, top: top, count: count, shift: shift)
+    }
+
+    /// 半透明边缘会让滚过的文字变淡，原屏幕坐标上的像素也随之变化。
+    /// 只有重叠正文中有足够长的连续吻合区，才考虑把原接缝移进它。
+    private func seamAvoidingSoftEdge(_ seam: Int, previous: GrayFrame, next: GrayFrame,
+                                      top: Int, count: Int, shift: Int) -> Int {
+        let width = next.width
+        let inset = max(1, width / 32) // 与位移估计一样，跳过两侧的滚动条。
+        let columns = inset..<(width - inset)
+        var matching = 0..<0
+        var start = 0
+        for row in 0..<count {
+            let current = (top + row) * width
+            let prior = current + shift * width
+            let agrees = columns.allSatisfy { x in
+                abs(Int(previous.bytes[prior + x]) - Int(next.bytes[current + x])) <= 1
+            }
+            if !agrees {
+                start = row + 1
+            } else if row + 1 - start > matching.count {
+                matching = start..<(row + 1)
+            }
+        }
+        guard matching.count > count / 3,
+              seam < matching.lowerBound || seam > matching.upperBound else { return seam }
+
+        // 向下滚动时，重叠区上端在新帧更靠近顶部，下端在旧帧更靠近底部。
+        let nearTop = seam < matching.lowerBound
+        let suspectRows = nearTop ? 0..<matching.lowerBound : matching.upperBound..<count
+        var clearEnergy = 0.0, edgeEnergy = 0.0, sharedGradient = 0.0
+        var tintedRows = 0
+        for row in suspectRows {
+            let y = top + row
+            guard y > 0, y + shift < previous.height - 1 else { continue }
+            var tintedSamples = 0
+            for x in columns {
+                let current = y * width + x
+                let prior = current + shift * width
+                let difference = abs(Int(previous.bytes[prior]) - Int(next.bytes[current]))
+                guard difference > 0 else { continue }
+                let fixed = nearTop ? current : prior
+                if difference <= 16 && abs(Int(previous.bytes[fixed]) - Int(next.bytes[fixed])) <= 1 {
+                    tintedSamples += 1
+                }
+                let ax = Int(previous.bytes[prior + 1]) - Int(previous.bytes[prior - 1])
+                let ay = Int(previous.bytes[prior + width]) - Int(previous.bytes[prior - width])
+                let bx = Int(next.bytes[current + 1]) - Int(next.bytes[current - 1])
+                let by = Int(next.bytes[current + width]) - Int(next.bytes[current - width])
+                let ae = Double(ax * ax + ay * ay), be = Double(bx * bx + by * by)
+                clearEnergy += nearTop ? ae : be
+                edgeEnergy += nearTop ? be : ae
+                sharedGradient += Double(ax * bx + ay * by)
+            }
+            if tintedSamples > columns.count / 2 { tintedRows += 1 }
+        }
+        // 对齐后的笔画应同向。平滑会减弱梯度；渐变在少字处主要表现为固定的轻微底色。
+        let sameStructure = sharedGradient > 0.5 * sqrt(clearEnergy * edgeEnergy)
+        let gradientDifference = clearEnergy + edgeEnergy - 2 * sharedGradient
+        let softer = clearEnergy - edgeEnergy > max(0.05 * edgeEnergy, 0.5 * gradientDifference)
+        let fixedTint = tintedRows >= max(3, suspectRows.count / 4)
+        guard sameStructure && (softer || fixedTint) else { return seam }
+        return matching.lowerBound + matching.count / 2
     }
 
     private func correlation(_ a: UnsafeBufferPointer<UInt8>, _ b: UnsafeBufferPointer<UInt8>,
