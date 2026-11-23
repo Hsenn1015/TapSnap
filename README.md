@@ -30,6 +30,18 @@
 
 ## 更新说明
 
+### 0.2.8 · macOS 权限修复、截图工具栏与 OCR 原图对照
+
+- **macOS 权限** 从菜单栏打开「权限检查」，可以重新检测当前应用的录屏权限。引导窗口会保留，长说明可以滚动阅读。授权生效后可继续刚才的截图或录屏选区操作。「设置 → 快捷键」可以查看每个快捷键的冲突原因。
+- **框选工具栏与文字识别** macOS 和 Windows 都可以自定义框选工具栏的常用按钮及顺序。在文字识别结果里，可以搜索文字，定位到原图对应的行或段落，再逐条复制。
+- **截图标注与录屏** 两个平台都修复了点击箭头或空心形状周围空白处误选标注的问题。macOS 长截图在识别不到滚动区域时可以沿原选区手动继续。Windows 录屏控件在高缩放比例和多显示器上会保持在工作区内。
+
+使用过 macOS 0.2.7 本地包或 0.2.4 发布包的用户，首次切换到固定签名的正式版时，系统可能需要重新确认一次权限。[查看 0.2.8 完整更新说明与安装包](https://github.com/Hsenn1015/TapSnap/releases/tag/v0.2.8)
+
+### 0.2.7 · 主线本地构建
+
+2026 年 11 月 20 日，主线已构建 macOS 0.2.7（build 36）以及 Windows x64、ARM64 的 0.2.7 安装包。这批安装包未随 GitHub Release 发布。[查看已发布版本](https://github.com/Hsenn1015/TapSnap/releases/latest)
+
 ### 0.2.5 · 编辑器缩放与操作快捷键
 
 - **编辑器缩放** macOS 和 Windows 的底栏新增缩小、放大和适合窗口。按住 `⌘` 或 `Ctrl` 滚动可围绕指针缩放，放大后仍可准确标注和裁剪。
@@ -120,7 +132,8 @@
 | **Windows x64 / ARM64** | 推荐 Windows 11。构建需要 .NET 10 SDK。框架依赖的构建产物需要对应架构的 .NET 10 Desktop Runtime。详见 [Windows 构建与运行](windows/README.md#运行与构建)。 |
 
 ```bash
-# macOS：构建并打开应用
+# macOS：首次在本机开发时创建签名身份，以后重复使用
+Scripts/setup-signing.sh
 Scripts/build-app.sh
 open dist/TapSnap.app
 ```
@@ -174,11 +187,13 @@ macOS 菜单栏点「公式识别」，按提示准备 Python 3.12，再在应�
 
 推送 `main`、提交面向 `main` 的 PR，或在 [GitHub Actions](https://github.com/Hsenn1015/TapSnap/actions/workflows/build.yml) 手动运行时，会执行 macOS 托管环境回归测试与 Windows 四组回归，并在运行详情的 Artifacts 提供 Apple Silicon DMG 和两种架构的自包含 Windows ZIP。需要实际桌面、系统编码器和识别环境的 macOS 用例可在本机运行 `swift test`。
 
-发布时在目标提交创建并推送版本标签，例如 `v0.2.0`。所有构建通过后，流程会把三个安装包和 `SHA256SUMS.txt` 上传到 [GitHub Releases](https://github.com/Hsenn1015/TapSnap/releases)。
+发布时在目标提交创建并推送版本标签，例如 `v0.2.8`。所有构建通过后，macOS、Windows 的发行包及其 SHA-256 校验清单会出现在 [GitHub Releases](https://github.com/Hsenn1015/TapSnap/releases)。
 
 macOS 正式版使用 TapSnap 专用的长期自签名证书。从 GitHub 首次下载安装时，macOS 可能提示无法验证开发者。维护者在仓库 Actions 变量 `TAPSNAP_MAC_SIGNING_SHA1` 中填写签名证书的 40 位 SHA-1 指纹，将加密 PKCS#12 文件的 Base64 内容和密码分别存入 Actions Secrets `TAPSNAP_MAC_SIGNING_P12`、`TAPSNAP_MAC_SIGNING_PASSWORD`。发布时会校验安装包的签名。维护者也可在主分支手动运行 **Verify macOS upgrade signing**，用两个构建验证升级前后的签名身份。
 
-从 0.2.4 或更早的版本首次切换到固定签名时，macOS 可能会要求再确认一次屏幕录制或辅助功能权限。后续升级通常可以沿用授权。未来换用 Apple Developer ID Application 证书时，签名身份会再次变化，系统可能重新询问。
+主线 0.2.4 发布包使用临时签名，0.2.5 发布包开始使用固定证书，因此这次升级可能需要重新授权。后续版本沿用相同的 Bundle ID 和证书时，覆盖安装通常可以保留授权。本地构建如果使用另一张证书，macOS 也可能重新询问。系统设置已开启但截图仍失败时，可从菜单栏打开「权限检查」验证当前运行的 TapSnap。窗口会保留检测结果；当前进程仍被拒绝时，可以选择「重新打开 TapSnap」。
+
+本地持续使用的构建请保留首次使用的证书及私钥。多人或多台构建机分发同一版本线时，请在打包机上使用同一分发身份。没有固定身份的临时 CI 测试可设置 `TAPSNAP_ALLOW_ADHOC_SIGNING=1`，此类构建更新后可能需要重新授权。正式和预发布标签均使用固定证书。
 
 配置更新源的 macOS 构建可通过菜单栏「检查更新…」查看新版。自动提醒会等截图、录屏和编辑结束后出现，由用户确认安装。
 

@@ -4,6 +4,7 @@
 # 用法：
 #   Scripts/build-app.sh           # release 构建 + 打包 + 本机签名
 #   Scripts/build-app.sh debug     # debug 构建
+#   TAPSNAP_ALLOW_ADHOC_SIGNING=1 仅用于不保留系统授权的临时测试包。
 #   TAPSNAP_VERSION 和 TAPSNAP_BUILD_NUMBER 可覆盖安装包中的版本号。
 #   同时设置 TAPSNAP_UPDATE_FEED_URL 和 TAPSNAP_UPDATE_PUBLIC_KEY 可启用更新。
 #   TAPSNAP_MAC_SIGNING_SHA1 指定签名证书指纹，TAPSNAP_MAC_SIGNING_KEYCHAIN 可指定钥匙串。
@@ -36,8 +37,11 @@ if [[ -n "$IDENTITY" ]]; then
   fi
 elif security find-identity -p codesigning "$KEYCHAIN" 2>/dev/null | grep -q '"SenSnap Local"'; then
   IDENTITY="SenSnap Local"
-else
+elif [[ "${TAPSNAP_ALLOW_ADHOC_SIGNING:-0}" == 1 ]]; then
   IDENTITY=-
+else
+  echo "构建 TapSnap.app 需要固定签名。首次在本机开发请运行 Scripts/setup-signing.sh；分发更新请使用原签名证书（TAPSNAP_MAC_SIGNING_SHA1）。" >&2
+  exit 1
 fi
 
 echo "==> swift build -c $CONFIG"

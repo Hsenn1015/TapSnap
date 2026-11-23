@@ -535,12 +535,14 @@ private struct AnnotateSettings: View {
 private struct ShortcutSettings: View {
     let environment: AppEnvironment
     @ObservedObject private var config: ConfigStore
+    @ObservedObject private var center: ShortcutCenter
     @StateObject private var recorder: ShortcutRecorder
     private var theme: Theme { environment.theme }
 
     init(environment: AppEnvironment) {
         self.environment = environment
         self.config = environment.config
+        self.center = environment.shortcutCenter
         self._recorder = StateObject(wrappedValue: ShortcutRecorder(center: environment.shortcutCenter))
     }
 
@@ -586,6 +588,15 @@ private struct ShortcutSettings: View {
                                 .accessibilityLabel("清除\(action.displayName)快捷键")
                             }
                         }
+                    }
+                    if case .global(let shortcut) = action, recorder.action != action,
+                       let failure = center.registrationFailures[shortcut] {
+                        Text(failure)
+                            .font(.system(size: 11))
+                            .foregroundStyle(theme.token(.destructive))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 8)
                     }
                     if recorder.action == action {
                         Text(recorder.message ?? "等待按键…")

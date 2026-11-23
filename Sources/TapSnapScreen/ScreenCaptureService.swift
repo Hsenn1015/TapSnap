@@ -30,6 +30,10 @@ public enum CaptureError: LocalizedError {
         return (error as? SCStreamError)?.code == .userDeclined
     }
 
+    init(screenCaptureKitError error: Error) {
+        self = Self.isPermissionDenied(error) ? .permissionDenied : .captureFailed(underlying: error)
+    }
+
     public var errorDescription: String? {
         switch self {
         case .permissionDenied:
@@ -63,30 +67,47 @@ public final class ScreenCaptureService {
         }
     }
 
-    public init() {}
+    private let loadContent: () async throws -> SCShareableContent
+
+    public convenience init() {
+        self.init(loadContent: {
+            try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        })
+    }
+
+    init(loadContent: @escaping () async throws -> SCShareableContent) {
+        self.loadContent = loadContent
+    }
+
+    /// 用于用户主动检查权限时验证当前进程能否枚举捕获目标；不会抓取屏幕图像。
+    public func checkAccess() async throws {
+        _ = try await shareableContent()
+    }
 
     /// 抓取全部屏幕（每屏一张），进入截图模式时调用。
     public func captureAllScreens(options: Options = Options()) async throws -> [CapturedFrame] {
-        try ensureScreenCaptureAccess()
-
         let content = try await shareableContent()
         let screens = ScreenLayout.current()
         var frames: [CapturedFrame] = []
+        var lastCaptureError: Error?
 
         for screen in screens {
             guard let display = content.displays.first(where: { $0.displayID == screen.id }) else { continue }
-            guard let image = try? await shot(display: display, screen: screen, options: options, content: content) else { continue }
-            frames.append(CapturedFrame(screen: screen, image: image))
+            do {
+                let image = try await shot(display: display, screen: screen, options: options, content: content)
+                frames.append(CapturedFrame(screen: screen, image: image))
+            } catch {
+                if CaptureError.isPermissionDenied(error) { throw error }
+                lastCaptureError = error
+            }
         }
 
-        guard !frames.isEmpty else { throw CaptureError.noDisplays }
+        guard !frames.isEmpty else { throw lastCaptureError ?? CaptureError.noDisplays }
         return frames
     }
 
     /// 抓取指定屏幕。
     public func capture(screen: ScreenDescriptor, options: Options = Options()) async throws -> CapturedFrame {
-        try ensureScreenCaptureAccess()
-
         let content = try await shareableContent()
         guard let display = content.displays.first(where: { $0.displayID == screen.id }) else {
             throw CaptureError.noDisplays
@@ -110,19 +131,11 @@ public final class ScreenCaptureService {
 
     // MARK: - ScreenCaptureKit
 
-    /// 由调用此服务的操作决定何时引导用户授权。
-    private func ensureScreenCaptureAccess() throws {
-        guard CGPreflightScreenCaptureAccess() else { throw CaptureError.permissionDenied }
-    }
-
     private func shareableContent() async throws -> SCShareableContent {
         do {
-            return try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            return try await loadContent()
         } catch {
-            if CaptureError.isPermissionDenied(error) || !CGPreflightScreenCaptureAccess() {
-                throw CaptureError.permissionDenied
-            }
-            throw CaptureError.captureFailed(underlying: error)
+            throw CaptureError(screenCaptureKitError: error)
         }
     }
 
@@ -158,7 +171,7 @@ public final class ScreenCaptureService {
                 configuration: configuration
             )
         } catch {
-            throw CaptureError.captureFailed(underlying: error)
+            throw CaptureError(screenCaptureKitError: error)
         }
     }
 }

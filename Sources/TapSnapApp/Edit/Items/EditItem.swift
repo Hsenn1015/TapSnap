@@ -195,13 +195,10 @@ final class EditDocument {
         if selectedItemID == id { selectedItemID = nil }
     }
 
-    func item(at point: CGPoint) -> (any EditItem)? {
+    func item(at point: CGPoint, tolerance: CGFloat = 4) -> (any EditItem)? {
         // 后加入的在上面，命中测试要从后往前。
-        items.reversed().first { $0.privacyMask != nil && $0.hitTest(point) }
-            ?? items.reversed().first { item in
-                if item.kind == .highlight { return item.hitTest(point, tolerance: 4) }
-                return item.hitTest(point)
-            }
+        items.reversed().first { $0.privacyMask != nil && $0.hitTest(point, tolerance: tolerance) }
+            ?? items.reversed().first { $0.hitTest(point, tolerance: tolerance) }
     }
 
     var selectedItem: (any EditItem)? {

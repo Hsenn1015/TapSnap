@@ -64,7 +64,10 @@ final class AppEnvironment {
     private var recentSourceID: UUID?
     private var settingsWindow: NSWindow?
     private var settingsAppearanceObservation: AnyCancellable?
-    private var isShowingPermissionGuide = false
+    @MainActor lazy var accessibilityPermission = AccessibilityPermissionGuideController(
+        theme: { [unowned self] in self.theme },
+        onAuthorized: { [weak self] in self?.shortcutCenter.retryFailedRegistrations() }
+    )
 
     @MainActor
     var isUpdateInteractionBusy: Bool {
@@ -238,21 +241,17 @@ final class AppEnvironment {
         return true
     }
 
-    func showPermissionGuide(_ permission: SystemPermission, for operation: String) {
-        Task { @MainActor in
-            guard !isShowingPermissionGuide else { return }
-            isShowingPermissionGuide = true
-            defer { isShowingPermissionGuide = false }
-
-            let alert = NSAlert()
-            alert.messageText = "\(operation)需要「\(permission.displayName)」权限"
-            alert.informativeText = "在系统设置中允许 TapSnap。"
-            alert.addButton(withTitle: "打开系统设置")
-            alert.addButton(withTitle: "稍后")
-            NSApp.activate(ignoringOtherApps: true)
-            if alert.runModal() == .alertFirstButtonReturn {
-                Permissions.openSettingsPanel(for: permission)
-            }
+    @MainActor
+    func reportCheckedPermissions() {
+        if Permissions.status(of: .accessibility) == .authorized {
+            shortcutCenter.retryFailedRegistrations()
+            toast.success("屏幕录制和辅助功能均已授权")
+        } else {
+            accessibilityPermission.show(for: "快捷键优先响应和自动滚动", screenCaptureAvailable: true)
         }
+    }
+
+    func showAccessibilityGuide(for operation: String) {
+        Task { @MainActor in accessibilityPermission.show(for: operation) }
     }
 }

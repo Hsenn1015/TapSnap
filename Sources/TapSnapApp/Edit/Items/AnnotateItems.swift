@@ -42,11 +42,39 @@ final class ArrowItem: EditItem {
 
     func draw(in context: CGContext, scale: CGFloat) {
         guard start != end else { return }
-        let color = style.resolvedColor
-        let lineWidth = style.resolvedLineWidth
+        let (shaft, head) = paths
+        AnnotateDrawing.drawStroke(shaft, style: style, in: context)
+        if headStyle == .filled {
+            context.saveGState()
+            context.setFillColor(style.resolvedColor)
+            context.addPath(AnnotateDrawing.shapeFillPath(head, style: style))
+            context.fillPath()
+            context.restoreGState()
+        } else {
+            AnnotateDrawing.drawStroke(head, style: headStrokeStyle, in: context)
+        }
+    }
+
+    func hitTest(_ point: CGPoint, tolerance: CGFloat) -> Bool {
+        guard start != end else { return false }
+        let (shaft, head) = paths
+        if AnnotateDrawing.hitsStroke(shaft, at: point, style: style, tolerance: tolerance) { return true }
+        if headStyle == .filled {
+            let fill = AnnotateDrawing.shapeFillPath(head, style: style)
+            return fill.contains(point) || AnnotateDrawing.hitsStroke(fill, at: point, width: 0, tolerance: tolerance)
+        }
+        return AnnotateDrawing.hitsStroke(head, at: point, style: headStrokeStyle, tolerance: tolerance)
+    }
+
+    private var headStrokeStyle: EditItemStyle {
+        var solid = style
+        solid.strokePattern = .solid
+        return solid
+    }
+
+    private var paths: (shaft: CGPath, head: CGPath) {
         let angle = atan2(end.y - start.y, end.x - start.x)
-        let headLength = max(AnnotateDrawing.minimumHeadLength, lineWidth * 3.5)
-        let headWidth = headLength * 0.7
+        let headLength = max(AnnotateDrawing.minimumHeadLength, style.resolvedLineWidth * 3.5)
         // 线缩到箭头根部，免得线头从尖端戳出来。
         let shaftEnd = CGPoint(
             x: end.x - cos(angle) * headLength * 0.85,
@@ -55,41 +83,9 @@ final class ArrowItem: EditItem {
 
         let shaft = CGMutablePath()
         shaft.addLines(between: [start, shaftEnd])
-        AnnotateDrawing.drawStroke(shaft, style: style, in: context)
-
-        let head = AnnotateDrawing.arrowHead(
-            tip: end,
-            angle: angle,
-            length: headLength,
-            width: headWidth
-        )
-        var solidStyle = style
-        solidStyle.strokePattern = .solid
-        switch headStyle {
-        case .filled:
-            context.saveGState()
-            context.setFillColor(color)
-            context.addPath(style.strokeStyle == .handDrawn
-                            ? HandDrawnStroke.roughened(head, width: lineWidth, roughness: style.handDrawnRoughness) : head)
-            context.fillPath()
-            context.restoreGState()
-        case .hollow:
-            AnnotateDrawing.drawStroke(head, style: solidStyle, in: context)
-        case .simple:
-            // 只画两条边，线条风格。
-            let back = CGPoint(
-                x: end.x - cos(angle) * headLength,
-                y: end.y - sin(angle) * headLength
-            )
-            let half = headWidth / 2
-            let openHead = CGMutablePath()
-            openHead.addLines(between: [
-                CGPoint(x: back.x + cos(angle + .pi / 2) * half, y: back.y + sin(angle + .pi / 2) * half),
-                end,
-                CGPoint(x: back.x + cos(angle - .pi / 2) * half, y: back.y + sin(angle - .pi / 2) * half)
-            ])
-            AnnotateDrawing.drawStroke(openHead, style: solidStyle, in: context)
-        }
+        let head = AnnotateDrawing.arrowHead(tip: end, angle: angle, length: headLength,
+                                             width: headLength * 0.7, closed: headStyle != .simple)
+        return (shaft, head)
     }
 }
 
@@ -125,9 +121,17 @@ final class LineItem: EditItem {
 
     func draw(in context: CGContext, scale: CGFloat) {
         guard start != end else { return }
+        AnnotateDrawing.drawStroke(path, style: style, in: context)
+    }
+
+    func hitTest(_ point: CGPoint, tolerance: CGFloat) -> Bool {
+        start != end && AnnotateDrawing.hitsStroke(path, at: point, style: style, tolerance: tolerance)
+    }
+
+    private var path: CGPath {
         let path = CGMutablePath()
         path.addLines(between: [start, end])
-        AnnotateDrawing.drawStroke(path, style: style, in: context)
+        return path
     }
 }
 
@@ -146,17 +150,24 @@ final class ShapeItem: EditItem {
 
     func draw(in context: CGContext, scale: CGFloat) {
         guard bounds.width > 0, bounds.height > 0 else { return }
-        let path: CGPath
+        AnnotateDrawing.drawShape(path, style: style, in: context)
+    }
+
+    func hitTest(_ point: CGPoint, tolerance: CGFloat) -> Bool {
+        guard bounds.width > 0, bounds.height > 0 else { return false }
+        return AnnotateDrawing.hitsShape(path, at: point, style: style, tolerance: tolerance)
+    }
+
+    private var path: CGPath {
         switch kind {
         case .ellipse, .magnifier:
-            path = CGPath(ellipseIn: bounds, transform: nil)
+            return CGPath(ellipseIn: bounds, transform: nil)
         default:
             let radius = min(style.cornerRadius, bounds.width / 2, bounds.height / 2)
-            path = radius > 0
+            return radius > 0
                 ? CGPath(roundedRect: bounds, cornerWidth: radius, cornerHeight: radius, transform: nil)
                 : CGPath(rect: bounds, transform: nil)
         }
-        AnnotateDrawing.drawShape(path, style: style, in: context)
     }
 }
 
@@ -206,8 +217,11 @@ final class PenItem: EditItem {
         context.restoreGState()
     }
 
-    func hitTest(_ point: CGPoint, tolerance: CGFloat = 4) -> Bool {
-        // 画笔的包围盒很大，命中测试要贴近折线本身。
-        points.contains { $0.distance(to: point) <= max(tolerance, style.lineWidth) }
+    func hitTest(_ point: CGPoint, tolerance: CGFloat) -> Bool {
+        if points.count == 1, let center = points.first {
+            return center.distance(to: point) <= style.resolvedLineWidth / 2 + tolerance
+        }
+        return AnnotateDrawing.hitsStroke(AnnotateDrawing.smoothPath(points), at: point,
+                                          width: style.resolvedLineWidth, tolerance: tolerance)
     }
 }

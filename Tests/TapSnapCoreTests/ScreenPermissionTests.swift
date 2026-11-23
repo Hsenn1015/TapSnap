@@ -1,25 +1,18 @@
 import ScreenCaptureKit
-import TapSnapScreen
+@testable import TapSnapScreen
 import XCTest
 @testable import TapSnapApp
 
 final class ScreenPermissionTests: XCTestCase {
-    func testOnlyAGrantOrAnExplicitContinueCanResume() {
-        XCTAssertEqual(ScreenPermissionNextStep.decide(currentGrant: false, freshGrant: false,
-            captureRejected: false, userConfirmed: false, mayReopenAutomatically: true), .wait)
-        XCTAssertEqual(ScreenPermissionNextStep.decide(currentGrant: true, freshGrant: true,
-            captureRejected: false, userConfirmed: false, mayReopenAutomatically: true), .resume)
-        XCTAssertEqual(ScreenPermissionNextStep.decide(currentGrant: false, freshGrant: true,
-            captureRejected: false, userConfirmed: false, mayReopenAutomatically: true), .reopen)
-        XCTAssertEqual(ScreenPermissionNextStep.decide(currentGrant: true, freshGrant: true,
-            captureRejected: true, userConfirmed: false, mayReopenAutomatically: true), .reopen)
-    }
-
-    func testAnUnusableGrantAfterReopeningDoesNotRestartAgain() {
-        XCTAssertEqual(ScreenPermissionNextStep.decide(currentGrant: false, freshGrant: true,
-            captureRejected: false, userConfirmed: false, mayReopenAutomatically: false), .wait)
-        XCTAssertEqual(ScreenPermissionNextStep.decide(currentGrant: false, freshGrant: false,
-            captureRejected: false, userConfirmed: true, mayReopenAutomatically: false), .reopen)
+    func testAccessCheckUsesLiveResultAndDistinguishesAnUnrelatedFailure() async {
+        let granted = await ScreenAccessCheck.run { }
+        let denied = await ScreenAccessCheck.run {
+            throw NSError(domain: SCStreamError.errorDomain, code: SCStreamError.Code.userDeclined.rawValue)
+        }
+        let unavailable = await ScreenAccessCheck.run { throw CaptureError.noDisplays }
+        XCTAssertEqual(granted, .available)
+        XCTAssertEqual(denied, .denied)
+        XCTAssertEqual(unavailable, .failed(CaptureError.noDisplays.localizedDescription))
     }
 
     func testRelaunchKeepsTheRequestedActionAndPrivacyOptions() throws {
@@ -37,5 +30,31 @@ final class ScreenPermissionTests: XCTestCase {
         XCTAssertTrue(CaptureError.isPermissionDenied(CaptureError.permissionDenied))
         XCTAssertTrue(CaptureError.isPermissionDenied(denial))
         XCTAssertFalse(CaptureError.isPermissionDenied(CaptureError.noDisplays))
+    }
+
+    func testExplicitAccessCheckRecognizesScreenCaptureKitDenial() async {
+        let denial = NSError(domain: SCStreamError.errorDomain, code: SCStreamError.Code.userDeclined.rawValue)
+        let service = ScreenCaptureService(loadContent: { throw denial })
+        do {
+            try await service.checkAccess()
+            XCTFail("缺少屏幕录制权限时，检查应返回拒绝")
+        } catch {
+            XCTAssertTrue(CaptureError.isPermissionDenied(error))
+        }
+    }
+
+    func testCaptureReportsServiceFailureWithoutAskingForPermission() async {
+        let failure = NSError(domain: SCStreamError.errorDomain, code: SCStreamError.Code.failedToStart.rawValue)
+        let service = ScreenCaptureService(loadContent: { throw failure })
+        do {
+            _ = try await service.captureAllScreens()
+            XCTFail("屏幕采集服务出错时，应报告原始错误")
+        } catch {
+            XCTAssertFalse(CaptureError.isPermissionDenied(error))
+            guard case CaptureError.captureFailed(let underlying?) = error else {
+                return XCTFail("应保留 ScreenCaptureKit 失败原因")
+            }
+            XCTAssertEqual(underlying as NSError, failure)
+        }
     }
 }

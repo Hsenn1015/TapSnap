@@ -23,6 +23,11 @@ esac
 install_location=/Applications
 
 /usr/bin/codesign --verify --deep --strict "$app"
+# 发布的安装包必须携带证书，否则 macOS 会把每次重新构建视为新的权限主体。
+if ! /usr/bin/codesign --verify --strict -R '=certificate leaf[subject.CN] exists' "$app"; then
+    echo "无法制作可升级的安装包。请使用该版本的固定证书重新签名 TapSnap.app。" >&2
+    exit 1
+fi
 stage=$(mktemp -d "${TMPDIR:-/tmp}/tapsnap-installer.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
 mkdir "$stage/payload" "$stage/resources"

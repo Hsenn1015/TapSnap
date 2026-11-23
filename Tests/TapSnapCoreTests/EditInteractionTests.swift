@@ -113,6 +113,49 @@ final class EditInteractionTests: XCTestCase {
         }
     }
 
+    func testDrawingAnotherAnnotationInsideTheArrowsBoundingBox() throws {
+        for scale in displayScales {
+            let (controller, view, window) = fixture(displayScale: scale)
+            defer { window.close() }
+            let arrow = ArrowItem(start: CGPoint(x: 20, y: 20), end: CGPoint(x: 170, y: 130))
+            controller.add(arrow)
+            controller.perform(.rectangle)
+            let start = CGPoint(x: 38, y: 94), end = CGPoint(x: 75, y: 110)
+
+            XCTAssertTrue(arrow.bounds.contains(start))
+            XCTAssertNil(controller.document.item(at: start))
+            try mouse(.leftMouseDown, at: start, in: view)
+            try mouse(.leftMouseDragged, at: end, in: view)
+            try mouse(.leftMouseUp, at: end, in: view)
+
+            XCTAssertEqual(controller.document.items.map(\.kind), [.arrow, .rectangle])
+            XCTAssertEqual(arrow.start, CGPoint(x: 20, y: 20))
+            XCTAssertEqual(arrow.end, CGPoint(x: 170, y: 130))
+            let shaft = CGPoint(x: 95, y: 75), moved = CGPoint(x: 103, y: 81)
+            XCTAssertEqual(controller.document.item(at: shaft)?.id, arrow.id)
+            try mouse(.leftMouseDown, at: shaft, in: view)
+            try mouse(.leftMouseDragged, at: moved, in: view)
+            try mouse(.leftMouseUp, at: moved, in: view)
+            XCTAssertEqual(arrow.start, CGPoint(x: 28, y: 26))
+        }
+    }
+
+    func testArrowHeadAndOutlineShapesUseTheirVisibleGeometry() {
+        let arrow = ArrowItem(start: CGPoint(x: 20, y: 40), end: CGPoint(x: 160, y: 40),
+                              style: EditItemStyle(lineWidth: 8))
+        XCTAssertTrue(arrow.hitTest(CGPoint(x: 134, y: 47), tolerance: 1))
+        XCTAssertFalse(arrow.hitTest(CGPoint(x: 134, y: 60), tolerance: 1))
+
+        let rect = CGRect(x: 20, y: 20, width: 120, height: 80)
+        let ellipse = ShapeItem(kind: .ellipse, bounds: rect)
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        XCTAssertFalse(ellipse.hitTest(center, tolerance: 4))
+        XCTAssertTrue(ellipse.hitTest(CGPoint(x: rect.midX, y: rect.minY), tolerance: 4))
+        ellipse.style.shapeFill = .fill
+        XCTAssertTrue(ellipse.hitTest(center, tolerance: 4))
+        XCTAssertFalse(ellipse.hitTest(CGPoint(x: rect.minX + 2, y: rect.minY + 2), tolerance: 4))
+    }
+
     func testEllipseDragPreviewMatchesRealEllipseAndCommittedPixelsAtEveryZoom() throws {
         for scale in displayScales {
             let (controller, view, window) = fixture(displayScale: scale)

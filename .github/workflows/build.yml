@@ -49,12 +49,12 @@ jobs:
               prerelease=true
             fi
           fi
-          # Continue after the last locally packaged build (5).
+          # Run 30 preceded the locally distributed v0.2.7 (build 36).
           {
             echo "label=$label"
             echo "macos=$macos"
             echo "windows=$windows"
-            echo "build=$((GITHUB_RUN_NUMBER + 5))"
+            echo "build=$((GITHUB_RUN_NUMBER + 6))"
             echo "prerelease=$prerelease"
           } >> "$GITHUB_OUTPUT"
 
@@ -83,7 +83,7 @@ jobs:
           encoder='GifExporterTests|RecordingAnnotationStyleTests|RecordingEnhancementTests|VideoEncoderTests|RecordSessionTests/test(RealEncoder|StaticScreen)'
           swift test --skip "$desktop|$encoder"
       - name: Build the macOS release with its persistent signing identity
-        if: github.ref_type == 'tag' && needs.version.outputs.prerelease == 'false'
+        if: github.ref_type == 'tag'
         shell: bash
         env:
           TAPSNAP_MAC_SIGNING_SHA1: ${{ vars.TAPSNAP_MAC_SIGNING_SHA1 }}
@@ -91,7 +91,9 @@ jobs:
           TAPSNAP_MAC_SIGNING_PASSWORD: ${{ secrets.TAPSNAP_MAC_SIGNING_PASSWORD }}
         run: bash Scripts/build-signed-macos.sh
       - name: Build the macOS CI package
-        if: github.ref_type != 'tag' || needs.version.outputs.prerelease == 'true'
+        if: github.ref_type != 'tag'
+        env:
+          TAPSNAP_ALLOW_ADHOC_SIGNING: '1'
         run: Scripts/build-app.sh release
       - name: Verify the app and build the DMG
         shell: bash
@@ -117,6 +119,21 @@ jobs:
           dmg="dist/TapSnap-$PACKAGE_LABEL-macos-arm64.dmg"
           hdiutil create -volname TapSnap -srcfolder "$staging" -fs HFS+ -format UDZO "$dmg"
           hdiutil verify "$dmg"
+      - name: Build and check the macOS installation wizard
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          set -euo pipefail
+          installer="dist/TapSnap-$PACKAGE_LABEL-macos-arm64.pkg"
+          Scripts/build-macos-installer.sh dist/TapSnap.app "$installer"
+          expanded="$RUNNER_TEMP/verified-macos-installer"
+          pkgutil --expand-full "$installer" "$expanded"
+          payload="$expanded/TapSnapComponent.pkg/Payload/TapSnap.app"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$payload/Contents/Info.plist")" = com.sensnap.app
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$payload/Contents/Info.plist")" = "$TAPSNAP_VERSION"
+          test "$(plutil -extract CFBundleVersion raw -o - "$payload/Contents/Info.plist")" = "$TAPSNAP_BUILD_NUMBER"
+          codesign --verify --deep --strict "$payload"
+          cmp "$payload/Contents/MacOS/TapSnap" dist/TapSnap.app/Contents/MacOS/TapSnap
       - name: Generate the signed Sparkle update feed
         if: needs.version.outputs.publish_appcast == 'true'
         shell: bash
@@ -162,6 +179,7 @@ jobs:
           name: macos-packages
           path: |
             dist/*.dmg
+            dist/*.pkg
             dist/appcast.xml
           if-no-files-found: error
           compression-level: 0
@@ -174,6 +192,7 @@ jobs:
     timeout-minutes: 30
     env:
       TAPSNAP_VERSION: ${{ needs.version.outputs.windows }}
+      TAPSNAP_NUMERIC_VERSION: ${{ needs.version.outputs.macos }}
       PACKAGE_LABEL: ${{ needs.version.outputs.label }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -215,7 +234,19 @@ jobs:
           path: windows-evidence/
           if-no-files-found: warn
           retention-days: 14
-      - name: Publish and verify the Windows ZIP files
+      - name: Locate NSIS for the Windows installation wizards
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          if (Get-Command makensis.exe -ErrorAction SilentlyContinue) { exit 0 }
+          $nsis = Join-Path ${env:ProgramFiles(x86)} 'NSIS'
+          if (!(Test-Path (Join-Path $nsis 'makensis.exe'))) {
+            choco install nsis --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          if (!(Test-Path (Join-Path $nsis 'makensis.exe'))) { throw 'NSIS is missing.' }
+          $nsis >> $env:GITHUB_PATH
+      - name: Publish and verify the Windows packages
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist -Force | Out-Null
@@ -263,11 +294,22 @@ jobs:
             } finally {
               $archive.Dispose()
             }
+
+            if ($env:GITHUB_REF_TYPE -eq 'tag') {
+              $setup = Join-Path (Resolve-Path dist).Path "TapSnap-$($env:PACKAGE_LABEL)-windows-$arch-Setup.exe"
+              makensis.exe /V2 "/DPAYLOAD=$publish" "/DOUTPUT=$setup" "/DARCH=$arch" "/DVERSION=$env:TAPSNAP_VERSION" "/DFILE_VERSION=$($env:TAPSNAP_NUMERIC_VERSION).0" windows/installer/TapSnap.nsi
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              if ((Get-Item -LiteralPath $setup).VersionInfo.ProductVersion -ne $env:TAPSNAP_VERSION) {
+                throw "Setup.exe product version does not match $env:TAPSNAP_VERSION."
+              }
+            }
           }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-packages
-          path: dist/*.zip
+          path: |
+            dist/*.zip
+            dist/*-Setup.exe
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -281,6 +323,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: '*-packages'
@@ -297,38 +342,65 @@ jobs:
         run: |
           set -euo pipefail
           tag="$GITHUB_REF_NAME"
+          notes="$GITHUB_WORKSPACE/Docs/releases/$tag.md"
           files=(
             "TapSnap-$tag-macos-arm64.dmg"
+            "TapSnap-$tag-macos-arm64.pkg"
             "TapSnap-$tag-windows-x64.zip"
+            "TapSnap-$tag-windows-x64-Setup.exe"
             "TapSnap-$tag-windows-arm64.zip"
+            "TapSnap-$tag-windows-arm64-Setup.exe"
           )
           if [[ "$PUBLISH_APPCAST" == true ]]; then
             files+=(appcast.xml)
           fi
-          sha256sum "${files[@]}" > SHA256SUMS.txt
-          files+=(SHA256SUMS.txt)
-
           if state=$(gh release view "$tag" --json isDraft --jq .isDraft); then
             if [[ "$state" == false ]]; then
               assets=$(gh release view "$tag" --json assets --jq '.assets[].name')
-              for file in "${files[@]}"; do
-                grep -Fxq -- "$file" <<< "$assets"
+              missing=()
+              for file in "${files[@]}" SHA256SUMS.txt; do
+                if ! grep -Fxq -- "$file" <<< "$assets"; then missing+=("$file"); fi
               done
+              if (( ${#missing[@]} == 0 )); then exit 0; fi
+
+              # On a retry, hash the bytes users already have for existing assets.
+              restored=$(mktemp -d)
+              trap 'rm -rf "$restored"' EXIT
+              for file in "${files[@]}"; do
+                if grep -Fxq -- "$file" <<< "$assets"; then
+                  gh release download "$tag" --pattern "$file" --dir "$restored"
+                else
+                  cp -- "$file" "$restored/"
+                fi
+              done
+              (cd "$restored" && sha256sum "${files[@]}") > SHA256SUMS.txt
+              if grep -Fxq -- SHA256SUMS.txt <<< "$assets"; then
+                gh release download "$tag" --pattern SHA256SUMS.txt --dir "$restored"
+                cmp "$restored/SHA256SUMS.txt" SHA256SUMS.txt || {
+                  echo "::error::Existing published checksums differ from the packages; leaving the release intact."
+                  exit 1
+                }
+              fi
+              gh release upload "$tag" "${missing[@]}"
+              if [[ -s "$notes" ]]; then gh release edit "$tag" --notes-file "$notes"; fi
               exit 0
             fi
           else
-            flags=(--draft --verify-tag --generate-notes --title "TapSnap $tag")
+            flags=(--draft --verify-tag --title "TapSnap $tag")
             if [[ "$PRERELEASE" == true ]]; then
               flags+=(--prerelease)
             fi
-            macos_note='macOS 包使用 TapSnap 固定签名，尚未经过 Apple 公证。'
-            if [[ "$PRERELEASE" == true ]]; then
-              macos_note='macOS 包使用测试构建签名，尚未经过 Apple 公证。'
+            if [[ -s "$notes" ]]; then
+              flags+=(--notes-file "$notes")
+            else
+              flags+=(--generate-notes --notes 'macOS 包使用 TapSnap 固定签名，尚未经过 Apple 公证。Windows 安装包和便携 ZIP 均包含 .NET 运行时。')
             fi
-            gh release create "$tag" "${flags[@]}" --notes "$macos_note Windows ZIP 内含 .NET 运行时，请解压后打开 TapSnap.exe。"
+            gh release create "$tag" "${flags[@]}"
           fi
-          gh release upload "$tag" "${files[@]}" --clobber
+          sha256sum "${files[@]}" > SHA256SUMS.txt
+          gh release upload "$tag" "${files[@]}" SHA256SUMS.txt --clobber
           publish_flags=(--draft=false --verify-tag)
+          if [[ -s "$notes" ]]; then publish_flags+=(--notes-file "$notes"); fi
           if [[ "$PUBLISH_APPCAST" == true ]]; then
             publish_flags+=(--latest)
           fi

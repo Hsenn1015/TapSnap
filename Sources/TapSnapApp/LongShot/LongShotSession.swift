@@ -23,6 +23,10 @@ final class LongShotSession: NSObject {
     private var forcePrivacy = false
 
     private enum State { case idle, capturing, finishing, result }
+    private enum ScrollRegionSource: String {
+        case system = "系统滚动视口"
+        case manual = "用户指定滚动视口"
+    }
     // UI 状态只在主线程访问；旧会话的异步回调不能重新打开窗口。
     private var state: State = .idle
     private var sessionID = UUID()
@@ -107,7 +111,6 @@ final class LongShotSession: NSObject {
             onSelectScrollRegion: { [weak self] in self?.selectScrollRegion() },
             onToggleAutomaticScroll: { [weak self] in self?.toggleAutomaticScroll() }
         )
-        preview.updateStatus("在正文上滚动，或点「滚动区域…」")
         scrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
             guard event.scrollingDeltaY != 0 else { return }
             let wheel = event.cgEvent
@@ -154,29 +157,22 @@ final class LongShotSession: NSObject {
         }
         guard !processingFrame, let rect = selectionRect, let screen,
               let cropped = Self.cropFrame(frame.image, rect: rect, screen: screen) else { return }
-        if !layoutReady || resolvingRegion {
+        if selectionImage == nil {
+            selectionImage = cropped
+            append(cropped, sessionID: id)
+        } else if !layoutReady || resolvingRegion {
             pendingFrame = cropped
-            if selectionImage == nil {
-                selectionImage = cropped
-                append(cropped, sessionID: id)
-            }
-            return
+        } else {
+            append(cropped, sessionID: id)
         }
-        append(cropped, sessionID: id)
     }
 
     func didScroll(at point: CGPoint) {
         guard state == .capturing else { return }
         pauseAutomaticScroll(message: "已切换为手动滚动")
-        guard let selectionRect, selectionRect.contains(point), regionWindow == nil else { return }
-        if layoutReady {
-            if let scrollViewport, !scrollViewport.contains(point) {
-                environment.toast.warning("滚动目标发生变化，已保留当前结果；请重新开始")
-                finish()
-            }
-            return
-        }
-        guard !resolvingRegion else { return }
+        // The pointer can leave the scrolling body while trackpad momentum is still active.
+        guard !layoutReady, !resolvingRegion, regionWindow == nil,
+              let selectionRect, selectionRect.contains(point) else { return }
         findScrollRegion(at: point, within: selectionRect, automatically: false)
     }
 
@@ -195,15 +191,12 @@ final class LongShotSession: NSObject {
                 self.probingAutomatically = false
                 if let resolution {
                     self.configureScrollRegion(resolution.content, viewport: resolution.viewport,
-                                               processID: resolution.processID, source: "系统滚动视口", sessionID: id)
+                                               processID: resolution.processID, source: .system, sessionID: id)
                 } else if automatically, retry, self.automaticRequested {
                     self.findScrollRegion(at: point, within: selection, automatically: true, retry: false,
                                           delay: .milliseconds(250))
                 } else {
-                    self.resolvingRegion = false
-                    self.pauseAutomaticScroll(message: nil)
-                    self.preview.updateStatus("没找到滚动区域。点「滚动区域…」框出正文，或在正文上滚一下。", isWarning: true)
-                    Log.shared.info("长截图：系统未返回可用滚动视口")
+                    self.useOriginalSelection(sessionID: id)
                 }
             }
         }
@@ -214,7 +207,7 @@ final class LongShotSession: NSObject {
         pauseAutomaticScroll(message: nil)
         guard state == .capturing, capturedSegments <= 1, regionWindow == nil,
               let selectionRect, let screen, let selectionImage else { return }
-        guard !processingFrame else {
+        guard !processingFrame, !resolvingRegion else {
             preview.updateStatus("正在处理当前帧，请稍后选择滚动区域")
             return
         }
@@ -234,12 +227,13 @@ final class LongShotSession: NSObject {
             guard let rect else {
                 self.resolvingRegion = false
                 self.preview.updateStatus(self.layoutReady ? "已保留滚动区域，可继续滚动" : "可滚动正文，或点「滚动区域…」")
+                if self.layoutReady { self.resumeAfterRegionSelection(sessionID: id) }
                 return
             }
             let global = CGRect(x: selectionRect.minX + rect.minX,
                                 y: selectionRect.minY + selectionRect.height - rect.maxY,
                                 width: rect.width, height: rect.height).intersection(selectionRect)
-            self.configureScrollRegion(global, viewport: global, source: "用户指定滚动视口", sessionID: id)
+            self.configureScrollRegion(global, viewport: global, source: .manual, sessionID: id)
         }
         window.contentView = view
         regionWindow = window
@@ -250,7 +244,7 @@ final class LongShotSession: NSObject {
     }
 
     private func configureScrollRegion(_ content: CGRect, viewport: CGRect, processID: pid_t? = nil,
-                                       source: String, sessionID id: UUID) {
+                                       source: ScrollRegionSource, sessionID id: UUID) {
         guard let selectionRect, let selectionImage else { resolvingRegion = false; return }
         let requestID = regionRequestID
         let scaleX = CGFloat(selectionImage.width) / selectionRect.width
@@ -270,15 +264,14 @@ final class LongShotSession: NSObject {
                     self.scrollViewport = viewport
                     self.scrollProcessID = processID
                     self.layoutReady = true
-                    Log.shared.info("长截图布局：原帧 \(selectionImage.width)×\(selectionImage.height)，\(source) \(rect)")
+                    Log.shared.info("长截图布局：原帧 \(selectionImage.width)×\(selectionImage.height)，\(source.rawValue) \(rect)")
                     self.preview.updateStatus("已确定滚动区域，请继续向下滚动")
-                    if let frame = self.pendingFrame {
-                        self.pendingFrame = nil
-                        self.append(frame, sessionID: id)
-                    } else {
-                        self.startAutomaticScrollIfReady()
-                    }
+                    self.resumeAfterRegionSelection(sessionID: id)
                 case .failure(let error):
+                    if case StitchingError.invalidScrollingRegion = error, source == .system {
+                        self.useOriginalSelection(sessionID: id)
+                        return
+                    }
                     if case StitchingError.layoutChanged = error {
                         self.environment.toast.warning("已开始拼接，无法更换滚动区域；已保留当前结果")
                         self.finish()
@@ -288,6 +281,25 @@ final class LongShotSession: NSObject {
                     self.preview.updateStatus("滚动区域太小。点「滚动区域…」重选。", isWarning: true)
                 }
             }
+        }
+    }
+
+    private func useOriginalSelection(sessionID id: UUID) {
+        resolvingRegion = false
+        pauseAutomaticScroll(message: nil)
+        // Keep stitching the complete first selection, without inferring an automatic scroll target.
+        layoutReady = true
+        preview.updateStatus("已沿用原选区，可手动向下滚动")
+        Log.shared.info("长截图：系统未返回可用滚动视口，沿用原选区手动滚动")
+        resumeAfterRegionSelection(sessionID: id)
+    }
+
+    private func resumeAfterRegionSelection(sessionID id: UUID) {
+        if let frame = pendingFrame {
+            pendingFrame = nil
+            append(frame, sessionID: id)
+        } else {
+            startAutomaticScrollIfReady()
         }
     }
 
@@ -377,8 +389,11 @@ final class LongShotSession: NSObject {
 
     private func requestAutomaticScroll(afterHandoff: Bool = false) {
         guard Permissions.status(of: .accessibility) == .authorized else {
-            environment.toast.warning("自动滚动需要辅助功能权限")
-            Permissions.openSettingsPanel(for: .accessibility)
+            if afterHandoff {
+                preview.updateStatus("请手动滚动，或点击「自动滚动」开启辅助功能权限")
+            } else {
+                environment.showAccessibilityGuide(for: "自动滚动")
+            }
             return
         }
         automaticRequested = true
@@ -402,6 +417,10 @@ final class LongShotSession: NSObject {
               !processingFrame, !resolvingRegion, regionWindow == nil,
               let selectionRect, let screen else { return }
         guard let scrollViewport, layoutReady else {
+            if layoutReady, capturedSegments > 1 {
+                pauseAutomaticScroll(message: "本次已沿用原选区，可继续手动滚动")
+                return
+            }
             if selectionImage != nil {
                 preview.updateStatus("正在确定滚动区域…")
                 findScrollRegion(at: selectionRect.center, within: selectionRect, automatically: true)

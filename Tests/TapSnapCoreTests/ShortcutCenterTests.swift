@@ -105,6 +105,31 @@ final class ShortcutCenterTests: XCTestCase {
         center.unregisterAll()
     }
 
+    func testPriorityTapFailureKeepsItsOwnDiagnosisAlongsideOtherStartupFailures() {
+        let config = makeConfig()
+        config.setBinding(firstBinding, for: .longShot)
+        config.setBinding(secondBinding, for: .screenshot)
+        var messages: [String] = []
+        let center = ShortcutCenter(config: config, makeShortcut: { combo, handler in
+            let shortcut = Registration(trigger: handler)
+            shortcut.error = combo == self.firstBinding.combo
+                ? GlobalShortcut.RegistrationError.priorityCaptureFailed
+                : GlobalShortcut.RegistrationError.systemReserved
+            return shortcut
+        }, performAction: { _ in }, reportFailure: { messages.append($0) })
+
+        center.registerAll()
+        XCTAssertTrue(center.registrationFailures[.longShot]?.contains("优先响应") == true)
+        XCTAssertFalse(center.registrationFailures[.longShot]?.contains("权限") == true)
+        XCTAssertTrue(center.registrationFailures[.screenshot]?.contains("系统快捷键") == true)
+        XCTAssertEqual(messages.count, 1)
+        XCTAssertTrue(messages.first?.contains(secondBinding.displayString) == true)
+        XCTAssertFalse(messages.first?.contains(firstBinding.displayString) == true)
+        config.setBinding(nil, for: .longShot)
+        XCTAssertEqual(messages.count, 1)
+        center.unregisterAll()
+    }
+
     func testDuplicateBindingsAreVisibleAndRemovingConflictRecovers() {
         let config = makeConfig()
         config.update {
@@ -144,8 +169,9 @@ final class ShortcutCenterTests: XCTestCase {
             return registration
         }, performAction: { _ in }, reportFailure: { messages.append($0) })
         center.registerAll()
-        XCTAssertTrue(messages.first?.contains("辅助功能") == true)
-        XCTAssertTrue(messages.first?.contains("优先响应") == true)
+        XCTAssertTrue(messages.isEmpty)
+        XCTAssertTrue(center.registrationFailures[.longShot]?.contains("辅助功能") == true)
+        XCTAssertTrue(center.registrationFailures[.longShot]?.contains("优先响应") == true)
         permissionMissing = false
         center.retryFailedRegistrations()
         XCTAssertTrue(center.registrationFailures.isEmpty)

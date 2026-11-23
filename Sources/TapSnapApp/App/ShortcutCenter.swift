@@ -5,6 +5,7 @@ import TapSnapActionsBar
 import TapSnapConfig
 import TapSnapCore
 import TapSnapSystem
+import TapSnapToast
 
 protocol ShortcutRegistration: AnyObject {
     var usesPriorityEventTap: Bool { get }
@@ -19,7 +20,7 @@ extension ShortcutRegistration {
 extension GlobalShortcut: ShortcutRegistration {}
 
 /// 把配置里的快捷键绑定注册成系统热键。
-final class ShortcutCenter {
+final class ShortcutCenter: ObservableObject {
     typealias Factory = (GlobalShortcut.Combo, @escaping () -> Void) -> ShortcutRegistration
     private let config: ConfigStore
     private let makeShortcut: Factory
@@ -30,7 +31,7 @@ final class ShortcutCenter {
     private var observation: AnyCancellable?
     private var dispatchGeneration = UUID()
     private(set) var isRecording = false
-    private(set) var registrationFailures: [ShortcutAction: String] = [:]
+    @Published private(set) var registrationFailures: [ShortcutAction: String] = [:]
     var onRegistrationFailuresChanged: (([ShortcutAction: String]) -> Void)?
 
     convenience init(environment: AppEnvironment) {
@@ -38,7 +39,7 @@ final class ShortcutCenter {
             guard let environment else { return }
             Self.perform(action, environment: environment)
         }, reportFailure: { [weak environment] message in
-            environment?.toast.warning(message)
+            environment?.toast.show(ToastMessage(text: message, style: .warning, duration: 6))
         })
     }
 
@@ -66,6 +67,7 @@ final class ShortcutCenter {
     private func apply(_ bindings: [String: KeyBinding]) {
         guard !isRecording else { return }
         var failures: [ShortcutAction: String] = [:]
+        var priorityFailures: Set<ShortcutAction> = []
         var actionsByBinding: [KeyBinding: [ShortcutAction]] = [:]
         for action in ShortcutAction.allCases {
             if let binding = bindings[action.rawValue] {
@@ -103,18 +105,25 @@ final class ShortcutCenter {
             } catch {
                 shortcut.unregister()
                 failures[action] = Self.describe(error)
+                switch error as? GlobalShortcut.RegistrationError {
+                case .accessibilityRequired, .priorityCaptureFailed: priorityFailures.insert(action)
+                default: break
+                }
                 Log.shared.warn("快捷键注册失败 \(action.rawValue) = \(binding.displayString)：\(failures[action]!)")
             }
         }
         if failures != registrationFailures {
+            let previous = registrationFailures
             registrationFailures = failures
             onRegistrationFailuresChanged?(failures)
-            if !failures.isEmpty {
-                let names = ShortcutAction.allCases.compactMap { action -> String? in
-                    guard let reason = failures[action], let binding = bindings[action.rawValue] else { return nil }
-                    return "\(action.displayName) \(binding.displayString)：\(reason)"
-                }
-                reportFailure("快捷键不可用：\(names.joined(separator: "；"))。仍可点击 TapSnap 菜单操作。")
+            // 每项的完整原因保留在设置中。优先响应是可选功能，后台注册时不弹授权提示。
+            let newlyFailed = ShortcutAction.allCases.filter { action in
+                failures[action] != nil && failures[action] != previous[action] && !priorityFailures.contains(action)
+            }
+            if newlyFailed.count == 1, let action = newlyFailed.first, let binding = bindings[action.rawValue] {
+                reportFailure("\(action.displayName)快捷键 \(binding.displayString) 不可用。详情见「设置 → 快捷键」。")
+            } else if !newlyFailed.isEmpty {
+                reportFailure("\(newlyFailed.count) 个快捷键不可用。详情见「设置 → 快捷键」。")
             }
         }
     }
@@ -131,8 +140,8 @@ final class ShortcutCenter {
                 ? "已被其他应用占用，请更换组合键"
                 : "系统拒绝 OSStatus=\(status)"
         case .handlerInstallFailed(let status): return "事件处理器安装失败 OSStatus=\(status)"
-        case .accessibilityRequired: return "组合已被占用，请在系统设置中允许 TapSnap 使用辅助功能，授权后重新打开 TapSnap 以启用优先响应"
-        case .priorityCaptureFailed: return "无法启用优先响应，请检查辅助功能权限或更换组合键"
+        case .accessibilityRequired: return "组合键已被占用。可更换组合键，或在系统设置中允许 TapSnap 使用辅助功能以启用优先响应"
+        case .priorityCaptureFailed: return "组合键已被占用，系统未能启用优先响应。可更换组合键"
         }
     }
 

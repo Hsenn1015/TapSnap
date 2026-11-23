@@ -78,9 +78,7 @@ enum AnnotateDrawing {
             var fill = style.shapeFillColor
             fill.alpha *= style.opacity
             if style.strokeStyle == .handDrawn {
-                let fillPath = HandDrawnStroke.roughened(path, width: style.resolvedLineWidth,
-                                                       roughness: style.handDrawnRoughness)
-                HandDrawnStroke.fill(fillPath, color: fill.cgColor, width: style.resolvedLineWidth,
+                HandDrawnStroke.fill(shapeFillPath(path, style: style), color: fill.cgColor, width: style.resolvedLineWidth,
                                     pattern: style.handDrawnFill, in: context)
             } else {
                 context.setFillColor(fill.cgColor)
@@ -92,6 +90,32 @@ enum AnnotateDrawing {
             drawStroke(path, style: style, in: context, lineJoin: lineJoin)
         }
         context.restoreGState()
+    }
+
+    static func hitsStroke(_ path: CGPath, at point: CGPoint, width: CGFloat, tolerance: CGFloat) -> Bool {
+        let radius = width / 2 + tolerance
+        guard radius > 0, path.boundingBoxOfPath.insetBy(dx: -radius, dy: -radius).contains(point) else { return false }
+        return path.copy(strokingWithWidth: radius * 2, lineCap: .round, lineJoin: .round, miterLimit: 1).contains(point)
+    }
+
+    static func hitsStroke(_ path: CGPath, at point: CGPoint, style: EditItemStyle, tolerance: CGFloat) -> Bool {
+        if style.strokeStyle == .handDrawn {
+            return HandDrawnStroke.hits(path, at: point, style: style, tolerance: tolerance)
+        }
+        return hitsStroke(path, at: point, width: style.resolvedLineWidth, tolerance: tolerance)
+    }
+
+    static func shapeFillPath(_ path: CGPath, style: EditItemStyle) -> CGPath {
+        guard style.strokeStyle == .handDrawn else { return path }
+        return HandDrawnStroke.roughened(path, width: style.resolvedLineWidth, roughness: style.handDrawnRoughness)
+    }
+
+    static func hitsShape(_ path: CGPath, at point: CGPoint, style: EditItemStyle, tolerance: CGFloat) -> Bool {
+        if style.shapeFill != .outline {
+            let fill = shapeFillPath(path, style: style)
+            if fill.contains(point) || hitsStroke(fill, at: point, width: 0, tolerance: tolerance) { return true }
+        }
+        return style.shapeFill != .fill && hitsStroke(path, at: point, style: style, tolerance: tolerance)
     }
 
     /// 用「相邻点中点 + 原始点作控制点」的二次贝塞尔把折线变平滑。
@@ -114,7 +138,7 @@ enum AnnotateDrawing {
     }
 
     /// 三角箭头，尖端在 `tip`，朝 `angle` 方向。
-    static func arrowHead(tip: CGPoint, angle: CGFloat, length: CGFloat, width: CGFloat) -> CGPath {
+    static func arrowHead(tip: CGPoint, angle: CGFloat, length: CGFloat, width: CGFloat, closed: Bool = true) -> CGPath {
         let back = CGPoint(x: tip.x - cos(angle) * length, y: tip.y - sin(angle) * length)
         let half = width / 2
         let left = CGPoint(
@@ -126,10 +150,8 @@ enum AnnotateDrawing {
             y: back.y + sin(angle - .pi / 2) * half
         )
         let path = CGMutablePath()
-        path.move(to: tip)
-        path.addLine(to: left)
-        path.addLine(to: right)
-        path.closeSubpath()
+        path.addLines(between: closed ? [tip, left, right] : [left, tip, right])
+        if closed { path.closeSubpath() }
         return path
     }
 

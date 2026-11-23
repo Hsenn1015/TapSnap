@@ -295,13 +295,7 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
 
     @MainActor
     @objc private func checkPermissions() {
-        if Permissions.status(of: .screenCapture) != .authorized {
-            environment.screenPermission.request()
-        } else if Permissions.status(of: .accessibility) != .authorized {
-            environment.showPermissionGuide(.accessibility, for: "辅助操作")
-        } else {
-            environment.toast.success("屏幕录制和辅助功能已授权")
-        }
+        environment.screenPermission.request()
     }
 
     @objc private func showAbout() {

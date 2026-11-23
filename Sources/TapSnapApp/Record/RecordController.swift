@@ -117,8 +117,10 @@ final class RecordController {
             } catch {
                 guard token == current else { return }
                 teardown()
+                let selection = rect.offsetBy(dx: screen.frame.minX, dy: screen.frame.minY)
                 guard !(error is CancellationError),
-                      !environment.guideScreenCapturePermission(for: error, resuming: .init(outcome: .record)) else { return }
+                      !environment.guideScreenCapturePermission(for: error, resuming: .init(outcome: .record,
+                          rect: selection, displayID: screen.id)) else { return }
                 environment.toast.error("无法开始录制：\(error.localizedDescription)")
             }
         }

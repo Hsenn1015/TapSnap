@@ -43,6 +43,7 @@ internal static partial class Program
                 Require(after.Report.MeanRgbError <= before.Report.MeanRgbError + 2, "GIF color error regressed.");
                 using var preview = (RecordingPreview)after.Preview;
                 await CheckStaticFrameEdits(args[2]);
+                CheckAnnotationHits();
                 await CheckRecognitionImagePreview();
                 await CheckTextRecognitionWindow();
                 await CheckEditorZoom();
@@ -116,6 +117,21 @@ internal static partial class Program
 
     [DllImport("user32.dll")]
     private static extern bool SetCursorPos(int x, int y);
+
+    private static void CheckAnnotationHits()
+    {
+        var style = new AnnotationStyle { LineWidth = 8 };
+        var arrow = new Annotation(AnnotationTool.Arrow, [new Point(10, 10), new Point(150, 100)], style);
+        Require(!arrow.Hit(new Point(30, 90), 3), "Blank area inside the arrow's bounds should accept a new mark.");
+        Require(arrow.Hit(new Point(80, 55), 3), "The arrow's shaft should be selectable.");
+        var horizontal = new Annotation(AnnotationTool.Arrow, [new Point(10, 40), new Point(160, 40)], style);
+        Require(horizontal.Hit(new Point(134, 50), 1), "The filled arrow head outside its shaft should be selectable.");
+        var oval = new Annotation(AnnotationTool.Ellipse, [new Point(20, 20), new Point(140, 100)], style);
+        Require(!oval.Hit(new Point(80, 60), 3) && oval.Hit(new Point(80, 20), 3),
+            "An outlined ellipse should be selectable along its outline.");
+        Require((oval with { Style = style with { Fill = ShapeFill.Fill } }).Hit(new Point(80, 60), 3),
+            "A filled ellipse should be selectable from its interior.");
+    }
 
     private static async Task CheckRecognitionImagePreview()
     {

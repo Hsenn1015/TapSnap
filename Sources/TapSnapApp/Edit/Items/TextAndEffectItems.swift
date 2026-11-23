@@ -582,36 +582,38 @@ final class PathTagItem: EditItem {
 
     func draw(in context: CGContext, scale: CGFloat) {
         guard points.count > 1 else { return }
-        let color = style.resolvedColor
-        let lineWidth = style.resolvedLineWidth
+        let (shaft, head) = paths
 
         context.saveGState()
         AnnotateDrawing.configureStroke(style, in: context)
-        context.setFillColor(color)
+        context.setFillColor(style.resolvedColor)
         context.setLineJoin(.round)
-
-        if showsArrowHead, let tip = points.last, let previous = points.dropLast().last {
-            let angle = atan2(tip.y - previous.y, tip.x - previous.x)
-            let headLength = max(AnnotateDrawing.minimumHeadLength, lineWidth * 3.5)
-            let shaft = Array(points.dropLast()) + [
-                CGPoint(
-                    x: tip.x - cos(angle) * headLength * 0.85,
-                    y: tip.y - sin(angle) * headLength * 0.85
-                )
-            ]
-            context.addPath(AnnotateDrawing.smoothPath(shaft))
-            context.strokePath()
-            context.addPath(AnnotateDrawing.arrowHead(
-                tip: tip,
-                angle: angle,
-                length: headLength,
-                width: headLength * 0.7
-            ))
+        context.addPath(shaft)
+        context.strokePath()
+        if let head {
+            context.addPath(head)
             context.fillPath()
-        } else {
-            context.addPath(AnnotateDrawing.smoothPath(points))
-            context.strokePath()
         }
         context.restoreGState()
+    }
+
+    func hitTest(_ point: CGPoint, tolerance: CGFloat) -> Bool {
+        guard points.count > 1 else { return false }
+        let (shaft, head) = paths
+        if AnnotateDrawing.hitsStroke(shaft, at: point, width: style.resolvedLineWidth, tolerance: tolerance) { return true }
+        guard let head else { return false }
+        return head.contains(point) || AnnotateDrawing.hitsStroke(head, at: point, width: 0, tolerance: tolerance)
+    }
+
+    private var paths: (shaft: CGPath, head: CGPath?) {
+        guard showsArrowHead, let tip = points.last, let previous = points.dropLast().last else {
+            return (AnnotateDrawing.smoothPath(points), nil)
+        }
+        let angle = atan2(tip.y - previous.y, tip.x - previous.x)
+        let headLength = max(AnnotateDrawing.minimumHeadLength, style.resolvedLineWidth * 3.5)
+        let shaftEnd = CGPoint(x: tip.x - cos(angle) * headLength * 0.85,
+                               y: tip.y - sin(angle) * headLength * 0.85)
+        let head = AnnotateDrawing.arrowHead(tip: tip, angle: angle, length: headLength, width: headLength * 0.7)
+        return (AnnotateDrawing.smoothPath(Array(points.dropLast()) + [shaftEnd]), head)
     }
 }

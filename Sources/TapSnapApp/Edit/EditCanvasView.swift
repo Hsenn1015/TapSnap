@@ -500,8 +500,8 @@ final class EditItemLayerView: NSView {
             needsDisplay = true
             return
         }
-        if event.clickCount == 2,
-           let item = controller.document.item(at: point) as? TextItem {
+        let hit = controller.document.item(at: point, tolerance: hitTolerance)
+        if event.clickCount == 2, let item = hit as? TextItem {
             controller.beginTextEditing(item, isNew: false)
             synchronizeTextEditor()
             return
@@ -514,7 +514,7 @@ final class EditItemLayerView: NSView {
             needsDisplay = true
             return
         }
-        if let item = controller.document.item(at: point),
+        if let item = hit,
            controller.selectedTool != .privacy || item.kind == .privacy {
             controller.select(item)
             mode = .moving(item: item, start: point, original: item.bounds)
@@ -657,11 +657,12 @@ final class EditItemLayerView: NSView {
     /// 橡皮：擦掉指针下的图元（可撤销）。
     private func erase(at point: CGPoint) {
         guard let controller else { return }
-        let tolerance = 4 / max(displayScale, 0.1)
-        for item in controller.document.items where item.hitTest(point, tolerance: tolerance) {
+        for item in controller.document.items where item.hitTest(point, tolerance: hitTolerance) {
             controller.remove(item)
         }
     }
+
+    private var hitTolerance: CGFloat { 4 / max(displayScale, 0.1) }
 
     /// 多边形：⌘ 双击或 ⏎ 闭合。
     private func finishPolygon() {

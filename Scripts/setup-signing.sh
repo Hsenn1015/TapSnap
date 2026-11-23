@@ -23,7 +23,7 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 if [ "${1:-}" = "--force" ]; then
-  echo "==> 删除已有的「$IDENTITY」证书"
+  echo "==> 删除已有的「${IDENTITY}」证书"
   security find-certificate -c "$IDENTITY" -a -Z "$KEYCHAIN" 2>/dev/null \
     | awk '/SHA-1 hash:/ {print $3}' \
     | while read -r sha; do
@@ -32,13 +32,13 @@ if [ "${1:-}" = "--force" ]; then
 fi
 
 if security find-identity -p codesigning "$KEYCHAIN" 2>/dev/null | grep -q "\"$IDENTITY\""; then
-  echo "==> 已存在签名身份「$IDENTITY」，跳过创建"
+  echo "==> 已存在签名身份「${IDENTITY}」，跳过创建"
   security find-identity -p codesigning "$KEYCHAIN" | grep "$IDENTITY"
   exit 0
 fi
 
 echo "==> 生成自签名证书"
-openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+/usr/bin/openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
   -keyout "$WORK/key.pem" -out "$WORK/cert.pem" \
   -subj "/CN=$IDENTITY/O=TapSnap/C=CN" \
   -addext "basicConstraints=critical,CA:false" \
@@ -46,7 +46,7 @@ openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
   -addext "extendedKeyUsage=critical,codeSigning" \
   2>/dev/null
 
-openssl pkcs12 -export \
+/usr/bin/openssl pkcs12 -export \
   -inkey "$WORK/key.pem" -in "$WORK/cert.pem" \
   -name "$IDENTITY" -out "$WORK/identity.p12" -passout pass:sensnap 2>/dev/null
 
@@ -57,7 +57,7 @@ security import "$WORK/identity.p12" -k "$KEYCHAIN" -P sensnap \
 
 # 新版 macOS 还需要显式放开 partition list，否则签名时会弹「想要访问密钥」。
 security set-key-partition-list \
-  -S apple-tool:,apple:,codesign: -s -k "" "$KEYCHAIN" >/dev/null 2>&1 || {
+  -S apple-tool:,apple:,codesign: -s -t private -l "$IDENTITY" -k "" "$KEYCHAIN" >/dev/null 2>&1 || {
     echo "    提示：放开私钥访问权限失败（通常是因为钥匙串有密码）。"
     echo "    第一次签名时如果弹窗询问，请选择「始终允许」。"
   }

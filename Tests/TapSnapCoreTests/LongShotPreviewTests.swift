@@ -8,13 +8,21 @@ import XCTest
 
 @MainActor
 final class LongShotPreviewTests: XCTestCase {
-    private func image(width: Int = 600, height: Int = 6000) -> CGImage {
+    private func image(width: Int = 600, height: Int = 6000, patterned: Bool = false) -> CGImage {
         let context = CGContext(data: nil, width: width, height: height,
                                 bitsPerComponent: 8, bytesPerRow: 0,
                                 space: CGColorSpaceCreateDeviceRGB(),
                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         context.setFillColor(NSColor.white.cgColor)
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        if patterned {
+            var seed: UInt32 = 42
+            for row in 0..<height {
+                seed = seed &* 1_664_525 &+ 1_013_904_223
+                context.setFillColor(CGColor(gray: CGFloat(seed >> 24) / 255, alpha: 1))
+                context.fill(CGRect(x: 0, y: row, width: width, height: 1))
+            }
+        }
         return context.makeImage()!
     }
 
@@ -36,11 +44,11 @@ final class LongShotPreviewTests: XCTestCase {
         }
     }
 
-    private func screen(visibleFrame: CGRect? = nil) -> ScreenDescriptor {
+    private func screen(visibleFrame: CGRect? = nil, frame: CGRect? = nil, scale: CGFloat? = nil) -> ScreenDescriptor {
         let actual = ScreenLayout.current()[0]
-        return ScreenDescriptor(id: actual.id, frame: actual.frame,
+        return ScreenDescriptor(id: actual.id, frame: frame ?? actual.frame,
                                 visibleFrame: visibleFrame ?? actual.visibleFrame,
-                                scale: actual.scale, isMain: true, localizedName: "Test")
+                                scale: scale ?? actual.scale, isMain: true, localizedName: "Test")
     }
 
     func testLiveHintDoesNotOverlapFinishOrCancel() throws {
@@ -61,7 +69,72 @@ final class LongShotPreviewTests: XCTestCase {
         }
     }
 
-    func testMissingScrollViewportKeepsCaptureUsableAndOnlyShowsSelectionOnRequest() async throws {
+    func testMissingScrollViewportStitchesOriginalRetinaSelectionWithoutAskingAgain() async throws {
+        try requireWindowServer()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let config = ConfigStore(fileURL: directory.appendingPathComponent("settings.json"))
+        config.update { $0.longShot.autoScroll = false }
+        let streamer = ScreenStreamer(loadContent: {
+            try await Task.sleep(for: .seconds(10))
+            throw CaptureError.noDisplays
+        })
+        let session = LongShotSession(environment: AppEnvironment(config: config),
+                                      makeStreamer: { streamer }, resolveRegion: { _, _ in nil })
+        defer { session.cancel() }
+        let origin = screen().frame.origin
+        let rect = CGRect(x: origin.x + 60, y: origin.y + 60, width: 160, height: 120)
+        let display = screen(frame: rect, scale: 2)
+        let page = image(width: 320, height: 470, patterned: true)
+        func frame(at offset: Int) throws -> CGImage {
+            try XCTUnwrap(page.cropping(to: CGRect(x: 0, y: offset, width: 320, height: 240)))
+        }
+        let first = try frame(at: 0)
+        session.beginCapturing(rect: rect, screen: display, initialImage: first)
+        let window = try previewWindow()
+        let content = try XCTUnwrap(window.contentView)
+        let views = descendants(content)
+        let regionButton = try XCTUnwrap(views.compactMap { $0 as? NSButton }.first { $0.title == "滚动区域…" })
+        let status = try XCTUnwrap(views.compactMap { $0 as? NSTextField }.first { $0.stringValue.contains("滚动") })
+        let liveImage = try XCTUnwrap(views.compactMap { $0 as? LongShotPreviewView }.first)
+        session.didScroll(at: CGPoint(x: rect.midX, y: rect.midY))
+        for _ in 0..<100 {
+            if status.stringValue.contains("沿用原选区"), liveImage.image != nil { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(status.stringValue.contains("沿用原选区"))
+        XCTAssertTrue(window.isVisible)
+        XCTAssertTrue(regionButton.isEnabled)
+        XCTAssertFalse(NSApp.windows.contains { $0 is SelectionOverlayWindow && $0.isVisible })
+
+        regionButton.performClick(nil)
+        let overlay = try XCTUnwrap(NSApp.windows.first { $0 is SelectionOverlayWindow && $0.isVisible })
+        let selection = try XCTUnwrap(overlay.contentView as? SelectionOverlayView)
+        streamer.onFrame?(.init(image: try frame(at: 54), timestamp: Date()))
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        XCTAssertEqual(liveImage.image?.height, first.height)
+
+        selection.keyDown(with: keyEvent(code: 53, characters: "\u{1b}", window: overlay))
+        XCTAssertFalse(overlay.isVisible)
+        XCTAssertTrue(window.isVisible, "取消第二次框选应回到原长截图预览")
+
+        func assertStitched(offset: Int) async throws {
+            for _ in 0..<100 {
+                if liveImage.image?.height == first.height + offset { break }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            XCTAssertEqual(liveImage.image?.height, first.height + offset)
+        }
+        try await assertStitched(offset: 54)
+        streamer.onFrame?(.init(image: try frame(at: 108), timestamp: Date()))
+        try await assertStitched(offset: 108)
+        XCTAssertEqual(window.title, "正在截取长图")
+        XCTAssertFalse(regionButton.isEnabled)
+    }
+
+    func testScrollInSelectionMarginKeepsTheExistingSession() async throws {
         try requireWindowServer()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -72,41 +145,29 @@ final class LongShotPreviewTests: XCTestCase {
                 try await Task.sleep(for: .seconds(10))
                 throw CaptureError.noDisplays
             })
-        }, resolveRegion: { _, _ in nil })
+        }, resolveRegion: { _, selection in
+            let body = selection.insetBy(dx: 20, dy: 20)
+            return ScrollRegionResolution(viewport: body, content: body)
+        })
         defer { session.cancel() }
         let display = screen()
         let rect = CGRect(x: display.frame.minX + 60, y: display.frame.minY + 60, width: 300, height: 220)
-        let first = image(width: Int(rect.width * display.scale), height: Int(rect.height * display.scale))
-        session.beginCapturing(rect: rect, screen: display, initialImage: first)
+        session.beginCapturing(rect: rect, screen: display,
+                               initialImage: image(width: Int(rect.width * display.scale), height: Int(rect.height * display.scale)))
         let window = try previewWindow()
-        let content = try XCTUnwrap(window.contentView)
-        let views = descendants(content)
-        let regionButton = try XCTUnwrap(views.compactMap { $0 as? NSButton }.first { $0.title == "滚动区域…" })
+        let views = descendants(try XCTUnwrap(window.contentView))
         let status = try XCTUnwrap(views.compactMap { $0 as? NSTextField }.first { $0.stringValue.contains("滚动") })
+        let finish = try XCTUnwrap(views.compactMap { $0 as? NSButton }.first { $0.title == "完成" })
         session.didScroll(at: CGPoint(x: rect.midX, y: rect.midY))
         for _ in 0..<100 {
-            if status.stringValue.contains("没找到滚动区域") { break }
+            if status.stringValue.contains("已确定滚动区域") { break }
             try await Task.sleep(for: .milliseconds(10))
         }
-        XCTAssertTrue(status.stringValue.contains("点「滚动区域…」"))
+        XCTAssertTrue(status.stringValue.contains("已确定滚动区域"))
+        session.didScroll(at: CGPoint(x: rect.midX, y: rect.minY + 5))
+        XCTAssertTrue(finish.isEnabled)
         XCTAssertTrue(window.isVisible)
-        XCTAssertTrue(regionButton.isEnabled)
-        XCTAssertFalse(NSApp.windows.contains { $0 is SelectionOverlayWindow && $0.isVisible })
-
-        regionButton.performClick(nil)
-        let overlay = try XCTUnwrap(NSApp.windows.first { $0 is SelectionOverlayWindow && $0.isVisible })
-        let selection = try XCTUnwrap(overlay.contentView as? SelectionOverlayView)
-        selection.keyDown(with: keyEvent(code: 53, characters: "\u{1b}", window: overlay))
-        XCTAssertFalse(overlay.isVisible)
-        XCTAssertTrue(window.isVisible, "取消第二次框选应回到原长截图预览")
-
-        let finish = try XCTUnwrap(views.compactMap { $0 as? NSButton }.first { $0.title == "完成" })
-        finish.performClick(nil)
-        for _ in 0..<100 {
-            if NSApp.windows.contains(where: { $0.isVisible && $0.title == "长截图预览" }) { break }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        XCTAssertEqual(try previewWindow().title, "长截图预览")
+        XCTAssertEqual(window.title, "正在截取长图")
     }
 
     func testFinishedLongShotOpensSameDocumentInScrollableEditor() async throws {

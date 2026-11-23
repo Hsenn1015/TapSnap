@@ -28,7 +28,6 @@ struct PendingScreenCapture: Codable, Equatable {
 
 /// Only passed to the replacement process when TapSnap restarts itself.
 struct ScreenPermissionContinuation: Codable, Equatable {
-    static let probeArgument = "--check-screen-permission"
     static let resumeArgument = "--resume-screen-permission"
 
     let capture: PendingScreenCapture?
@@ -45,14 +44,16 @@ struct ScreenPermissionContinuation: Codable, Equatable {
     }
 }
 
-enum ScreenPermissionNextStep: Equatable {
-    case wait, resume, reopen
+enum ScreenAccessCheck: Equatable {
+    case available, denied, failed(String)
 
-    static func decide(currentGrant: Bool, freshGrant: Bool, captureRejected: Bool,
-                       userConfirmed: Bool, mayReopenAutomatically: Bool) -> Self {
-        if currentGrant && !captureRejected { return .resume }
-        if userConfirmed || (freshGrant && mayReopenAutomatically) { return .reopen }
-        return .wait
+    static func run(_ check: () async throws -> Void) async -> Self {
+        do {
+            try await check()
+            return .available
+        } catch {
+            return CaptureError.isPermissionDenied(error) ? .denied : .failed(error.localizedDescription)
+        }
     }
 }
 
@@ -62,70 +63,99 @@ final class ScreenPermissionController: NSObject, ObservableObject, NSWindowDele
     private var window: NSPanel?
     private var continuation: ScreenPermissionContinuation?
     private var monitor: Task<Void, Never>?
-    private var requested = false
-    private var captureRejected = false
-    private var mayReopenAutomatically = true
+    private var verification: Task<Void, Never>?
 
-    @Published private(set) var settingsOpened = false
+    @Published private(set) var offersRelaunch = false
+    @Published private(set) var isChecking = false
     @Published private(set) var feedback: String?
 
     init(environment: AppEnvironment) {
         self.environment = environment
     }
 
+    /// A capture reaches here only after ScreenCaptureKit has already denied it.
     func request(for capture: PendingScreenCapture? = nil) {
-        if window != nil {
-            if let capture, let prior = continuation {
-                continuation = .init(capture: capture, previousApp: prior.previousApp)
-            }
-            window?.makeKeyAndOrderFront(nil)
+        if let capture {
+            verification?.cancel()
+            verification = nil
+            isChecking = false
+            continuation = .init(capture: capture, previousApp: continuation?.previousApp
+                ?? NSWorkspace.shared.frontmostApplication?.processIdentifier)
+            // Enumeration may succeed while the actual snapshot is still denied.
+            // Keep an explicit restart available even if the passive check is stale.
+            offersRelaunch = true
+        }
+        if let window {
+            window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-
-        continuation = .init(capture: capture, previousApp: NSWorkspace.shared.frontmostApplication?.processIdentifier)
-        captureRejected = capture != nil && isAuthorized
-        if !isAuthorized && !requested {
-            requested = true
-            NSApp.activate(ignoringOtherApps: true)
-            _ = Permissions.request(.screenCapture)
-        }
-        if isAuthorized && !captureRejected {
-            finish()
-        } else {
+        if capture != nil {
             present()
+        } else if continuation == nil {
+            continuation = .init(capture: nil, previousApp: nil)
+            continueAfterAuthorization()
         }
     }
 
     func restoreOnLaunch(arguments: [String] = CommandLine.arguments) {
         guard let saved = ScreenPermissionContinuation.fromArguments(arguments) else { return }
         continuation = saved
-        requested = true
-        mayReopenAutomatically = false
-        if isAuthorized {
+        if saved.capture != nil {
             finish()
         } else {
-            settingsOpened = true
-            feedback = "请在系统设置中启用这份 TapSnap。"
-            present()
+            continueAfterAuthorization()
         }
     }
 
     func openSettings() {
-        settingsOpened = true
-        feedback = nil
         Permissions.openSettingsPanel(for: .screenCapture)
-        watchPermission()
     }
 
+    /// Enumerate shareable content only on an explicit check or a new passive grant.
+    /// This checks access in the process that actually takes the screenshot.
     func continueAfterAuthorization() {
-        advance(freshGrant: false, userConfirmed: true)
+        guard continuation != nil, verification == nil else { return }
+        isChecking = true
+        let rechecking = window != nil
+        verification = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let result = await ScreenAccessCheck.run { try await self.environment.capture.checkAccess() }
+            guard !Task.isCancelled else { return }
+            self.verification = nil
+            self.isChecking = false
+            switch result {
+            case .available:
+                self.finish()
+            case .denied:
+                if rechecking {
+                    self.offersRelaunch = true
+                    self.feedback = "macOS 仍未允许当前运行的 TapSnap 录屏。如果设置中已经开启，可以重新打开 TapSnap 再试。"
+                }
+                if self.window == nil { self.present() }
+            case .failed(let detail):
+                let message = "无法检查屏幕录制权限：\(detail)"
+                if self.window != nil {
+                    self.feedback = message
+                } else {
+                    self.continuation = nil
+                    self.environment.toast.error(message)
+                }
+            }
+        }
     }
 
-    func copyApplicationPath() {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(Bundle.main.bundlePath, forType: .string)
+    func reopenAfterAuthorization() {
+        guard offersRelaunch, !isChecking, let saved = continuation else { return }
+        guard !environment.isUpdateInteractionBusy else {
+            feedback = "请先完成录制或保存并关闭编辑窗口，再重新打开 TapSnap。"
+            return
+        }
+        do {
+            try reopen(with: saved)
+        } catch {
+            feedback = "暂时无法重新打开 TapSnap，请从菜单退出后，再打开这份应用。"
+        }
     }
 
     func close() { window?.close() }
@@ -133,9 +163,12 @@ final class ScreenPermissionController: NSObject, ObservableObject, NSWindowDele
     func windowWillClose(_ notification: Notification) {
         monitor?.cancel()
         monitor = nil
+        verification?.cancel()
+        verification = nil
+        isChecking = false
+        offersRelaunch = false
         window = nil
         continuation = nil
-        settingsOpened = false
         feedback = nil
     }
 
@@ -143,17 +176,11 @@ final class ScreenPermissionController: NSObject, ObservableObject, NSWindowDele
 
     private func present() {
         let settingsInFront = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.systempreferences"
-        if settingsInFront { settingsOpened = true }
         let theme = environment.theme
-        let view = NSHostingController(rootView: ScreenPermissionGuide(controller: self, theme: theme))
-        view.sizingOptions = [.preferredContentSize]
-        let panel = NSPanel(contentViewController: view)
-        panel.title = "TapSnap 权限"
-        panel.styleMask = [.titled, .closable]
-        panel.isReleasedWhenClosed = false
-        panel.appearance = NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
+        let panel = PermissionGuidePanel(theme: theme) {
+            ScreenPermissionGuide(controller: self, theme: theme)
+        }
         panel.delegate = self
-        panel.center()
         window = panel
         if settingsInFront {
             panel.orderBack(nil)
@@ -166,58 +193,14 @@ final class ScreenPermissionController: NSObject, ObservableObject, NSWindowDele
 
     private func watchPermission() {
         monitor?.cancel()
+        var wasAuthorized = isAuthorized
         monitor = Task { @MainActor [weak self] in
-            // A newly started process can see a grant before the current process picks it up.
-            for _ in 0..<90 {
-                try? await Task.sleep(for: .seconds(2))
-                guard let self, !Task.isCancelled else { return }
-                if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.systempreferences" {
-                    self.settingsOpened = true
-                }
-                let freshGrant: Bool
-                if self.mayReopenAutomatically && (!self.isAuthorized || self.captureRejected) {
-                    freshGrant = await self.freshAuthorization()
-                } else {
-                    freshGrant = false
-                }
-                guard !Task.isCancelled else { return }
-                self.advance(freshGrant: freshGrant, userConfirmed: false)
-            }
-        }
-    }
-
-    private func freshAuthorization() async -> Bool {
-        guard let executable = Bundle.main.executableURL else { return false }
-        return await withCheckedContinuation { continuation in
-            let probe = Process()
-            probe.executableURL = executable
-            probe.arguments = [ScreenPermissionContinuation.probeArgument]
-            probe.standardOutput = FileHandle.nullDevice
-            probe.standardError = FileHandle.nullDevice
-            probe.terminationHandler = { continuation.resume(returning: $0.terminationStatus == 0) }
-            do { try probe.run() }
-            catch { continuation.resume(returning: false) }
-        }
-    }
-
-    private func advance(freshGrant: Bool, userConfirmed: Bool) {
-        guard let continuation else { return }
-        switch ScreenPermissionNextStep.decide(currentGrant: isAuthorized, freshGrant: freshGrant,
-                                               captureRejected: captureRejected, userConfirmed: userConfirmed,
-                                               mayReopenAutomatically: mayReopenAutomatically) {
-        case .wait: break
-        case .resume: finish()
-        case .reopen:
-            guard !environment.isUpdateInteractionBusy else {
-                settingsOpened = true
-                feedback = "保存当前内容后，点击「已授权，继续」。"
-                return
-            }
-            do {
-                try reopen(with: continuation)
-            } catch {
-                mayReopenAutomatically = false
-                feedback = "暂时无法重新打开 TapSnap，请再点一次继续。"
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                guard let self else { return }
+                let authorized = self.isAuthorized
+                if authorized && !wasAuthorized { self.continueAfterAuthorization() }
+                wasAuthorized = authorized
             }
         }
     }
@@ -227,7 +210,7 @@ final class ScreenPermissionController: NSObject, ObservableObject, NSWindowDele
         continuation = nil
         close()
         guard let capture = saved.capture else {
-            environment.toast.success("录屏权限已开启")
+            environment.reportCheckedPermissions()
             return
         }
         Task { @MainActor [weak self] in
@@ -270,68 +253,18 @@ final class ScreenPermissionController: NSObject, ObservableObject, NSWindowDele
 struct ScreenPermissionGuide: View {
     @ObservedObject var controller: ScreenPermissionController
     let theme: Theme
-    @State private var showsHelp = false
-    @State private var copiedPath = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "rectangle.dashed")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(theme.token(.primary))
-                    .frame(width: 40, height: 40)
-                    .background(theme.token(.muted), in: RoundedRectangle(cornerRadius: 10))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("允许截图和录屏")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(theme.token(.foreground))
-                    Text("开启录屏权限后，TapSnap 会继续刚才的操作。")
-                        .font(.system(size: 13))
-                        .foregroundStyle(theme.token(.mutedForeground))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+        PermissionGuideView(theme: theme, title: "允许截图和录屏",
+                            instructions: "在系统设置的「隐私与安全性」中打开「屏幕与系统音频录制」（部分系统显示为「屏幕录制」），允许 TapSnap，然后返回这里重新检测。",
+                            feedback: controller.feedback, isChecking: controller.isChecking,
+                            openSettings: { controller.openSettings() },
+                            recheck: { controller.continueAfterAuthorization() },
+                            relaunch: relaunchAction, close: { controller.close() })
+    }
 
-            DisclosureGroup("列表里找不到 TapSnap？", isExpanded: $showsHelp) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("在「录屏与系统录音」点 ＋。按 ⌘⇧G，粘贴应用路径。")
-                        .fixedSize(horizontal: false, vertical: true)
-                    SnapButton(copiedPath ? "已复制路径" : "复制应用路径", theme: theme, variant: .outline, size: .sm) {
-                        controller.copyApplicationPath()
-                        copiedPath = true
-                    }
-                }
-                .padding(.top, 8)
-            }
-            .font(.system(size: 12))
-            .foregroundStyle(theme.token(.mutedForeground))
-
-            if let feedback = controller.feedback {
-                Text(feedback)
-                    .font(.system(size: 12))
-                    .foregroundStyle(theme.token(.mutedForeground))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Divider()
-            HStack(spacing: 8) {
-                SnapButton("稍后", theme: theme, variant: .ghost) { controller.close() }
-                    .keyboardShortcut(.cancelAction)
-                Spacer(minLength: 4)
-                if controller.settingsOpened {
-                    SnapButton("打开系统设置", theme: theme, variant: .outline) { controller.openSettings() }
-                    SnapButton("已授权，继续", theme: theme, variant: .primary) { controller.continueAfterAuthorization() }
-                        .keyboardShortcut(.defaultAction)
-                } else {
-                    SnapButton("打开系统设置", theme: theme, variant: .primary) { controller.openSettings() }
-                        .keyboardShortcut(.defaultAction)
-                }
-            }
-        }
-        .padding(20)
-        .frame(width: 400)
-        .background(theme.token(.popover))
-        .preferredColorScheme(theme.isDark ? .dark : .light)
+    private var relaunchAction: (() -> Void)? {
+        guard controller.offersRelaunch else { return nil }
+        return { controller.reopenAfterAuthorization() }
     }
 }

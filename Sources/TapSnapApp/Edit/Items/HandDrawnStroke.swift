@@ -7,12 +7,7 @@ enum HandDrawnStroke {
         let width = style.resolvedLineWidth
         let color = style.resolvedColor
         let pen = style.handDrawnPen
-        let primaryWidth: CGFloat
-        switch pen {
-        case .single: primaryWidth = width * 0.85
-        case .sketch: primaryWidth = width
-        case .ink: primaryWidth = width * 1.45
-        }
+        let primaryWidth = primaryWidth(for: style)
         let primary = roughened(path, width: width, roughness: style.handDrawnRoughness)
         context.setLineJoin(.round)
         context.setLineWidth(primaryWidth)
@@ -38,6 +33,26 @@ enum HandDrawnStroke {
         context.addPath(secondary)
         context.strokePath()
         context.endTransparencyLayer()
+    }
+
+    static func hits(_ path: CGPath, at point: CGPoint, style: EditItemStyle, tolerance: CGFloat) -> Bool {
+        let width = style.resolvedLineWidth
+        let primary = roughened(path, width: width, roughness: style.handDrawnRoughness)
+        if AnnotateDrawing.hitsStroke(primary, at: point, width: primaryWidth(for: style), tolerance: tolerance) {
+            return true
+        }
+        guard style.handDrawnPen != .single, style.strokePattern == .solid else { return false }
+        let secondary = roughened(path, width: width, roughness: style.handDrawnRoughness, secondTrace: true)
+        return AnnotateDrawing.hitsStroke(secondary, at: point,
+                                          width: width * (style.handDrawnPen == .ink ? 1 : 0.76), tolerance: tolerance)
+    }
+
+    private static func primaryWidth(for style: EditItemStyle) -> CGFloat {
+        switch style.handDrawnPen {
+        case .single: return style.resolvedLineWidth * 0.85
+        case .sketch: return style.resolvedLineWidth
+        case .ink: return style.resolvedLineWidth * 1.45
+        }
     }
 
     static func fill(_ path: CGPath, color: CGColor, width: CGFloat, pattern: EditItemStyle.HandDrawnFill,

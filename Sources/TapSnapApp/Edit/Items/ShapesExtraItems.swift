@@ -31,11 +31,18 @@ final class PolygonItem: EditItem {
 
     func draw(in context: CGContext, scale: CGFloat) {
         guard points.count >= 3 else { return }
+        AnnotateDrawing.drawShape(path, style: style, in: context, lineJoin: .round)
+    }
+
+    func hitTest(_ point: CGPoint, tolerance: CGFloat) -> Bool {
+        points.count >= 3 && AnnotateDrawing.hitsShape(path, at: point, style: style, tolerance: tolerance)
+    }
+
+    private var path: CGPath {
         let path = CGMutablePath()
         path.addLines(between: points)
         path.closeSubpath()
-
-        AnnotateDrawing.drawShape(path, style: style, in: context, lineJoin: .round)
+        return path
     }
 }
 

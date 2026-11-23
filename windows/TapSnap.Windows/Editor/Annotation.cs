@@ -84,13 +84,40 @@ internal sealed record Annotation(AnnotationTool Tool, IReadOnlyList<Point> Poin
 
     public bool Hit(Point point, double tolerance)
     {
-        if (Tool is AnnotationTool.Arrow or AnnotationTool.Line or AnnotationTool.Pen or AnnotationTool.Highlight or AnnotationTool.PathTag)
+        if (Tool is AnnotationTool.Arrow or AnnotationTool.PathTag)
+        {
+            if (AnnotationDrawing.ArrowPaths(this, Style.LineWidth) is not { } paths) return false;
+            double headWidth = Style.Arrow == ArrowHead.Hollow ? Math.Max(1, Style.LineWidth / 1.5) : Style.LineWidth;
+            return HitsPath(paths.Shaft, point, Style.LineWidth + 2 * tolerance) ||
+                (Style.Arrow == ArrowHead.Solid && paths.Head.FillContains(point)) ||
+                HitsPath(paths.Head, point, (Style.Arrow == ArrowHead.Solid ? 0 : headWidth) + 2 * tolerance);
+        }
+        if (Tool is AnnotationTool.Rectangle or AnnotationTool.Ellipse or AnnotationTool.Polygon)
+        {
+            Geometry path = Tool switch
+            {
+                AnnotationTool.Rectangle => new RectangleGeometry(Bounds, Style.CornerRadius, Style.CornerRadius),
+                AnnotationTool.Ellipse => new EllipseGeometry(Bounds),
+                _ => AnnotationDrawing.Polygon(Points, true)
+            };
+            if (Style.Fill != ShapeFill.Outline && path.FillContains(point)) return true;
+            double width = Style.Fill == ShapeFill.Fill ? 0 : Style.LineWidth;
+            return HitsPath(path, point, width + 2 * tolerance);
+        }
+        if (Tool is AnnotationTool.Line or AnnotationTool.Pen or AnnotationTool.Highlight)
+        {
+            double width = Tool == AnnotationTool.Highlight ? Math.Max(8, Style.LineWidth * 4) : Style.LineWidth;
             return Points.Zip(Points.Skip(1), (a, b) => Distance(point, a, b))
-                .Any(distance => distance <= tolerance + Style.LineWidth / 2);
+                .Any(distance => distance <= tolerance + width / 2);
+        }
         Rect bounds = Bounds;
         bounds.Inflate(tolerance, tolerance);
         return bounds.Contains(point);
     }
+
+    private static bool HitsPath(Geometry path, Point point, double width) =>
+        width > 0 && path.StrokeContains(new Pen(Brushes.Black, width)
+        { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round }, point);
 
     private static double Distance(Point point, Point start, Point end)
     {
@@ -187,7 +214,7 @@ internal static class AnnotationDrawing
         return brush;
     }
 
-    private static StreamGeometry Polygon(IReadOnlyList<Point> points, bool close)
+    internal static StreamGeometry Polygon(IReadOnlyList<Point> points, bool close)
     {
         var geometry = new StreamGeometry();
         using (StreamGeometryContext context = geometry.Open())
@@ -201,28 +228,38 @@ internal static class AnnotationDrawing
 
     private static void DrawArrow(DrawingContext context, Annotation item, Pen pen)
     {
+        if (ArrowPaths(item, pen.Thickness) is not { } paths) return;
+        context.DrawGeometry(null, pen, paths.Shaft);
+        switch (item.Style.Arrow)
+        {
+            case ArrowHead.Open:
+                context.DrawLine(pen, paths.Left, paths.Tip);
+                context.DrawLine(pen, paths.Tip, paths.Right);
+                break;
+            case ArrowHead.Hollow:
+                context.DrawGeometry(null, new Pen(pen.Brush, Math.Max(1, pen.Thickness / 1.5)), paths.Head);
+                break;
+            default:
+                context.DrawGeometry(pen.Brush, null, paths.Head);
+                break;
+        }
+    }
+
+    internal static (Geometry Shaft, Geometry Head, Point Left, Point Tip, Point Right)? ArrowPaths(Annotation item, double width)
+    {
+        if (item.Points.Count < 2) return null;
         Point start = item.Points[^2], tip = item.Points[^1];
         Vector forward = tip - start;
-        if (forward.Length < 0.5) return;
-        double length = Math.Min(forward.Length, Math.Max(9, pen.Thickness * 4));
+        if (forward.Length < 0.5) return null;
+        double length = Math.Min(forward.Length, Math.Max(9, width * 4));
         forward.Normalize();
         Vector across = new(-forward.Y, forward.X);
         Point left = tip - forward * length + across * (length * 0.46);
         Point right = tip - forward * length - across * (length * 0.46);
-        Point tail = item.Style.Arrow == ArrowHead.Open ? tip : tip - forward * (length * 0.9);
-        context.DrawGeometry(null, pen, Polygon(item.Points.Take(item.Points.Count - 1).Append(tail).ToArray(), false));
-        if (item.Style.Arrow == ArrowHead.Open)
-        {
-            context.DrawLine(pen, left, tip);
-            context.DrawLine(pen, tip, right);
-        }
-        else
-        {
-            Geometry head = Polygon(new[] { left, tip, right }, true);
-            if (item.Style.Arrow == ArrowHead.Hollow)
-                context.DrawGeometry(null, new Pen(pen.Brush, Math.Max(1, pen.Thickness / 1.5)), head);
-            else context.DrawGeometry(pen.Brush, null, head);
-        }
+        bool closed = item.Style.Arrow != ArrowHead.Open;
+        Point tail = closed ? tip - forward * (length * 0.9) : tip;
+        return (Polygon(item.Points.Take(item.Points.Count - 1).Append(tail).ToArray(), false),
+                Polygon(new[] { left, tip, right }, closed), left, tip, right);
     }
 
     private static FormattedText Text(Annotation item, string value, Brush ink)
