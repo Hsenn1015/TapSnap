@@ -28,6 +28,7 @@ SetCompressor /SOLID lzma
 Name "TapSnap"
 OutFile "${OUTPUT}"
 InstallDir "$LOCALAPPDATA\Programs\TapSnap"
+InstallDirRegKey HKCU "${UNINSTALL_KEY}" "InstallLocation"
 BrandingText "TapSnap ${VERSION} · ${ARCH}"
 VIProductVersion "${FILE_VERSION}"
 VIAddVersionKey /LANG=1033 "ProductName" "TapSnap"
@@ -40,6 +41,8 @@ VIAddVersionKey /LANG=1033 "LegalCopyright" "TapSnap contributors"
 !define MUI_UNICON "../TapSnap.Windows/TapSnap.ico"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\app\TapSnap.exe"
 !insertmacro MUI_PAGE_WELCOME
+!define MUI_PAGE_CUSTOMFUNCTION_LEAVE VerifyInstallDirectory
+!insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -51,6 +54,10 @@ LangString CloseApp ${LANG_SIMPCHINESE} "请先从通知区域退出 TapSnap，�
 LangString CloseApp ${LANG_ENGLISH} "Quit TapSnap from the notification area, then try again."
 LangString WrongArch ${LANG_SIMPCHINESE} "此安装包适用于 ${ARCH} Windows，请选择与电脑架构对应的版本。"
 LangString WrongArch ${LANG_ENGLISH} "This installer is for ${ARCH} Windows. Choose the installer for your PC architecture."
+LangString DirectoryInUse ${LANG_SIMPCHINESE} "此目录已有程序文件。请选择 TapSnap 的现有目录，或选择其他目录。"
+LangString DirectoryInUse ${LANG_ENGLISH} "This folder already contains program files. Select the existing TapSnap folder or choose another folder."
+LangString ChangeDirectory ${LANG_SIMPCHINESE} "TapSnap 当前安装在 $0。请先从 Windows 设置卸载当前版本，再选择新的安装目录。"
+LangString ChangeDirectory ${LANG_ENGLISH} "TapSnap is installed at $0. To change folders, uninstall the current version in Windows Settings first."
 
 !macro WaitForTapSnap
     ${Do}
@@ -66,7 +73,6 @@ LangString WrongArch ${LANG_ENGLISH} "This installer is for ${ARCH} Windows. Cho
 
 Function .onInit
     SetShellVarContext current
-    StrCpy $INSTDIR "$LOCALAPPDATA\Programs\TapSnap"
     !if "${ARCH}" == "arm64"
         ${IfNot} ${IsNativeARM64}
             MessageBox MB_OK|MB_ICONSTOP "$(WrongArch)" /SD IDOK
@@ -82,7 +88,25 @@ Function .onInit
     !endif
 FunctionEnd
 
+Function VerifyInstallDirectory
+    ReadRegStr $0 HKCU "${UNINSTALL_KEY}" "InstallLocation"
+    ${If} $0 == $INSTDIR
+        Return
+    ${EndIf}
+    ${If} $0 != ""
+    ${AndIf} ${FileExists} "$0\Uninstall.exe"
+        MessageBox MB_OK|MB_ICONEXCLAMATION "$(ChangeDirectory)" /SD IDOK
+        Abort
+    ${EndIf}
+    ${If} ${FileExists} "$INSTDIR\app"
+    ${OrIf} ${FileExists} "$INSTDIR\Uninstall.exe"
+        MessageBox MB_OK|MB_ICONEXCLAMATION "$(DirectoryInUse)" /SD IDOK
+        Abort
+    ${EndIf}
+FunctionEnd
+
 Section "TapSnap"
+    Call VerifyInstallDirectory
     !insertmacro WaitForTapSnap
     SetOutPath "$INSTDIR\app"
     File /r "${PAYLOAD}/*"
