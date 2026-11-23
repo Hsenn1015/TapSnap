@@ -17,16 +17,25 @@ architectures=$(/usr/bin/lipo -archs "$app/Contents/MacOS/TapSnap" | tr ' ' ',')
 package_id="$identity.installer"
 
 case "$identity" in
-    com.sensnap.app) system=true; home_install=false ;;
-    com.sensnap.app.company) system=false; home_install=true ;;
+    com.sensnap.app) install_location=/Applications ;;
+    com.sensnap.app.company) install_location="/Applications/TapSnap 水印" ;;
     *) echo "Unexpected TapSnap bundle identifier $identity" >&2; exit 2 ;;
 esac
 
 /usr/bin/codesign --verify --deep --strict "$app"
 stage=$(mktemp -d "${TMPDIR:-/tmp}/tapsnap-installer.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
-mkdir "$stage/payload"
+mkdir "$stage/payload" "$stage/resources"
 /usr/bin/ditto "$app" "$stage/payload/TapSnap.app"
+
+cat > "$stage/resources/conclusion.html" <<HTML
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<p>在访达侧栏打开「应用程序」，按下列路径找到 TapSnap。</p>
+<p><code>$install_location/TapSnap.app</code></p>
+</html>
+HTML
 
 cat > "$stage/components.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -50,7 +59,7 @@ cat > "$stage/components.plist" <<'PLIST'
 PLIST
 
 /usr/bin/pkgbuild --root "$stage/payload" --component-plist "$stage/components.plist" \
-    --install-location /Applications --identifier "$package_id" --version "$version" \
+    --install-location "$install_location" --identifier "$package_id" --version "$version" \
     "$stage/TapSnapComponent.pkg"
 
 cat > "$stage/Distribution" <<XML
@@ -58,7 +67,8 @@ cat > "$stage/Distribution" <<XML
 <installer-gui-script minSpecVersion="2">
     <title>TapSnap</title>
     <options customize="never" require-scripts="false" hostArchitectures="$architectures"/>
-    <domains enable_anywhere="false" enable_currentUserHome="$home_install" enable_localSystem="$system"/>
+    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
     <volume-check>
         <allowed-os-versions><os-version min="$minimum"/></allowed-os-versions>
     </volume-check>
@@ -68,4 +78,5 @@ cat > "$stage/Distribution" <<XML
 </installer-gui-script>
 XML
 
-/usr/bin/productbuild --distribution "$stage/Distribution" --package-path "$stage" "$output"
+/usr/bin/productbuild --distribution "$stage/Distribution" --package-path "$stage" \
+    --resources "$stage/resources" "$output"
