@@ -105,6 +105,7 @@ final class CaptureCoordinator {
             let window = SelectionOverlayWindow(screen: screen)
             let view = SelectionOverlayView(frame: CGRect(origin: .zero, size: screen.frame.size))
             view.screenImage = session?.frame(for: screen)?.image
+            view.showsFrozenSelection = outcome == .edit || outcome == .pin
             view.selectsWindows = session?.mode == .window
             if screens.count > 1, !view.selectsWindows, outcome != .longShot, outcome != .record,
                let desktop = Geometry.boundingBox(of: screens.map(\.frame)) {
@@ -203,9 +204,12 @@ final class CaptureCoordinator {
         }
     }
 
-    private func dismissOverlays() {
+    private func dismissOverlays(afterPin: Bool = false) {
         overlayViews.forEach { $0.stopBorderAnimation() }
-        overlayWindows.forEach { $0.orderOut(nil) }
+        for window in overlayWindows {
+            if afterPin { window.animationBehavior = .none }
+            window.orderOut(nil)
+        }
         overlayWindows.removeAll()
         overlayViews.removeAll()
     }
@@ -244,6 +248,10 @@ final class CaptureCoordinator {
 
         session.select(viewRect: rect, on: screen)
         let selectedOutcome = requestedOutcome ?? outcome
+        if selectedOutcome == .pin {
+            complete(session, outcome: .pin)
+            return
+        }
         let needsCleanFrame = selectedOutcome == .longShot && outcome != .longShot
         isPreparingHandoff = true
         Task { @MainActor in
@@ -288,8 +296,9 @@ final class CaptureCoordinator {
             return
         }
 
+        // 原位贴图及其隐私复查窗口先就位，再撤掉上方的框选层。
+        if outcome != .pin { dismissOverlays() }
         // 最近选区落盘和快门音不阻塞截图交接。
-        dismissOverlays()
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.environment.config.update { $0.capture.lastSelection = globalRect }
@@ -310,6 +319,7 @@ final class CaptureCoordinator {
                                    outputOptions: outcome == .edit || outcome == .save ? session.outputOptions : nil,
                                    forcePrivacy: forcePrivacy, reviewedAction: reviewedAction,
                                    initialAction: reviewedAction == nil ? initialAction : nil, restoring: document)
+            if outcome == .pin { dismissOverlays(afterPin: true) }
             return
         }
         switch outcome {
@@ -318,7 +328,9 @@ final class CaptureCoordinator {
         case .copy:
             environment.pinTransfer.copy(cropped, scale: document.scale, sourceTopLeft: document.sourceTopLeft)
         case .pin:
-            environment.pinGroups.show(cropped, from: document.sourceTopLeft, scale: document.scale)
+            environment.pinGroups.show(cropped, from: document.sourceTopLeft, scale: document.scale) {
+                self.dismissOverlays(afterPin: true)
+            }
         case .save:
             if !environment.saveScreenshot(cropped, formatOverride: session.outputOptions?.format, chooseLocation: true) {
                 environment.openEditor(image: cropped, scale: document.scale, captureRect: globalRect, captureScreen: screen,

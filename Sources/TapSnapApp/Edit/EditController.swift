@@ -913,8 +913,10 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
 
     private func pinToScreen() {
         guard let image = renderedImage() else { return }
-        environment.pinGroups.show(image, from: outputTopLeft, scale: document.scale)
-        close()
+        environment.pinGroups.show(image, from: outputTopLeft, scale: document.scale) {
+            window?.animationBehavior = .none
+            close()
+        }
     }
 
     private func recognizeText() {

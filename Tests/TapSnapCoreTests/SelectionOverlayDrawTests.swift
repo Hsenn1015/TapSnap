@@ -109,6 +109,30 @@ final class SelectionOverlayDrawTests: XCTestCase {
         _ = render(view, width: 200, height: 150)
     }
 
+    func testScreenshotSelectionKeepsTheUndimmedCapturedPixelsWhileLiveSelectionStaysTransparent() throws {
+        _ = NSApplication.shared
+        let view = SelectionOverlayView(frame: CGRect(x: 0, y: 0, width: 200, height: 150))
+        let image = makeScreenImage()
+        view.screenImage = image
+        view.showsSizeLabel = false
+        // 跨屏选区在当前覆盖层中可以从负坐标开始。
+        view.synchronizeSelection(CGRect(x: -40, y: 30, width: 200, height: 90), showToolbar: false)
+        view.showsFrozenSelection = true
+        let frozen = render(view, width: 200, height: 150)
+        let expected = try XCTUnwrap(NSBitmapImageRep(cgImage: image).colorAt(x: 95, y: 75)?.usingColorSpace(.deviceRGB))
+        let inside = try XCTUnwrap(frozen.colorAt(x: 95, y: 75)?.usingColorSpace(.deviceRGB))
+        XCTAssertEqual(inside.alphaComponent, 1, accuracy: 0.01)
+        XCTAssertEqual(inside.redComponent, expected.redComponent, accuracy: 0.02)
+        XCTAssertEqual(inside.greenComponent, expected.greenComponent, accuracy: 0.02)
+        XCTAssertEqual(inside.blueComponent, expected.blueComponent, accuracy: 0.02)
+        let outside = try XCTUnwrap(frozen.colorAt(x: 190, y: 75)?.usingColorSpace(.deviceRGB))
+        XCTAssertLessThan(outside.blueComponent, inside.blueComponent - 0.1)
+
+        view.showsFrozenSelection = false
+        let live = render(view, width: 200, height: 150)
+        XCTAssertEqual(try XCTUnwrap(live.colorAt(x: 95, y: 75)).alphaComponent, 0, accuracy: 0.01)
+    }
+
     func testDrawWithMagnifierSettingsOffDoesNotCrash() throws {
         _ = NSApplication.shared
 

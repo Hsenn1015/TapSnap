@@ -71,6 +71,8 @@ final class SelectionOverlayView: NSView {
 
     /// 该屏的冻结截图，铺在压暗层下面。
     var screenImage: CGImage? { didSet { updateBar() } }
+    /// 普通截图和直接贴图显示即将输出的那一帧；滚动及录制等选区继续透出实时桌面。
+    var showsFrozenSelection = false
 
     /// 后台检测出来的界面元素框（视图坐标）。
     var snapRegions: [SelectionSnapRegion] = [] { didSet { refreshSnapPreview() } }
@@ -459,7 +461,8 @@ final class SelectionOverlayView: NSView {
         default:
             if window?.isVisible == true {
                 pendingAction = .confirm
-                updateBar()
+                // 贴图在本次事件里直接交接，避免工具栏先闪出一次禁用状态。
+                if action != .pin { updateBar() }
             }
             onQuickAction(action == .confirm ? .copy : action, selection)
         }
@@ -486,15 +489,19 @@ final class SelectionOverlayView: NSView {
             context.draw(screenImage, in: bounds)
         }
 
-        // 全屏压暗，选区内挖空。
         context.setFillColor(NSColor.black.withAlphaComponent(0.35).cgColor)
-        context.fill(bounds)
-
-        guard let visible = selection ?? snapPreview, visible.width > 0, visible.height > 0 else { return }
-
-        context.setBlendMode(.clear)
-        context.fill(visible)
-        context.setBlendMode(.normal)
+        guard let visible = selection ?? snapPreview, visible.width > 0, visible.height > 0 else {
+            context.fill(bounds)
+            return
+        }
+        if showsFrozenSelection, screenImage != nil {
+            context.addRect(bounds)
+            context.addRect(visible)
+            context.fillPath(using: .evenOdd)
+        } else {
+            context.fill(bounds)
+            context.clear(visible)
+        }
         if selection == nil {
             context.setStrokeColor(NSColor(quickToolbarTheme.highlight).cgColor)
             context.stroke(visible.insetBy(dx: 1, dy: 1), width: 2)

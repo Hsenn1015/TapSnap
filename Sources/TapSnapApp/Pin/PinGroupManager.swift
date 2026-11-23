@@ -100,6 +100,7 @@ final class PinGroupManager: ObservableObject {
                 items[index].scale = CGFloat(items[index].image.width) / items[index].frame.width
                 present(items[index])
             }
+            refreshVisibility()
             fullScreenMonitor.onChange = { [weak self] change in
                 self?.isOtherAppFullScreen = change.isFullScreen
                 self?.refreshVisibility()
@@ -191,6 +192,16 @@ final class PinGroupManager: ObservableObject {
         return add(image, frame: frame, scale: scale)
     }
 
+    /// 先把贴图放到位，再在同一次窗口更新中撤下框选、编辑器或长图预览。
+    func show(_ image: CGImage, from sourceTopLeft: CGPoint?, scale: CGFloat, replacing dismissSource: () -> Void) {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            context.allowsImplicitAnimation = false
+            show(image, from: sourceTopLeft, scale: scale)
+            dismissSource()
+        }
+    }
+
     /// 原图有位置时保持其左上角；普通剪贴板图片靠近指针，尽量让整张图可见。
     static func initialFrame(size: CGSize, sourceTopLeft: CGPoint?, desktopTop: CGFloat,
                              screens: [CGRect], pointer: CGPoint, visible: CGRect) -> CGRect {
@@ -250,7 +261,6 @@ final class PinGroupManager: ObservableObject {
         panel.contentView = view
         panels[item.id] = panel
         updatePanel(item)
-        refreshVisibility()
     }
 
     private func updatePanel(_ item: PinItem) {
@@ -376,7 +386,8 @@ final class PinGroupManager: ObservableObject {
         for item in items {
             let visible = !isHidden && !hiddenGroups.contains(item.group ?? "")
                 && !(hidesForFullScreen && isOtherAppFullScreen)
-            if visible { panels[item.id]?.orderFrontRegardless() } else { panels[item.id]?.orderOut(nil) }
+            guard let panel = panels[item.id], panel.isVisible != visible else { continue }
+            if visible { panel.orderFrontRegardless() } else { panel.orderOut(nil) }
         }
     }
 

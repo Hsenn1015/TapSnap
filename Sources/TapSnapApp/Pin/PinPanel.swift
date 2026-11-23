@@ -26,7 +26,7 @@ final class PinPanel: NSPanel, NSWindowDelegate {
         isMovableByWindowBackground = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         level = .floating
-        animationBehavior = .utilityWindow
+        animationBehavior = .none
         // NSPanel 默认随 App 失活隐藏；贴图必须一直贴着，不然切个 App 就没了。
         hidesOnDeactivate = false
         // 贴图自身不应出现在截图结果里。
@@ -87,7 +87,9 @@ final class PinPanel: NSPanel, NSWindowDelegate {
 /// 贴图视图（显示图片 + 处理滚轮缩放/右键菜单/双击关闭）。
 final class PinImageView: NSView {
     var item: PinItem {
-        didSet { needsDisplay = true }
+        didSet {
+            if item.image !== oldValue.image { layer?.contents = item.image }
+        }
     }
     var onClose: (() -> Void)?
     var onCopy: (() -> Void)?
@@ -105,18 +107,19 @@ final class PinImageView: NSView {
     init(item: PinItem) {
         self.item = item
         super.init(frame: CGRect(origin: .zero, size: item.frame.size))
+        // 原图在窗口显示前就交给 Core Animation，拖动只需移动已有图层。
+        let imageLayer = CALayer()
+        imageLayer.contentsGravity = .resize
+        imageLayer.minificationFilter = .trilinear
+        imageLayer.actions = ["contents": NSNull()]
+        imageLayer.contents = item.image
+        layer = imageLayer
         wantsLayer = true
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        guard let context = NSGraphicsContext.current?.cgContext else { return }
-        context.interpolationQuality = .high
-        context.draw(item.image, in: bounds)
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -129,7 +132,6 @@ final class PinImageView: NSView {
             let newScale = min(max(item.scale * factor, 0.1), 8)
             onScaleChange?(newScale)
         }
-        needsDisplay = true
     }
 
     override func mouseDown(with event: NSEvent) {

@@ -661,8 +661,9 @@ final class LongShotSession: NSObject {
         preview.showResult(image, actions: [
             ("贴图", { [weak self] in
                 guard let self, let editor = self.privacyEditor, let output = editor.renderedImage() else { return }
-                self.environment.pinGroups.show(output, from: editor.outputTopLeft, scale: scale)
-                self.cancel()
+                self.environment.pinGroups.show(output, from: editor.outputTopLeft, scale: scale) {
+                    self.cancel()
+                }
             }),
             ("复制", { [weak self] in
                 guard let self, let editor = self.privacyEditor, let output = editor.renderedImage() else { return }

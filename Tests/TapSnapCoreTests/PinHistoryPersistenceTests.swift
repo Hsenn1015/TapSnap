@@ -67,6 +67,35 @@ final class PinHistoryPersistenceTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testSourceWindowIsDismissedAfterTheNewPinShowsItsImage() throws {
+        let app = NSApplication.shared
+        guard let screen = NSScreen.screens.first else { throw XCTSkip("窗口交接测试需要 WindowServer") }
+        let root = directory()
+        let manager = PinGroupManager(config: config(at: root), storageDirectory: root)
+        let pixels = image(size: 24)
+        let rect = CGRect(x: screen.visibleFrame.midX.rounded(), y: screen.visibleFrame.midY.rounded(),
+                          width: 24, height: 24)
+        let topLeft = CGPoint(x: rect.minX, y: screen.frame.maxY - rect.maxY)
+        let source = NSPanel(contentRect: rect, styleMask: [.borderless, .nonactivatingPanel],
+                             backing: .buffered, defer: false)
+        source.level = .screenSaver
+        source.orderFrontRegardless()
+        defer { source.orderOut(nil); manager.closeAll(); manager.flushPersistence() }
+
+        manager.show(pixels, from: topLeft, scale: 1) {
+            let pin = app.windows.compactMap { $0 as? PinPanel }.first {
+                ($0.contentView as? PinImageView)?.item.image === pixels
+            }
+            XCTAssertTrue(source.isVisible)
+            XCTAssertEqual(pin?.isVisible, true)
+            XCTAssertTrue((pin?.contentView?.layer?.contents as AnyObject?) === pixels)
+            XCTAssertEqual(pin?.frame, rect)
+            source.orderOut(nil)
+        }
+        XCTAssertFalse(source.isVisible)
+    }
+
     func testPinsAndClosedStackRestoreImagesGroupsAndEditedState() throws {
         let root = directory()
         let config = config(at: root)
@@ -154,6 +183,68 @@ final class PinHistoryPersistenceTests: XCTestCase {
     }
 
     @MainActor
+    func testFirstPinFrameAlreadyContainsTheUprightImageAndTransparency() throws {
+        let bounds = CGRect(x: 0, y: 0, width: 4, height: 4)
+        func bitmap() throws -> CGContext {
+            try XCTUnwrap(CGContext(data: nil, width: 4, height: 4, bitsPerComponent: 8, bytesPerRow: 16,
+                                    space: CGColorSpaceCreateDeviceRGB(),
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        }
+        let source = try bitmap()
+        source.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        source.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+        source.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 0.5))
+        source.fill(CGRect(x: 1, y: 2, width: 3, height: 2))
+        let pin = PinItem(image: try XCTUnwrap(source.makeImage()), frame: bounds)
+        let view = PinImageView(item: pin)
+        let layer = try XCTUnwrap(view.layer)
+        XCTAssertTrue((layer.contents as AnyObject?) === pin.image)
+        let expected = try bitmap(), displayed = try bitmap()
+        expected.draw(pin.image, in: bounds)
+        layer.render(in: displayed)
+        let a = try XCTUnwrap(expected.data).assumingMemoryBound(to: UInt8.self)
+        let b = try XCTUnwrap(displayed.data).assumingMemoryBound(to: UInt8.self)
+        for offset in 0..<64 {
+            XCTAssertEqual(Int(a[offset]), Int(b[offset]), accuracy: 1, "像素字节 \(offset)")
+        }
+
+        // 旋转、翻转后直接替换内容，不在两张图片之间叠化。
+        var changed = pin
+        changed.image = image(0.5)
+        view.item = changed
+        XCTAssertTrue((layer.contents as AnyObject?) === changed.image)
+        XCTAssertNil(layer.animation(forKey: "contents"))
+    }
+
+    @MainActor
+    func testCreatingAnotherPinKeepsPreviouslyRaisedPinsInOrder() throws {
+        let app = NSApplication.shared
+        guard let screen = NSScreen.screens.first else { throw XCTSkip("叠放顺序测试需要 macOS WindowServer") }
+        let root = directory()
+        let config = config(at: root)
+        config.update { $0.pin.showShadow = false }
+        let manager = PinGroupManager(config: config, storageDirectory: root.appendingPathComponent("pins"))
+        defer { manager.closeAll(); manager.flushPersistence() }
+        let origin = CGPoint(x: screen.visibleFrame.midX, y: screen.visibleFrame.midY)
+        func open() throws -> (PinItem, Int) {
+            let pin = manager.show(image(), at: origin)
+            let panel = try XCTUnwrap(app.windows.compactMap { $0 as? PinPanel }.first {
+                ($0.contentView as? PinImageView)?.item.id == pin.id
+            })
+            return (pin, panel.windowNumber)
+        }
+        func order(of numbers: Set<Int>) -> [Int] {
+            (NSWindow.windowNumbers(options: []) ?? []).map(\.intValue).filter(numbers.contains)
+        }
+        let (first, a) = try open()
+        let (_, b) = try open()
+        manager.reveal(first.id)
+        XCTAssertEqual(order(of: [a, b]), [a, b])
+        let (_, c) = try open()
+        XCTAssertEqual(order(of: [a, b, c]), [c, a, b])
+    }
+
+    @MainActor
     func testPinHaloFollowsImageAndVisibility() throws {
         let app = NSApplication.shared
         guard let screen = NSScreen.screens.first else { throw XCTSkip("贴图光晕测试需要 macOS WindowServer") }
@@ -169,6 +260,8 @@ final class PinHistoryPersistenceTests: XCTestCase {
             ($0.contentView as? PinImageView)?.item.id == item.id
         })
         let halo = try XCTUnwrap(pin.childWindows?.first as? PinHaloPanel)
+        XCTAssertEqual(pin.animationBehavior, .none)
+        XCTAssertEqual(halo.animationBehavior, .none)
         XCTAssertTrue(halo.isVisible)
         XCTAssertTrue(halo.ignoresMouseEvents)
         XCTAssertFalse(halo.canBecomeKey)

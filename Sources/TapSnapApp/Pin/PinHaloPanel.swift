@@ -15,6 +15,7 @@ final class PinHaloPanel: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
+        animationBehavior = .none
         ignoresMouseEvents = true
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
