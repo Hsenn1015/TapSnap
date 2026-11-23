@@ -7,6 +7,7 @@ import XCTest
 final class PermissionGuidePanelTests: XCTestCase {
     private final class Feedback: ObservableObject {
         @Published var text: String?
+        @Published var isChecking = false
     }
 
     private struct Guide: View {
@@ -14,7 +15,8 @@ final class PermissionGuidePanelTests: XCTestCase {
         var body: some View {
             PermissionGuideView(theme: .light, title: "允许截图和录屏",
                                 instructions: "请在系统设置中允许 TapSnap，然后重新检测。",
-                                feedback: feedback.text, openSettings: {}, recheck: {}, relaunch: {}, close: {})
+                                feedback: feedback.text, isChecking: feedback.isChecking,
+                                openSettings: {}, recheck: {}, relaunch: {}, close: {})
         }
     }
 
@@ -40,6 +42,12 @@ final class PermissionGuidePanelTests: XCTestCase {
         XCTAssertTrue(scroll.hasVerticalScroller)
         XCTAssertTrue(display.contains(panel.frame))
 
+        feedback.isChecking = true
+        RunLoop.main.run(until: .now + 0.15)
+        XCTAssertLessThan(document.frame.height, display.height, "复查中不应继续显示上一次的长错误说明")
+        XCTAssertTrue(display.contains(panel.frame))
+
+        feedback.isChecking = false
         feedback.text = nil
         RunLoop.main.run(until: .now + 0.15)
         XCTAssertEqual(scroll.frame.height, originalHeight, accuracy: 1)

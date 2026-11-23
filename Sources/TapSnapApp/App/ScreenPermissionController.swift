@@ -57,12 +57,35 @@ enum ScreenAccessCheck: Equatable {
     }
 }
 
+/// Exists only while a permission guide is open. Intermediate app activations
+/// (for example Finder) do not consume the return to the capturing process.
+enum ScreenPermissionSettingsVisit {
+    case idle, openingSettings, inSettings, authorizedInSettings
+
+    enum ReturnAction { case none, recheck, resume }
+
+    mutating func didActivate(settings: Bool, tapSnap: Bool) -> ReturnAction {
+        if settings && self == .openingSettings { self = .inSettings }
+        guard tapSnap else { return .none }
+        switch self {
+        case .inSettings:
+            self = .idle
+            return .recheck
+        case .authorizedInSettings:
+            self = .idle
+            return .resume
+        default:
+            return .none
+        }
+    }
+}
+
 @MainActor
 final class ScreenPermissionController: NSObject, ObservableObject, NSWindowDelegate {
     private unowned let environment: AppEnvironment
     private var window: NSPanel?
     private var continuation: ScreenPermissionContinuation?
-    private var monitor: Task<Void, Never>?
+    private var settingsVisit = ScreenPermissionSettingsVisit.idle
     private var verification: Task<Void, Never>?
 
     @Published private(set) var offersRelaunch = false
@@ -76,18 +99,15 @@ final class ScreenPermissionController: NSObject, ObservableObject, NSWindowDele
     /// A capture reaches here only after ScreenCaptureKit has already denied it.
     func request(for capture: PendingScreenCapture? = nil) {
         if let capture {
-            verification?.cancel()
-            verification = nil
-            isChecking = false
+            if window == nil { cancelVerification() }
             continuation = .init(capture: capture, previousApp: continuation?.previousApp
                 ?? NSWorkspace.shared.frontmostApplication?.processIdentifier)
-            // Enumeration may succeed while the actual snapshot is still denied.
-            // Keep an explicit restart available even if the passive check is stale.
-            offersRelaunch = true
         }
         if let window {
+            if capture != nil && settingsInFront { return }
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
+            if capture == nil { continueAfterAuthorization() }
             return
         }
         if capture != nil {
@@ -109,13 +129,16 @@ final class ScreenPermissionController: NSObject, ObservableObject, NSWindowDele
     }
 
     func openSettings() {
+        feedback = nil
+        cancelVerification()
+        settingsVisit = settingsInFront ? .inSettings : .openingSettings
         Permissions.openSettingsPanel(for: .screenCapture)
     }
 
-    /// Enumerate shareable content only on an explicit check or a new passive grant.
-    /// This checks access in the process that actually takes the screenshot.
+    /// Both an explicit retry and a return from Settings verify access in this process.
     func continueAfterAuthorization() {
         guard continuation != nil, verification == nil else { return }
+        settingsVisit = .idle
         isChecking = true
         let rechecking = window != nil
         verification = Task { @MainActor [weak self] in
@@ -126,6 +149,10 @@ final class ScreenPermissionController: NSObject, ObservableObject, NSWindowDele
             self.isChecking = false
             switch result {
             case .available:
+                if self.window != nil && self.settingsInFront {
+                    self.settingsVisit = .authorizedInSettings
+                    return
+                }
                 self.finish()
             case .denied:
                 if rechecking {
@@ -146,7 +173,8 @@ final class ScreenPermissionController: NSObject, ObservableObject, NSWindowDele
     }
 
     func reopenAfterAuthorization() {
-        guard offersRelaunch, !isChecking, let saved = continuation else { return }
+        guard !isChecking, window != nil, let saved = continuation,
+              offersRelaunch || saved.capture != nil else { return }
         guard !environment.isUpdateInteractionBusy else {
             feedback = "请先完成录制或保存并关闭编辑窗口，再重新打开 TapSnap。"
             return
@@ -161,47 +189,61 @@ final class ScreenPermissionController: NSObject, ObservableObject, NSWindowDele
     func close() { window?.close() }
 
     func windowWillClose(_ notification: Notification) {
-        monitor?.cancel()
-        monitor = nil
-        verification?.cancel()
-        verification = nil
-        isChecking = false
+        NSWorkspace.shared.notificationCenter.removeObserver(self, name: NSWorkspace.didActivateApplicationNotification, object: nil)
+        settingsVisit = .idle
+        cancelVerification()
         offersRelaunch = false
         window = nil
         continuation = nil
         feedback = nil
     }
 
-    private var isAuthorized: Bool { Permissions.status(of: .screenCapture) == .authorized }
+    var hasPendingCapture: Bool { continuation?.capture != nil }
+
+    private func cancelVerification() {
+        verification?.cancel()
+        verification = nil
+        isChecking = false
+    }
+
+    private var settingsInFront: Bool {
+        NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.systempreferences"
+    }
 
     private func present() {
-        let settingsInFront = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.systempreferences"
         let theme = environment.theme
         let panel = PermissionGuidePanel(theme: theme) {
             ScreenPermissionGuide(controller: self, theme: theme)
         }
         panel.delegate = self
         window = panel
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(applicationActivated(_:)),
+            name: NSWorkspace.didActivateApplicationNotification, object: nil)
         if settingsInFront {
+            settingsVisit = .inSettings
             panel.orderBack(nil)
         } else {
             panel.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         }
-        watchPermission()
     }
 
-    private func watchPermission() {
-        monitor?.cancel()
-        var wasAuthorized = isAuthorized
-        monitor = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                do { try await Task.sleep(for: .seconds(2)) } catch { return }
-                guard let self else { return }
-                let authorized = self.isAuthorized
-                if authorized && !wasAuthorized { self.continueAfterAuthorization() }
-                wasAuthorized = authorized
-            }
+    @objc private func applicationActivated(_ notification: Notification) {
+        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+        let settings = app.bundleIdentifier == "com.apple.systempreferences"
+        let currentApp = app.processIdentifier == ProcessInfo.processInfo.processIdentifier
+        activated(settings: settings, tapSnap: currentApp)
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        if NSApp.isActive { activated(settings: false, tapSnap: true) }
+    }
+
+    private func activated(settings: Bool, tapSnap: Bool) {
+        switch settingsVisit.didActivate(settings: settings, tapSnap: tapSnap) {
+        case .recheck: continueAfterAuthorization()
+        case .resume: finish()
+        case .none: break
         }
     }
 
@@ -245,7 +287,6 @@ final class ScreenPermissionController: NSObject, ObservableObject, NSWindowDele
             """, "tapsnap-reopen", "\(ProcessInfo.processInfo.processIdentifier)", application.path,
             ScreenPermissionContinuation.resumeArgument, try saved.launchArgument()]
         try process.run()
-        monitor?.cancel()
         NSApp.terminate(nil)
     }
 }
@@ -256,11 +297,17 @@ struct ScreenPermissionGuide: View {
 
     var body: some View {
         PermissionGuideView(theme: theme, title: "允许截图和录屏",
-                            instructions: "在系统设置的「隐私与安全性」中打开「屏幕与系统音频录制」（部分系统显示为「屏幕录制」），允许 TapSnap，然后返回这里重新检测。",
+                            instructions: "在系统设置的「隐私与安全性」中打开「屏幕与系统音频录制」（部分系统显示为「屏幕录制」），允许 TapSnap。返回 TapSnap 时会自动检测权限。",
                             feedback: controller.feedback, isChecking: controller.isChecking,
                             openSettings: { controller.openSettings() },
                             recheck: { controller.continueAfterAuthorization() },
-                            relaunch: relaunchAction, close: { controller.close() })
+                            relaunch: relaunchAction,
+                            restartFromHelp: restartFromHelp, close: { controller.close() })
+    }
+
+    private var restartFromHelp: (() -> Void)? {
+        guard controller.hasPendingCapture else { return nil }
+        return { controller.reopenAfterAuthorization() }
     }
 
     private var relaunchAction: (() -> Void)? {

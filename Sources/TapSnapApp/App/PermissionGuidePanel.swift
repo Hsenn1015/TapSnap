@@ -63,12 +63,15 @@ struct PermissionGuideView: View {
     let instructions: String
     var feedback: String?
     var isChecking = false
+    var showsDone = false
     let openSettings: () -> Void
     let recheck: () -> Void
     var relaunch: (() -> Void)?
+    var restartFromHelp: (() -> Void)? = nil
     let close: () -> Void
     @State private var showsHelp = false
     @State private var copiedPath = false
+    @State private var openedSettings = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -91,6 +94,11 @@ struct PermissionGuideView: View {
                         pasteboard.clearContents()
                         copiedPath = pasteboard.setString(Bundle.main.bundlePath, forType: .string)
                     }
+                    if relaunch == nil, let restartFromHelp {
+                        Text("如果已开启这份 TapSnap，重新检测后仍无法录屏，可以重新打开应用。")
+                        SnapButton("重新打开 TapSnap", theme: theme, variant: .outline, size: .sm,
+                                   isEnabled: !isChecking, action: restartFromHelp)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 8)
@@ -98,7 +106,7 @@ struct PermissionGuideView: View {
             .font(.system(size: 13))
             .foregroundStyle(theme.token(.mutedForeground))
 
-            if let feedback {
+            if let feedback, !isChecking {
                 Text(feedback)
                     .font(.system(size: 13))
                     .foregroundStyle(theme.token(.foreground))
@@ -120,12 +128,29 @@ struct PermissionGuideView: View {
     }
 
     @ViewBuilder private var buttons: some View {
-        SnapButton("打开系统设置", theme: theme, variant: .outline, action: openSettings)
-        SnapButton(isChecking ? "检测中…" : "重新检测", theme: theme,
-                   variant: .primary, isEnabled: !isChecking, action: recheck)
-            .keyboardShortcut(.defaultAction)
+        let prefersRecheck = openedSettings || isChecking || feedback != nil || relaunch != nil
+        let settingsIsPrimary = !showsDone && !prefersRecheck
+        let recheckIsPrimary = !showsDone && prefersRecheck
+        SnapButton("打开系统设置", theme: theme, variant: settingsIsPrimary ? .primary : .outline, isEnabled: !isChecking) {
+            openedSettings = true
+            openSettings()
+        }
+        .keyboardShortcut(settingsIsPrimary ? .defaultAction : nil)
+        if !showsDone || prefersRecheck {
+            SnapButton(theme: theme, variant: recheckIsPrimary ? .primary : .outline, isEnabled: !isChecking, action: recheck) {
+                HStack(spacing: 6) {
+                    if isChecking { ProgressView().controlSize(.small).accessibilityHidden(true) }
+                    Text(isChecking ? "正在检测…" : "重新检测")
+                }
+            }
+            .keyboardShortcut(recheckIsPrimary ? .defaultAction : nil)
+        }
         if let relaunch {
             SnapButton("重新打开 TapSnap", theme: theme, variant: .outline, isEnabled: !isChecking, action: relaunch)
+        }
+        if showsDone {
+            SnapButton("完成", theme: theme, variant: .primary, action: close)
+                .keyboardShortcut(.defaultAction)
         }
     }
 }
@@ -136,6 +161,7 @@ final class AccessibilityPermissionGuideController: NSObject, ObservableObject, 
     private let theme: @MainActor () -> Theme
     private let onAuthorized: () -> Void
     private var panel: PermissionGuidePanel?
+    private var awaitingSettingsReturn = false
     @Published private(set) var operation = ""
     @Published private(set) var screenCaptureAvailable = false
     @Published private(set) var feedback: String?
@@ -176,7 +202,18 @@ final class AccessibilityPermissionGuideController: NSObject, ObservableObject, 
         }
     }
 
+    func openSettings() {
+        feedback = nil
+        awaitingSettingsReturn = true
+        Permissions.openSettingsPanel(for: .accessibility)
+    }
+
     func windowDidBecomeKey(_ notification: Notification) {
+        if awaitingSettingsReturn {
+            awaitingSettingsReturn = false
+            refresh()
+            return
+        }
         guard panel != nil, Permissions.status(of: .accessibility) == .authorized else { return }
         panel?.close()
         onAuthorized()
@@ -186,6 +223,7 @@ final class AccessibilityPermissionGuideController: NSObject, ObservableObject, 
 
     func windowWillClose(_ notification: Notification) {
         panel = nil
+        awaitingSettingsReturn = false
         feedback = nil
     }
 }
@@ -195,15 +233,17 @@ private struct AccessibilityPermissionGuide: View {
     let theme: Theme
 
     var body: some View {
-        PermissionGuideView(theme: theme, title: "允许\(controller.operation)",
+        PermissionGuideView(theme: theme, title: controller.screenCaptureAvailable ? "可以截图和录屏" : "允许\(controller.operation)",
                             instructions: instructions,
-                            feedback: controller.feedback,
-                            openSettings: { Permissions.openSettingsPanel(for: .accessibility) },
+                            feedback: controller.feedback, showsDone: controller.screenCaptureAvailable,
+                            openSettings: controller.openSettings,
                             recheck: controller.refresh, close: controller.close)
     }
 
     private var instructions: String {
-        let settings = "在系统设置的「隐私与安全性」中打开「设备控制与数据访问」（部分系统显示为「辅助功能」），允许 TapSnap。此权限用于自动滚动和优先响应快捷键。"
-        return controller.screenCaptureAvailable ? "屏幕录制权限已开启，可以截图和录屏。\n\n" + settings : settings
+        let settings = "在「隐私与安全性 → 设备控制与数据访问」（部分系统显示为「辅助功能」）中打开 TapSnap 的开关。返回此窗口会自动检测。"
+        return controller.screenCaptureAvailable
+            ? "屏幕录制权限已开启，点「完成」即可。只有自动滚动长截图和优先响应冲突快捷键需要额外开启辅助功能。\n\n" + settings
+            : settings
     }
 }

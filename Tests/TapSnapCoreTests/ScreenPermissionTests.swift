@@ -4,6 +4,36 @@ import XCTest
 @testable import TapSnapApp
 
 final class ScreenPermissionTests: XCTestCase {
+    func testEachSettingsVisitChecksOnceEvenWhenScreenCaptureKitDeniesAccess() async {
+        var visit = ScreenPermissionSettingsVisit.idle
+        XCTAssertEqual(visit.didActivate(settings: false, tapSnap: true), .none)
+        visit = .openingSettings
+        XCTAssertEqual(visit.didActivate(settings: false, tapSnap: true), .none)
+        XCTAssertEqual(visit.didActivate(settings: true, tapSnap: false), .none)
+        XCTAssertEqual(visit.didActivate(settings: false, tapSnap: false), .none)
+        XCTAssertEqual(visit.didActivate(settings: false, tapSnap: true), .recheck)
+        let result = await ScreenAccessCheck.run { throw CaptureError.permissionDenied }
+        XCTAssertEqual(result, .denied)
+        // A system prompt from the check itself may activate Settings again.
+        XCTAssertEqual(visit.didActivate(settings: true, tapSnap: false), .none)
+        XCTAssertEqual(visit.didActivate(settings: false, tapSnap: true), .none)
+    }
+
+    func testReturnFromNativeSettingsAndReturnAfterAuthorization() {
+        var visit = ScreenPermissionSettingsVisit.inSettings
+        XCTAssertEqual(visit.didActivate(settings: false, tapSnap: true), .recheck)
+        XCTAssertEqual(visit.didActivate(settings: false, tapSnap: true), .none)
+        visit = .authorizedInSettings
+        XCTAssertEqual(visit.didActivate(settings: false, tapSnap: false), .none)
+        XCTAssertEqual(visit.didActivate(settings: false, tapSnap: true), .resume)
+        XCTAssertEqual(visit.didActivate(settings: false, tapSnap: true), .none)
+        // Closing the guide or explicitly retrying discards the outstanding visit.
+        visit = .openingSettings
+        visit = .idle
+        XCTAssertEqual(visit.didActivate(settings: true, tapSnap: false), .none)
+        XCTAssertEqual(visit.didActivate(settings: false, tapSnap: true), .none)
+    }
+
     func testAccessCheckUsesLiveResultAndDistinguishesAnUnrelatedFailure() async {
         let granted = await ScreenAccessCheck.run { }
         let denied = await ScreenAccessCheck.run {
