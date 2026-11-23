@@ -17,10 +17,10 @@ architectures=$(/usr/bin/lipo -archs "$app/Contents/MacOS/TapSnap" | tr ' ' ',')
 package_id="$identity.installer"
 
 case "$identity" in
-    com.sensnap.app) install_location=/Applications ;;
-    com.sensnap.app.company) install_location="/Applications/TapSnap 水印" ;;
+    com.sensnap.app|com.sensnap.app.company) ;;
     *) echo "Unexpected TapSnap bundle identifier $identity" >&2; exit 2 ;;
 esac
+install_location=/Applications
 
 /usr/bin/codesign --verify --deep --strict "$app"
 stage=$(mktemp -d "${TMPDIR:-/tmp}/tapsnap-installer.XXXXXX")
