@@ -109,7 +109,7 @@ Section "TapSnap"
     Call VerifyInstallDirectory
     !insertmacro WaitForTapSnap
     SetOutPath "$INSTDIR\app"
-    File /r "${PAYLOAD}/*"
+    File /r "${PAYLOAD}\*"
     WriteUninstaller "$INSTDIR\Uninstall.exe"
     CreateShortcut "$SMPROGRAMS\TapSnap.lnk" "$INSTDIR\app\TapSnap.exe"
     WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "TapSnap"
