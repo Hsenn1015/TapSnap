@@ -7,28 +7,38 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Publish this version from main after both builds pass (e.g. v0.2.8). Leave blank for CI."
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: '${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}'
-  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+  group: ${{ github.workflow }}-${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' && !inputs.release_tag }}
 
 jobs:
   version:
     name: Resolve version
     runs-on: ubuntu-24.04
     outputs:
+      is_release: ${{ steps.version.outputs.is_release }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
       label: ${{ steps.version.outputs.label }}
       macos: ${{ steps.version.outputs.macos }}
       windows: ${{ steps.version.outputs.windows }}
       build: ${{ steps.version.outputs.build }}
       prerelease: ${{ steps.version.outputs.prerelease }}
-      publish_appcast: ${{ github.event_name == 'push' && github.ref_type == 'tag' && steps.version.outputs.prerelease == 'false' && vars.TAPSNAP_UPDATE_PUBLIC_KEY != '' }}
+      publish_appcast: ${{ steps.version.outputs.is_release == 'true' && steps.version.outputs.prerelease == 'false' && vars.TAPSNAP_UPDATE_PUBLIC_KEY != '' }}
     steps:
       - name: Set package metadata
         id: version
+        env:
+          REQUESTED_TAG: ${{ inputs.release_tag }}
         shell: bash
         run: |
           set -euo pipefail
@@ -36,21 +46,35 @@ jobs:
           macos=""
           windows="0.0.0-ci.$GITHUB_RUN_NUMBER"
           prerelease=false
-          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+          is_release=false
+          release_tag=""
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && -n "$REQUESTED_TAG" ]]; then
+            if [[ "$GITHUB_REF" != refs/heads/main ]]; then
+              echo "::error::Dispatch a release from the main branch."
+              exit 1
+            fi
+            release_tag="$REQUESTED_TAG"
+          elif [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF_TYPE" == tag ]]; then
+            release_tag="$GITHUB_REF_NAME"
+          fi
+          if [[ -n "$release_tag" ]]; then
             version='^v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))(-[a-zA-Z0-9]+([.-][a-zA-Z0-9]+)*)?$'
-            if [[ ! "$GITHUB_REF_NAME" =~ $version ]]; then
+            if [[ ! "$release_tag" =~ $version ]]; then
               echo "::error::Use a version tag such as v0.2.0 or v0.2.0-rc.1."
               exit 1
             fi
-            label="$GITHUB_REF_NAME"
+            is_release=true
+            label="$release_tag"
             macos="${BASH_REMATCH[1]}"
-            windows="${GITHUB_REF_NAME#v}"
+            windows="${release_tag#v}"
             if [[ "$windows" != "$macos" ]]; then
               prerelease=true
             fi
           fi
           # Run 30 preceded the locally distributed v0.2.7 (build 36).
           {
+            echo "is_release=$is_release"
+            echo "release_tag=$release_tag"
             echo "label=$label"
             echo "macos=$macos"
             echo "windows=$windows"
@@ -83,7 +107,7 @@ jobs:
           encoder='GifExporterTests|RecordingAnnotationStyleTests|RecordingEnhancementTests|VideoEncoderTests|RecordSessionTests/test(RealEncoder|StaticScreen)'
           swift test --skip "$desktop|$encoder"
       - name: Build the macOS release with its persistent signing identity
-        if: github.ref_type == 'tag'
+        if: needs.version.outputs.is_release == 'true'
         shell: bash
         env:
           TAPSNAP_MAC_SIGNING_SHA1: ${{ vars.TAPSNAP_MAC_SIGNING_SHA1 }}
@@ -91,7 +115,7 @@ jobs:
           TAPSNAP_MAC_SIGNING_PASSWORD: ${{ secrets.TAPSNAP_MAC_SIGNING_PASSWORD }}
         run: bash Scripts/build-signed-macos.sh
       - name: Build the macOS CI package
-        if: github.ref_type != 'tag'
+        if: needs.version.outputs.is_release != 'true'
         env:
           TAPSNAP_ALLOW_ADHOC_SIGNING: '1'
         run: Scripts/build-app.sh release
@@ -120,7 +144,7 @@ jobs:
           hdiutil create -volname TapSnap -srcfolder "$staging" -fs HFS+ -format UDZO "$dmg"
           hdiutil verify "$dmg"
       - name: Build and check the macOS installation wizard
-        if: github.ref_type == 'tag'
+        if: needs.version.outputs.is_release == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -138,6 +162,7 @@ jobs:
         if: needs.version.outputs.publish_appcast == 'true'
         shell: bash
         env:
+          RELEASE_TAG: ${{ needs.version.outputs.release_tag }}
           TAPSNAP_UPDATE_PRIVATE_KEY: ${{ secrets.TAPSNAP_UPDATE_PRIVATE_KEY }}
         run: |
           set -euo pipefail
@@ -170,8 +195,8 @@ jobs:
           cp "dist/TapSnap-$PACKAGE_LABEL-macos-arm64.dmg" "$scratch/updates/"
           release_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases"
           printf '%s\n' "$private_key" | "$scratch/bin/generate_appcast" --ed-key-file - \
-            --maximum-deltas 0 --download-url-prefix "$release_url/download/$GITHUB_REF_NAME/" \
-            --link "$release_url/tag/$GITHUB_REF_NAME" "$scratch/updates"
+            --maximum-deltas 0 --download-url-prefix "$release_url/download/$RELEASE_TAG/" \
+            --link "$release_url/tag/$RELEASE_TAG" "$scratch/updates"
           test -s "$scratch/updates/appcast.xml"
           mv "$scratch/updates/appcast.xml" dist/appcast.xml
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -192,6 +217,7 @@ jobs:
     timeout-minutes: 30
     env:
       TAPSNAP_VERSION: ${{ needs.version.outputs.windows }}
+      IS_RELEASE: ${{ needs.version.outputs.is_release }}
       TAPSNAP_NUMERIC_VERSION: ${{ needs.version.outputs.macos }}
       PACKAGE_LABEL: ${{ needs.version.outputs.label }}
     steps:
@@ -235,7 +261,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - name: Locate NSIS for the Windows installation wizards
-        if: github.ref_type == 'tag'
+        if: needs.version.outputs.is_release == 'true'
         shell: pwsh
         run: |
           if (Get-Command makensis.exe -ErrorAction SilentlyContinue) { exit 0 }
@@ -295,7 +321,7 @@ jobs:
               $archive.Dispose()
             }
 
-            if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            if ($env:IS_RELEASE -eq 'true') {
               $setup = Join-Path (Resolve-Path dist).Path "TapSnap-$($env:PACKAGE_LABEL)-windows-$arch-Setup.exe"
               makensis.exe /V2 "/DPAYLOAD=$publish" "/DOUTPUT=$setup" "/DARCH=$arch" "/DVERSION=$env:TAPSNAP_VERSION" "/DFILE_VERSION=$($env:TAPSNAP_NUMERIC_VERSION).0" windows/installer/TapSnap.nsi
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -316,7 +342,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    if: github.event_name == 'push' && github.ref_type == 'tag'
+    if: needs.version.outputs.is_release == 'true'
     needs: [version, macos, windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -331,9 +357,39 @@ jobs:
           pattern: '*-packages'
           path: release
           merge-multiple: true
+      - name: Verify the release tag and its target commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.version.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          api="repos/$GITHUB_REPOSITORY/git"
+          ref="$api/ref/tags/$RELEASE_TAG"
+          if ! object=$(gh api "$ref" --jq .object 2>/dev/null); then
+            if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch ]]; then
+              echo "::error::Expected release tag $RELEASE_TAG."
+              exit 1
+            fi
+            # If a concurrent publisher creates the ref first, validate its target below.
+            if ! gh api --method POST "$api/refs" -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$GITHUB_SHA" --silent; then
+              echo "::notice::Checking whether another publisher already created $RELEASE_TAG."
+            fi
+            object=$(gh api "$ref" --jq .object)
+          fi
+          while [[ "$(jq -r .type <<< "$object")" == tag ]]; do
+            tag_object=$(jq -r .sha <<< "$object")
+            object=$(gh api "$api/tags/$tag_object" --jq .object)
+          done
+          expected=$(git rev-parse "$GITHUB_SHA^{commit}")
+          if [[ "$(jq -r .type <<< "$object")" != commit || "$(jq -r .sha <<< "$object")" != "$expected" ]]; then
+            echo "::error::$RELEASE_TAG points to a different revision than $expected."
+            exit 1
+          fi
       - name: Publish verified packages and checksums
         shell: bash
         env:
+          RELEASE_TAG: ${{ needs.version.outputs.release_tag }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
@@ -341,7 +397,7 @@ jobs:
         working-directory: release
         run: |
           set -euo pipefail
-          tag="$GITHUB_REF_NAME"
+          tag="$RELEASE_TAG"
           notes="$GITHUB_WORKSPACE/Docs/releases/$tag.md"
           files=(
             "TapSnap-$tag-macos-arm64.dmg"

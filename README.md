@@ -187,7 +187,7 @@ macOS 菜单栏点「公式识别」，按提示准备 Python 3.12，再在应�
 
 推送 `main`、提交面向 `main` 的 PR，或在 [GitHub Actions](https://github.com/Hsenn1015/TapSnap/actions/workflows/build.yml) 手动运行时，会执行 macOS 托管环境回归测试与 Windows 四组回归，并在运行详情的 Artifacts 提供 Apple Silicon DMG 和两种架构的自包含 Windows ZIP。需要实际桌面、系统编码器和识别环境的 macOS 用例可在本机运行 `swift test`。
 
-发布时在目标提交创建并推送版本标签，例如 `v0.2.8`。所有构建通过后，macOS、Windows 的发行包及其 SHA-256 校验清单会出现在 [GitHub Releases](https://github.com/Hsenn1015/TapSnap/releases)。
+发布主线版本时，可以在 **Build and release → Run workflow** 中选择 `main`，填写版本标签（例如 `v0.2.8`）。两端构建通过后，流程为本次构建的提交打标签，并将安装包、SHA-256 校验清单和 `Docs/releases/<标签>.md` 中的更新说明发布到 [GitHub Releases](https://github.com/Hsenn1015/TapSnap/releases)。直接推送版本标签也可以触发发布。手动运行时留空版本标签只执行 CI。
 
 macOS 正式版使用 TapSnap 专用的长期自签名证书。从 GitHub 首次下载安装时，macOS 可能提示无法验证开发者。维护者在仓库 Actions 变量 `TAPSNAP_MAC_SIGNING_SHA1` 中填写签名证书的 40 位 SHA-1 指纹，将加密 PKCS#12 文件的 Base64 内容和密码分别存入 Actions Secrets `TAPSNAP_MAC_SIGNING_P12`、`TAPSNAP_MAC_SIGNING_PASSWORD`。发布时会校验安装包的签名。维护者也可在主分支手动运行 **Verify macOS upgrade signing**，用两个构建验证升级前后的签名身份。
 
