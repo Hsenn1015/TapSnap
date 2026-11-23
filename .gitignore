@@ -12,7 +12,10 @@ xcuserdata/
 DerivedData/
 
 # 本机开发笔记、调试截图和导出
-/Docs/
+/Docs/*
+!/Docs/releases/
+/Docs/releases/*
+!/Docs/releases/v*.md
 /.local/
 /captures/
 /recordings/
