@@ -339,7 +339,7 @@ final class CaptureCoordinator {
         case .ocr:
             environment.ocrCoordinator.recognize(cropped)
         case .translate:
-            environment.translateImage(cropped)
+            environment.translateImage(cropped, captureRect: globalRect)
         case .formula:
             environment.recognizeFormula(cropped)
         case .table:

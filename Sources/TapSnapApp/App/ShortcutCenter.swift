@@ -44,7 +44,9 @@ final class ShortcutCenter: ObservableObject {
     }
 
     init(config: ConfigStore,
-         makeShortcut: @escaping Factory = { GlobalShortcut(combo: $0, prefersPriorityOnConflict: true, onTrigger: $1) },
+         makeShortcut: @escaping Factory = {
+             GlobalShortcut(combo: $0, prefersPriorityOnConflict: !AppPaths.isDevelopmentBuild, onTrigger: $1)
+         },
          performAction: @escaping (ShortcutAction) -> Void,
          reportFailure: @escaping (String) -> Void) {
         self.config = config

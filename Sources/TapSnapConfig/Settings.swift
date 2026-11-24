@@ -3,6 +3,118 @@ import TapSnapCore
 import TapSnapPrivacy
 import TapSnapSystem
 
+public enum ScreenshotTranslationProvider: String, CaseIterable, Codable, Sendable {
+    case apple, api, local, online
+
+    public var title: String {
+        switch self {
+        case .apple: return "Apple 离线"
+        case .api: return "翻译 API"
+        case .local: return "本机模型"
+        case .online: return "在线模型"
+        }
+    }
+}
+
+public enum TranslationFontFamily: String, CaseIterable, Codable, Hashable, Sendable {
+    case system, serif, rounded, monospaced
+
+    public var title: String {
+        switch self {
+        case .system: return "系统默认"
+        case .serif: return "衬线"
+        case .rounded: return "圆体"
+        case .monospaced: return "等宽"
+        }
+    }
+}
+
+public enum TranslationAccentPreset: String, CaseIterable, Codable, Hashable, Sendable {
+    case amber, blue, emerald, violet, rose, neutral
+
+    public var title: String {
+        switch self {
+        case .amber: return "琥珀金"
+        case .blue: return "天空蓝"
+        case .emerald: return "翡翠绿"
+        case .violet: return "紫罗兰"
+        case .rose: return "珊瑚粉"
+        case .neutral: return "极简灰"
+        }
+    }
+
+    public var rgb: RGBAColor {
+        switch self {
+        case .amber: return RGBAColor(red: 0.96, green: 0.72, blue: 0.24, alpha: 1)
+        case .blue: return RGBAColor(red: 0.29, green: 0.62, blue: 1.00, alpha: 1)
+        case .emerald: return RGBAColor(red: 0.20, green: 0.78, blue: 0.56, alpha: 1)
+        case .violet: return RGBAColor(red: 0.68, green: 0.49, blue: 0.98, alpha: 1)
+        case .rose: return RGBAColor(red: 0.96, green: 0.42, blue: 0.56, alpha: 1)
+        case .neutral: return RGBAColor(red: 0.64, green: 0.66, blue: 0.70, alpha: 1)
+        }
+    }
+}
+
+public struct TranslationTypographyStyle: Codable, Hashable, Sendable {
+    public var sourceFontSize: Double = 13
+    public var targetFontSize: Double = 14.5
+    public var fontFamily: TranslationFontFamily = .system
+    public var lineSpacing: Double = 5
+    public var accent: TranslationAccentPreset = .amber
+
+    public init() {}
+
+    public static let `default` = TranslationTypographyStyle()
+}
+
+public struct ScreenshotTranslationSettings: Codable, Hashable, Sendable {
+    public var provider: ScreenshotTranslationProvider?
+    public var targetLanguage = "zh-Hans"
+    public var apiProvider: TranslationAPIProvider = .google
+    public var onlineProvider: PrivacyAIProvider = .deepSeek
+    public var autoTranslateOnOpen = true
+    public var style: TranslationTypographyStyle = .default
+    private var profiles: [String: PrivacyAIConfiguration] = [:]
+    private var apiProfiles: [String: TranslationAPIConfiguration] = [:]
+
+    public init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case provider, targetLanguage, apiProvider, onlineProvider, autoTranslateOnOpen, style, profiles, apiProfiles
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        provider = try container.decodeIfPresent(ScreenshotTranslationProvider.self, forKey: .provider)
+        targetLanguage = try container.decodeIfPresent(String.self, forKey: .targetLanguage) ?? "zh-Hans"
+        apiProvider = try container.decodeIfPresent(TranslationAPIProvider.self, forKey: .apiProvider) ?? .google
+        onlineProvider = try container.decodeIfPresent(PrivacyAIProvider.self, forKey: .onlineProvider) ?? .deepSeek
+        autoTranslateOnOpen = try container.decodeIfPresent(Bool.self, forKey: .autoTranslateOnOpen) ?? true
+        style = try container.decodeIfPresent(TranslationTypographyStyle.self, forKey: .style) ?? .default
+        profiles = try container.decodeIfPresent([String: PrivacyAIConfiguration].self, forKey: .profiles) ?? [:]
+        apiProfiles = try container.decodeIfPresent([String: TranslationAPIConfiguration].self, forKey: .apiProfiles) ?? [:]
+    }
+
+    public var modelConfiguration: PrivacyAIConfiguration? {
+        guard provider == .local || provider == .online else { return nil }
+        let preset: PrivacyAIProvider = provider == .local ? .local : onlineProvider
+        return profiles[preset.rawValue] ?? PrivacyAIConfiguration(provider: preset)
+    }
+
+    public mutating func saveModel(_ model: PrivacyAIConfiguration) {
+        profiles[model.provider.rawValue] = model
+    }
+
+    public var apiConfiguration: TranslationAPIConfiguration? {
+        guard provider == .api else { return nil }
+        return apiProfiles[apiProvider.rawValue] ?? TranslationAPIConfiguration(provider: apiProvider)
+    }
+
+    public mutating func saveAPI(_ api: TranslationAPIConfiguration) {
+        apiProfiles[api.provider.rawValue] = api
+    }
+}
+
 public enum SelectionBorderStyle: String, CaseIterable, Sendable {
     case aurora, pixelSteps, twoTonePrint, fabricStitch, iceMint, monochrome, viewfinder, amberDash, coolWhiteSweep
 
@@ -135,6 +247,11 @@ public struct Settings: Codable, Hashable, Sendable {
     public var pin = Pin()
     public var annotate = Annotate()
     public var ocr = OCR()
+    private var screenshotTranslation: ScreenshotTranslationSettings?
+    public var translation: ScreenshotTranslationSettings {
+        get { screenshotTranslation ?? ScreenshotTranslationSettings() }
+        set { screenshotTranslation = newValue }
+    }
     public var longShot = LongShot()
     public var record = Record()
     public var appearance = Appearance()
@@ -153,10 +270,11 @@ public struct Settings: Codable, Hashable, Sendable {
 
     public init() {}
 
-    /// 首次启动时给每个动作填一组默认快捷键。
-    public static func withDefaultShortcuts() -> Settings {
+    /// 开发版的全局快捷键留空，由用户选择与正式版不同的组合。
+    public static func withDefaultShortcuts(includesGlobalShortcuts: Bool = !AppPaths.isDevelopmentBuild) -> Settings {
         var settings = Settings()
         settings.schemaVersion = currentSchemaVersion
+        guard includesGlobalShortcuts else { return settings }
         // 长截图用 L，避开 macOS 自带的 ⌘⇧3 全屏截图。
         settings.shortcuts[ShortcutAction.screenshot.rawValue] =
             KeyBinding(keyCode: 18, modifiers: GlobalShortcut.Combo.command | GlobalShortcut.Combo.shift)

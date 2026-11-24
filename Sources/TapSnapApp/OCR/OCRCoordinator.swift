@@ -73,6 +73,8 @@ final class OCRCoordinator {
             return await Task.detached(priority: .userInitiated) {
                 OCRMarkdown.source(from: result, tables: tables)
             }.value
+        }, onTranslate: { [environment] in
+            environment.translateImage(image, document: result)
         }) { [environment] text in
             environment.pinTransfer.copy(text)
             environment.toast.success("已复制 \(text.count) 个字符")

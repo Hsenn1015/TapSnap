@@ -3,7 +3,7 @@
 #
 # 用法：
 #   Scripts/build-app.sh           # release 构建 + 打包 + 本机签名
-#   Scripts/build-app.sh debug     # debug 构建
+#   Scripts/build-app.sh debug     # 可与正式版同时运行的 dist/dev/TapSnap 开发版.app
 #   TAPSNAP_ALLOW_ADHOC_SIGNING=1 仅用于不保留系统授权的临时测试包。
 #   TAPSNAP_VERSION 和 TAPSNAP_BUILD_NUMBER 可覆盖安装包中的版本号。
 #   同时设置 TAPSNAP_UPDATE_FEED_URL 和 TAPSNAP_UPDATE_PUBLIC_KEY 可启用更新。
@@ -16,6 +16,26 @@ cd "$ROOT"
 
 UPDATE_FEED="${TAPSNAP_UPDATE_FEED_URL:-}"
 UPDATE_KEY="${TAPSNAP_UPDATE_PUBLIC_KEY:-}"
+case "$CONFIG" in
+  release)
+    APP_NAME="TapSnap"
+    BUNDLE_ID=com.sensnap.app
+    DIST="$ROOT/dist"
+    ;;
+  debug|dev)
+    CONFIG=debug
+    APP_NAME="TapSnap 开发版"
+    BUNDLE_ID=com.sensnap.app.dev
+    DIST="$ROOT/dist/dev"
+    UPDATE_FEED=
+    UPDATE_KEY=
+    ;;
+  *)
+    echo "用法：$0 [release|debug|dev]" >&2
+    exit 2
+    ;;
+esac
+
 if { [[ -n "$UPDATE_FEED" ]] && [[ -z "$UPDATE_KEY" ]]; } || { [[ -z "$UPDATE_FEED" ]] && [[ -n "$UPDATE_KEY" ]]; }; then
   echo "TAPSNAP_UPDATE_FEED_URL 和 TAPSNAP_UPDATE_PUBLIC_KEY 必须同时设置。" >&2
   exit 1
@@ -37,7 +57,7 @@ if [[ -n "$IDENTITY" ]]; then
   fi
 elif security find-identity -p codesigning "$KEYCHAIN" 2>/dev/null | grep -q '"SenSnap Local"'; then
   IDENTITY="SenSnap Local"
-elif [[ "${TAPSNAP_ALLOW_ADHOC_SIGNING:-0}" == 1 ]]; then
+elif [[ "$CONFIG" == debug || "${TAPSNAP_ALLOW_ADHOC_SIGNING:-0}" == 1 ]]; then
   IDENTITY=-
 else
   echo "构建 TapSnap.app 需要固定签名。首次在本机开发请运行 Scripts/setup-signing.sh；分发更新请使用原签名证书（TAPSNAP_MAC_SIGNING_SHA1）。" >&2
@@ -48,7 +68,7 @@ echo "==> swift build -c $CONFIG"
 swift build -c "$CONFIG"
 
 BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
-APP="$ROOT/dist/TapSnap.app"
+APP="$DIST/$APP_NAME.app"
 PLIST="$APP/Contents/Info.plist"
 SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
 
@@ -58,6 +78,15 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Framewor
 cp "$BIN_DIR/TapSnap" "$APP/Contents/MacOS/TapSnap"
 cp "$ROOT/Resources/Info.plist" "$PLIST"
 ditto "$BIN_DIR/Sparkle.framework" "$SPARKLE"
+
+if [[ "$CONFIG" == debug ]]; then
+  /usr/bin/plutil -replace CFBundleIdentifier -string "$BUNDLE_ID" "$PLIST"
+  /usr/bin/plutil -replace CFBundleName -string "$APP_NAME" "$PLIST"
+  /usr/bin/plutil -replace CFBundleDisplayName -string "$APP_NAME" "$PLIST"
+  /usr/bin/plutil -replace CFBundleURLTypes.0.CFBundleURLName -string "TapSnap Dev URL" "$PLIST"
+  /usr/bin/plutil -replace CFBundleURLTypes.0.CFBundleURLSchemes -json '["tapsnap-dev"]' "$PLIST"
+  /usr/bin/plutil -replace SUEnableAutomaticChecks -bool false "$PLIST"
+fi
 
 if [[ -n "${TAPSNAP_VERSION:-}" ]]; then
   /usr/bin/plutil -replace CFBundleShortVersionString -string "$TAPSNAP_VERSION" "$PLIST"
@@ -79,8 +108,10 @@ cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/"
 cp "$ROOT/Resources/formula-requirements.txt" "$ROOT/Resources/formula-models.json" "$ROOT/Resources/verify_formula_models.py" "$APP/Contents/Resources/"
 cp "$ROOT/Scripts/setup-formula.sh" "$APP/Contents/Resources/setup-formula.sh"
 chmod +x "$APP/Contents/Resources/setup-formula.sh"
-cp "$ROOT/Scripts/setup-formula.sh" "$ROOT/dist/Install Formula.command"
-chmod +x "$ROOT/dist/Install Formula.command"
+if [[ "$CONFIG" == release ]]; then
+  cp "$ROOT/Scripts/setup-formula.sh" "$DIST/Install Formula.command"
+  chmod +x "$DIST/Install Formula.command"
+fi
 cp -R "$ROOT/Resources/KaTeX" "$APP/Contents/Resources/"
 cp "$ROOT/Vendor/WebP/COPYING" "$APP/Contents/Resources/WebP-LICENSE"
 cp "$ROOT/Vendor/Sparkle/LICENSE" "$APP/Contents/Resources/Sparkle-LICENSE"
@@ -111,7 +142,7 @@ codesign --force --sign "${SIGNER[@]}" --options runtime "$SPARKLE_VERSION/Updat
 codesign --force --sign "${SIGNER[@]}" --options runtime "$SPARKLE"
 codesign --force --sign "${SIGNER[@]}" "$APP"
 if [[ -n "${TAPSNAP_MAC_SIGNING_SHA1:-}" ]]; then
-  codesign --verify --strict -R "=identifier \"com.sensnap.app\" and certificate leaf = H\"$IDENTITY\"" "$APP"
+  codesign --verify --strict -R "=identifier \"$BUNDLE_ID\" and certificate leaf = H\"$IDENTITY\"" "$APP"
 fi
 
 echo "==> 完成：$APP"

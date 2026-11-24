@@ -13,7 +13,7 @@ final class OCRResultPanel {
     }
 
     func show(document: OCRDocument, image: CGImage, markdownSource: (() async -> String)? = nil,
-              onCopy: @escaping (String) -> Void) {
+              onTranslate: (() -> Void)? = nil, onCopy: @escaping (String) -> Void) {
         close()
 
         let mouse = NSEvent.mouseLocation
@@ -21,7 +21,7 @@ final class OCRResultPanel {
         let visible = screen?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
         let panel = makeWindow(
             document: document, image: image, frame: Self.panelFrame(near: mouse, in: visible),
-            markdownSource: markdownSource, onCopy: onCopy
+            markdownSource: markdownSource, onTranslate: onTranslate, onCopy: onCopy
         )
         panel.orderFrontRegardless()
         panel.makeKey()
@@ -30,14 +30,14 @@ final class OCRResultPanel {
 
     func makeWindow(
         document: OCRDocument, image: CGImage, frame: CGRect, markdownSource: (() async -> String)? = nil,
-        onCopy: @escaping (String) -> Void
+        onTranslate: (() -> Void)? = nil, onCopy: @escaping (String) -> Void
     ) -> NSPanel {
         let view = OCRResultView(
             document: document,
             image: image,
             theme: theme(),
             makeMarkdownSource: markdownSource,
-            onCopy: onCopy,
+            onTranslate: onTranslate, onCopy: onCopy,
             onClose: { [weak self] in self?.close() }
         )
         let panel = OCRResultWindow(
@@ -136,6 +136,7 @@ private struct OCRResultView: View {
     let image: CGImage
     let theme: Theme
     let makeMarkdownSource: (() async -> String)?
+    let onTranslate: (() -> Void)?
     let onCopy: (String) -> Void
     let onClose: () -> Void
     @State private var mode: OCRResultDisplayMode = .paragraphs
@@ -271,6 +272,9 @@ private struct OCRResultView: View {
             .overlay { WindowDragArea().accessibilityHidden(true) }
             .help("拖动标题栏移动窗口")
 
+            if let onTranslate {
+                iconButton("在原图中翻译", icon: "character.bubble", action: onTranslate)
+            }
             Button { onCopy(mode.copyText(in: document, markdownSource: markdownSource)) } label: {
                 Label(mode.isMarkdown ? "复制 Markdown" : "复制全部", systemImage: "document.on.document")
                     .font(.system(size: 12, weight: .medium))

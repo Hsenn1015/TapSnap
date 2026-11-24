@@ -134,6 +134,7 @@ public enum PrivacyAI {
         struct Choice: Decodable {
             struct Message: Decodable { let content: String? }
             let message: Message
+            let finish_reason: String?
         }
         let choices: [Choice]
     }
@@ -351,7 +352,7 @@ public enum PrivacyAI {
     }
 
     static func completionRequest(_ configuration: PrivacyAIConfiguration, key: String?, instruction: String,
-                                  content: Any, maxTokens: Int, temperature: Double? = nil) throws -> URLRequest {
+                                  content: Any, maxTokens: Int, temperature: Double? = nil, requestsJSON: Bool = true) throws -> URLRequest {
         guard configuration.isConfigured, let endpoint = configuration.endpoint else { throw PrivacyAIError.configuration }
         var body: [String: Any] = [
             "model": configuration.model.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -363,7 +364,7 @@ public enum PrivacyAI {
         if let temperature { body["temperature"] = temperature }
         switch configuration.provider {
         case .deepSeek:
-            body["response_format"] = ["type": "json_object"]
+            if requestsJSON { body["response_format"] = ["type": "json_object"] }
             body["thinking"] = ["type": "disabled"]
         case .qwen:
             body["enable_thinking"] = false
@@ -382,10 +383,16 @@ public enum PrivacyAI {
         try JSONDecoder().decode(Selections.self, from: jsonContent(data)).matches
     }
 
-    static func jsonContent(_ data: Data) throws -> Data {
+    static func responseText(_ data: Data, requiresComplete: Bool = false) throws -> String {
         guard let response = try? JSONDecoder().decode(ModelResponse.self, from: data),
-              let content = response.choices.first?.message.content else { throw PrivacyAIError.response }
-        let text = content.trimmingCharacters(in: .whitespacesAndNewlines)
+              let choice = response.choices.first, let content = choice.message.content,
+              !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw PrivacyAIError.response }
+        if requiresComplete, let reason = choice.finish_reason, reason != "stop" { throw PrivacyAIError.response }
+        return content.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func jsonContent(_ data: Data) throws -> Data {
+        let text = try responseText(data)
         let fence = String(repeating: Character(UnicodeScalar(96)), count: 3)
         let json: String
         if text.hasPrefix(fence), text.hasSuffix(fence), let newline = text.firstIndex(of: "\n") {

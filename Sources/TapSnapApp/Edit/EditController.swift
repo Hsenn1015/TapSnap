@@ -714,7 +714,10 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
         case .crop:
             toggleCrop()
         case .translate:
-            if let image = renderedImage() { environment.translateImage(image) }
+            if let image = renderedImage() {
+                let source = Self.sourceRect(captureRect: captureRect, crop: document.cropRect, canvas: document.canvasSize)
+                environment.translateImage(image, captureRect: source)
+            }
         case .formula:
             if let image = renderedImage() { environment.recognizeFormula(image) }
         case .tableRecognize:

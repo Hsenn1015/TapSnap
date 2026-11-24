@@ -157,7 +157,7 @@ final class ScreenPermissionController: NSObject, ObservableObject, NSWindowDele
             case .denied:
                 if rechecking {
                     self.offersRelaunch = true
-                    self.feedback = "macOS 仍未允许当前运行的 TapSnap 录屏。如果设置中已经开启，可以重新打开 TapSnap 再试。"
+                    self.feedback = "macOS 仍未允许当前运行的 \(AppInfo.displayName) 录屏。如果设置中已经开启，可以重新打开 \(AppInfo.displayName) 再试。"
                 }
                 if self.window == nil { self.present() }
             case .failed(let detail):
@@ -176,13 +176,13 @@ final class ScreenPermissionController: NSObject, ObservableObject, NSWindowDele
         guard !isChecking, window != nil, let saved = continuation,
               offersRelaunch || saved.capture != nil else { return }
         guard !environment.isUpdateInteractionBusy else {
-            feedback = "请先完成录制或保存并关闭编辑窗口，再重新打开 TapSnap。"
+            feedback = "请先完成录制或保存并关闭编辑窗口，再重新打开 \(AppInfo.displayName)。"
             return
         }
         do {
             try reopen(with: saved)
         } catch {
-            feedback = "暂时无法重新打开 TapSnap，请从菜单退出后，再打开这份应用。"
+            feedback = "暂时无法重新打开 \(AppInfo.displayName)，请从菜单退出后，再打开这份应用。"
         }
     }
 
@@ -297,7 +297,7 @@ struct ScreenPermissionGuide: View {
 
     var body: some View {
         PermissionGuideView(theme: theme, title: "允许截图和录屏",
-                            instructions: "在系统设置的「隐私与安全性」中打开「屏幕与系统音频录制」（部分系统显示为「屏幕录制」），允许 TapSnap。返回 TapSnap 时会自动检测权限。",
+                            instructions: "在系统设置的「隐私与安全性」中打开「屏幕与系统音频录制」（部分系统显示为「屏幕录制」），允许 \(AppInfo.displayName)。返回 \(AppInfo.displayName) 时会自动检测权限。",
                             feedback: controller.feedback, isChecking: controller.isChecking,
                             openSettings: { controller.openSettings() },
                             recheck: { controller.continueAfterAuthorization() },

@@ -294,6 +294,22 @@ final class SelectionModeToolbarTests: XCTestCase {
         }
     }
 
+    func testTranslateIsVisibleForNormalSelectionAndRoutesTheCurrentRegion() throws {
+        let view = makeView()
+        var translated: CGRect?
+        view.onQuickAction = { action, rect in
+            XCTAssertEqual(action, .translate)
+            translated = rect
+        }
+        let region = CGRect(x: 40, y: 30, width: 250, height: 180)
+        try drag(view, from: region.origin, to: CGPoint(x: region.maxX, y: region.maxY))
+        let layout = try XCTUnwrap(view.quickToolbarLayout())
+        XCTAssertTrue(layout.actions.outputActions.contains(.translate))
+        XCTAssertTrue(view.performQuickAction(.translate))
+        XCTAssertEqual(translated, region)
+        XCTAssertTrue(SelectionToolbar.layout(availableWidth: 215).overflow.contains(.translate))
+    }
+
     func testSavedToolbarUsesChosenOrderAndKeepsHiddenActionsAvailable() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -316,6 +332,7 @@ final class SelectionModeToolbarTests: XCTestCase {
         view.config = ConfigStore(fileURL: url)
         let custom = try XCTUnwrap(view.quickToolbarLayout()?.actions)
         XCTAssertEqual(custom.outputActions, [.ocr, .pen, .pin])
+        XCTAssertTrue(custom.overflow.contains(.translate))
         XCTAssertFalse(custom.showsAnnotationDivider)
         XCTAssertEqual(Set(custom.outputActions + custom.overflow), Set(SelectionToolbar.availableActions))
         XCTAssertEqual(custom.outputActions.count + custom.overflow.count, SelectionToolbar.availableActions.count)

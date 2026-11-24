@@ -25,7 +25,11 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
     }
 
     @MainActor func install() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let item = NSStatusBar.system.statusItem(withLength: AppPaths.isDevelopmentBuild ? NSStatusItem.variableLength : NSStatusItem.squareLength)
+        if AppPaths.isDevelopmentBuild, let button = item.button {
+            button.title = "开发版"
+            button.imagePosition = .imageLeading
+        }
         item.menu = buildMenu()
         statusItem = item
         updater?.onAvailabilityChanged = { [weak self] in self?.refreshUpdateStatus() }
@@ -93,13 +97,13 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
         menu.addItem(menuItem("使用指南", action: #selector(showTutorial)))
         menu.addItem(menuItem("权限检查", action: #selector(checkPermissions), key: ""))
         menu.addItem(.separator())
-        menu.addItem(menuItem("关于 TapSnap", action: #selector(showAbout), key: ""))
+        menu.addItem(menuItem("关于 \(AppInfo.displayName)", action: #selector(showAbout), key: ""))
         if updater != nil {
             let checkUpdate = menuItem("检查更新…", action: #selector(checkForUpdates))
             updateMenuItem = checkUpdate
             menu.addItem(checkUpdate)
         }
-        menu.addItem(menuItem("退出", action: #selector(quit), key: "q"))
+        menu.addItem(menuItem(AppPaths.isDevelopmentBuild ? "退出开发版" : "退出", action: #selector(quit), key: "q"))
 
         return menu
     }
@@ -117,7 +121,7 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
     @MainActor private func refreshUpdateStatus() {
         let version = updater?.availableVersion
         updateMenuItem?.title = version.map { "有新版 \($0) · 查看…" } ?? "检查更新…"
-        let description = version.map { "TapSnap，\($0) 可更新" } ?? "TapSnap"
+        let description = version.map { "\(AppInfo.displayName)，\($0) 可更新" } ?? AppInfo.displayName
         guard let button = statusItem?.button,
               let camera = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: description) else { return }
         if version != nil {
@@ -300,7 +304,7 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
 
     @objc private func showAbout() {
         let alert = NSAlert()
-        alert.messageText = "TapSnap \(AppInfo.version)"
+        alert.messageText = "\(AppInfo.displayName) \(AppInfo.version)"
         alert.informativeText = """
             TapSnap 是一款桌面截图、贴图和录屏工具，支持滚动长截图、手绘标注、文字识别和隐私打码。
 

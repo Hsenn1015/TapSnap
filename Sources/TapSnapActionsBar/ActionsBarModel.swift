@@ -26,11 +26,11 @@ public struct ActionsBarModel: Codable, Hashable, Sendable {
     ]
 
     public static let defaultOutputActions: [ActionKind] = [
-        .privacy, .crop, .pin, .copy, .save, .print, .ocr,
+        .privacy, .crop, .pin, .copy, .save, .print, .ocr, .translate,
     ]
 
     public static let defaultOverflow: [ActionKind] = [
-        .translate, .qrCode, .longShot, .tableRecognize, .formula, .record, .watermark, .pathTag,
+        .qrCode, .longShot, .tableRecognize, .formula, .record, .watermark, .pathTag,
     ]
 
     /// Collapse buttons into More without changing their order when the selected annotation changes.

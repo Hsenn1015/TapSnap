@@ -126,12 +126,16 @@ macOS 首次截图需要授予屏幕录制权限。全局快捷键发生冲突�
 
 macOS 菜单栏点「公式识别」，按提示准备 Python 3.12，再在应用内安装依赖和模型。安装会校验模型文件。识别在本机进行，可编辑、预览和复制 LaTeX。
 
-设备端翻译需要 macOS 15+，首次使用时由系统准备语言包。Windows 的组件准备见 [可选本机组件](windows/README.md#可选本机组件)。
+macOS 可从菜单栏的「截图翻译」开始框选，也可在选区、编辑器或 OCR 结果页进入翻译。翻译窗口提供「对照」（左原图右译文，可拖拽调节比例、多选整理与智能滤杂、自定义字号/字体/高亮色）与「原图」（原位覆译支持按住 `Space` 透视对比，或切到划词翻译与可拖动/缩放/固定的译文浮卡）两种模式。工具栏空间不足时可从「更多」进入。
+
+首次使用时可选择翻译服务和目标语言。支持 Apple 离线翻译（需 macOS 15+）、第三方高速翻译 API（Google 翻译、百度翻译、DeepL、微软翻译、腾讯翻译君、有道翻译）、本机模型与在线大模型；也可关闭「打开后自动翻译」，先清理冗余段落再按需翻译。Windows 的组件准备见 [可选本机组件](windows/README.md#可选本机组件)。
 
 </details>
 
 <details>
 <summary><strong>更新与开发</strong></summary>
+
+在 macOS 上运行 `Scripts/build-app.sh debug` 会生成 `dist/dev/TapSnap 开发版.app`，可与正式版同时打开。菜单栏带「开发版」字样的图标用于调试。开发版单独保存设置和历史，默认不占用全局快捷键，可在自己的设置中绑定。
 
 推送 `main`、提交面向 `main` 的 PR，或在 [GitHub Actions](https://github.com/Hsenn1015/TapSnap/actions/workflows/build.yml) 手动运行时，会执行 macOS 托管环境回归测试与 Windows 四组回归，并在运行详情的 Artifacts 提供 Apple Silicon DMG 和两种架构的自包含 Windows ZIP。需要实际桌面、系统编码器和识别环境的 macOS 用例可在本机运行 `swift test`。
 

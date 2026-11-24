@@ -18,7 +18,7 @@ final class PermissionGuidePanel: NSPanel {
         guideWidth = min(460, available.width)
         super.init(contentRect: CGRect(x: 0, y: 0, width: guideWidth, height: 160),
                    styleMask: style, backing: .buffered, defer: false)
-        title = "TapSnap 权限"
+        title = "\(AppInfo.displayName) 权限"
         appearance = NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
@@ -83,9 +83,9 @@ struct PermissionGuideView: View {
                     .font(.system(size: 13))
                     .foregroundStyle(theme.token(.mutedForeground))
             }
-            DisclosureGroup("已开启权限，或列表里找不到 TapSnap？", isExpanded: $showsHelp) {
+            DisclosureGroup("已开启权限，或列表里找不到 \(AppInfo.displayName)？", isExpanded: $showsHelp) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("请确认系统设置中允许的是下方路径的 TapSnap。需要添加时，点 ＋，按 ⌘⇧G，再粘贴路径。")
+                    Text("请确认系统设置中允许的是下方路径的 \(AppInfo.displayName)。需要添加时，点 ＋，按 ⌘⇧G，再粘贴路径。")
                     Text(verbatim: Bundle.main.bundlePath)
                         .font(.system(size: 12, design: .monospaced))
                         .textSelection(.enabled)
@@ -95,8 +95,8 @@ struct PermissionGuideView: View {
                         copiedPath = pasteboard.setString(Bundle.main.bundlePath, forType: .string)
                     }
                     if relaunch == nil, let restartFromHelp {
-                        Text("如果已开启这份 TapSnap，重新检测后仍无法录屏，可以重新打开应用。")
-                        SnapButton("重新打开 TapSnap", theme: theme, variant: .outline, size: .sm,
+                        Text("如果已开启这份 \(AppInfo.displayName)，重新检测后仍无法录屏，可以重新打开应用。")
+                        SnapButton("重新打开 \(AppInfo.displayName)", theme: theme, variant: .outline, size: .sm,
                                    isEnabled: !isChecking, action: restartFromHelp)
                     }
                 }
@@ -146,7 +146,7 @@ struct PermissionGuideView: View {
             .keyboardShortcut(recheckIsPrimary ? .defaultAction : nil)
         }
         if let relaunch {
-            SnapButton("重新打开 TapSnap", theme: theme, variant: .outline, isEnabled: !isChecking, action: relaunch)
+            SnapButton("重新打开 \(AppInfo.displayName)", theme: theme, variant: .outline, isEnabled: !isChecking, action: relaunch)
         }
         if showsDone {
             SnapButton("完成", theme: theme, variant: .primary, action: close)
@@ -198,7 +198,7 @@ final class AccessibilityPermissionGuideController: NSObject, ObservableObject, 
             panel?.close()
             onAuthorized()
         } else {
-            feedback = "当前这份 TapSnap 仍未获得辅助功能权限。"
+            feedback = "当前这份 \(AppInfo.displayName) 仍未获得辅助功能权限。"
         }
     }
 
@@ -241,7 +241,7 @@ private struct AccessibilityPermissionGuide: View {
     }
 
     private var instructions: String {
-        let settings = "在「隐私与安全性 → 设备控制与数据访问」（部分系统显示为「辅助功能」）中打开 TapSnap 的开关。返回此窗口会自动检测。"
+        let settings = "在「隐私与安全性 → 设备控制与数据访问」（部分系统显示为「辅助功能」）中打开 \(AppInfo.displayName) 的开关。返回此窗口会自动检测。"
         return controller.screenCaptureAvailable
             ? "屏幕录制权限已开启，点「完成」即可。只有自动滚动长截图和优先响应冲突快捷键需要额外开启辅助功能。\n\n" + settings
             : settings

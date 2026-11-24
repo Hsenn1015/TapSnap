@@ -10,6 +10,7 @@ public final class ConfigStore: ObservableObject {
 
     @Published public private(set) var settings: Settings
     public let privacyAIKeys: PrivacyAIKeyStore
+    public let translationKeys: PrivacyAIKeyStore
 
     private let store: LocalStore<Settings>
     private let log = Log(subsystem: AppPaths.bundleIdentifier, category: "config")
@@ -18,6 +19,8 @@ public final class ConfigStore: ObservableObject {
         self.store = LocalStore(fileURL: fileURL)
         let directory = fileURL.deletingLastPathComponent().appendingPathComponent("privacy-ai-keys", isDirectory: true)
         self.privacyAIKeys = PrivacyAIKeyStore(directory: directory)
+        translationKeys = PrivacyAIKeyStore(directory: fileURL.deletingLastPathComponent()
+            .appendingPathComponent("translation-keys", isDirectory: true))
         let logger = Log(subsystem: AppPaths.bundleIdentifier, category: "config")
         do {
             var loaded = try store.load() ?? Settings.withDefaultShortcuts()
@@ -32,9 +35,8 @@ public final class ConfigStore: ObservableObject {
                     loaded.shortcuts[key] = binding
                 }
             }
-            if version < 2 {
+            if version < 2, let replacement = Settings.withDefaultShortcuts().shortcuts[ShortcutAction.longShot.rawValue] {
                 let oldDefault = KeyBinding(keyCode: 20, modifiers: 768) // 旧版 ⌘⇧3
-                let replacement = Settings.withDefaultShortcuts().shortcuts[ShortcutAction.longShot.rawValue]!
                 // 只迁移旧版发放的默认组合；不恢复用户取消的绑定，也不占用其自定义组合。
                 if loaded.shortcuts[ShortcutAction.longShot.rawValue] == oldDefault,
                    isAvailable(replacement) {

@@ -670,7 +670,8 @@ final class SelectionOverlayView: NSView {
         let thickness = quickToolbarTheme.metrics.toolbarHeight
         let gap: CGFloat = 8 // 超过描边外侧的手柄命中范围。
         // 小选区也给常用输出按钮留够空间，窄屏再收纳低频工具。
-        let widthLimit = min(area.width, max(selection.width, thickness * 9))
+        let defaultWidth = thickness * 9 + ActionsBarLayout.buttonSize + ActionsBarLayout.spacing
+        let widthLimit = min(area.width, max(selection.width, defaultWidth))
         let actions = SelectionToolbar.layout(
             availableWidth: widthLimit,
             pinned: SelectionToolbar.pinnedActions(from: config?.settings.capture.selectionToolbarActions),

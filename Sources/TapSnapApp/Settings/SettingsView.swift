@@ -69,6 +69,10 @@ struct SettingsView: View {
         switch section {
         case .general: GeneralSettings(environment: environment)
         case .capture: CaptureSettings(environment: environment)
+        case .translation:
+            SettingsPage(title: "截图翻译", theme: theme) {
+                TranslationServiceSettingsView(config: config, theme: theme)
+            }
         case .privacy: PrivacySettingsView(config: config, theme: theme)
         case .pin: PinSettings(environment: environment)
         case .annotate: AnnotateSettings(environment: environment)
@@ -83,7 +87,7 @@ struct SettingsView: View {
 // MARK: - 侧边栏条目
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, capture, privacy, pin, annotate, record, longShot, shortcut, about
+    case general, capture, translation, privacy, pin, annotate, record, longShot, shortcut, about
 
     var id: String { rawValue }
 
@@ -91,6 +95,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "通用"
         case .capture: return "截图"
+        case .translation: return "截图翻译"
         case .privacy: return "隐私打码"
         case .pin: return "贴图"
         case .annotate: return "标注"
@@ -105,6 +110,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .general: return .settings
         case .capture: return .crop
+        case .translation: return .translate
         case .privacy: return .privacy
         case .pin: return .pin
         case .annotate: return .pen
@@ -626,7 +632,7 @@ private struct AboutSettings: View {
                     HStack(spacing: 10) {
                         IconView(icon: .crop, size: 20, color: theme.token(.foreground))
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("TapSnap")
+                            Text(AppInfo.displayName)
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundStyle(theme.token(.foreground))
                             Text("版本 \(AppInfo.version) (\(AppInfo.build))")
@@ -635,7 +641,7 @@ private struct AboutSettings: View {
                         }
                         Spacer()
                     }
-                    Text("截图、标注、贴图与录屏工具。识别和翻译在本机处理；首次使用需要下载公式模型或系统语言包。")
+                    Text("截图、标注、贴图与录屏工具。文字识别在本机完成；截图翻译可选择设备端或在线服务。")
                         .font(.system(size: 12))
                         .foregroundStyle(theme.token(.mutedForeground))
                         .fixedSize(horizontal: false, vertical: true)

@@ -12,7 +12,7 @@ enum SelectionToolbar {
         outputActions: captureModes + ActionsBarModel.defaultOutputActions,
         overflow: overflow
     )
-    private static let outputPriority: Set<ActionKind> = [.copy, .edit, .pin, .save]
+    private static let outputPriority: Set<ActionKind> = [.copy, .edit, .pin, .save, .translate]
 
     static let availableActions = standardModel.annotationTools + standardModel.outputActions + standardModel.overflow
 

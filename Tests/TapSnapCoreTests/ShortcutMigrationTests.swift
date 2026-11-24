@@ -21,6 +21,13 @@ final class ShortcutMigrationTests: XCTestCase {
                        KeyBinding(keyCode: 37, modifiers: modifiers))
     }
 
+    func testDevelopmentDefaultsLeaveGlobalShortcutsUnassignedAndKeepEditorShortcuts() {
+        let settings = Settings.withDefaultShortcuts(includesGlobalShortcuts: false)
+        XCTAssertTrue(settings.shortcuts.isEmpty)
+        XCTAssertEqual(settings.schemaVersion, Settings.currentSchemaVersion)
+        XCTAssertEqual(OperationShortcut.action(.pin).binding(in: settings), KeyBinding(keyCode: 17, flags: .command))
+    }
+
     func testDefaultGlobalsUseCommandAndLeaveCommandTToTheFrontmostApp() {
         let defaults = Settings.withDefaultShortcuts().shortcuts
         XCTAssertEqual(defaults["screenshot"], KeyBinding(keyCode: 18, modifiers: modifiers))

@@ -40,7 +40,7 @@ final class AppEnvironment {
     lazy var screenshotPresets = ScreenshotPresetsPanel(environment: self)
     lazy var desktopBar = DesktopBarController(config: config)
     lazy var tutorial = TutorialWindowController(theme: { [unowned self] in self.theme }, config: config)
-    lazy var translationPanel = TranslationPanel()
+    @MainActor lazy var translationPanel = TranslationPanel()
     lazy var formulaPanel = FormulaPanel(theme: { [weak self] in self?.theme ?? .dark })
     lazy var tableRecognizer = TableRecognizer(environment: self)
     lazy var pinTransfer = PinTransfer(environment: self)
@@ -100,7 +100,7 @@ final class AppEnvironment {
         } else {
             let hosting = NSHostingController(rootView: SettingsView(environment: self, section: section ?? .general))
             window = NSWindow(contentViewController: hosting)
-            window.title = "TapSnap 设置"
+            window.title = "\(AppInfo.displayName) 设置"
             window.styleMask = [.titled, .closable, .miniaturizable]
             window.isReleasedWhenClosed = false
             settingsAppearanceObservation = config.$settings

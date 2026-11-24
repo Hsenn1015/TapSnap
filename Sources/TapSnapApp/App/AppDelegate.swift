@@ -19,10 +19,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         environment.toastPresenter.install()
 
-        let updater = AppUpdater(isBusy: { [weak environment] in environment?.isUpdateInteractionBusy == true },
-                                 notify: { [weak environment] text in
-                                     environment?.toast.show(ToastMessage(text: text, duration: 4))
-                                 })
+        let updater = AppPaths.isDevelopmentBuild ? nil : AppUpdater(
+            isBusy: { [weak environment] in environment?.isUpdateInteractionBusy == true },
+            notify: { [weak environment] text in
+                environment?.toast.show(ToastMessage(text: text, duration: 4))
+            })
         let menuBar = MenuBarController(environment: environment, updater: updater)
         menuBar.install()
         self.menuBar = menuBar
@@ -53,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.menuBar?.performDesktopBarAction(action)
         }
 
-        updater.start()
+        updater?.start()
         Log.shared.info("TapSnap \(AppInfo.version) 已启动")
         environment.screenPermission.restoreOnLaunch()
     }
@@ -76,9 +77,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        // tapsnap:// 为当前入口，继续接受旧的 sensnap:// 链接。
+        let schemes = AppPaths.isDevelopmentBuild ? ["tapsnap-dev"] : ["tapsnap", "sensnap"]
         guard let url = urls.first, let scheme = url.scheme,
-              ["tapsnap", "sensnap"].contains(scheme.lowercased()) else { return }
+              schemes.contains(scheme.lowercased()) else { return }
         menuBar?.handle(url: url)
     }
 }
