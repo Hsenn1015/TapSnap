@@ -92,13 +92,33 @@ public final class WindowLayerMonitor {
     deinit { stop() }
 }
 
-/// 通过 `NSWindow.sharingType` 控制窗口是否允许共享。
+/// 通过 `NSWindow.sharingType` 控制窗口是否允许被截屏或录屏捕获。
 public enum ScreenCaptureProtection {
+    @MainActor private static let trackedWindows = NSHashTable<NSWindow>.weakObjects()
+    @MainActor public private(set) static var allowsWindowCapture = false
+
     public static func protect(_ window: NSWindow) {
         window.sharingType = .none
     }
 
     public static func unprotect(_ window: NSWindow) {
         window.sharingType = .readOnly
+    }
+
+    /// 登记受保护窗口并按当前演示模式应用共享策略（须在主线程调用）。
+    public static func apply(to window: NSWindow) {
+        MainActor.assumeIsolated {
+            trackedWindows.add(window)
+            window.sharingType = allowsWindowCapture ? .readOnly : .none
+        }
+    }
+
+    /// 切换演示模式并实时刷新所有已打开的受保护窗口。
+    @MainActor public static func setAllowsWindowCapture(_ allowed: Bool) {
+        allowsWindowCapture = allowed
+        let type: NSWindow.SharingType = allowed ? .readOnly : .none
+        for window in trackedWindows.allObjects {
+            window.sharingType = type
+        }
     }
 }

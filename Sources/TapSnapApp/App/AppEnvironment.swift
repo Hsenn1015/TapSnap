@@ -64,6 +64,7 @@ final class AppEnvironment {
     private var recentSourceID: UUID?
     private var settingsWindow: NSWindow?
     private var settingsAppearanceObservation: AnyCancellable?
+    private var captureProtectionObservation: AnyCancellable?
     @MainActor lazy var accessibilityPermission = AccessibilityPermissionGuideController(
         theme: { [unowned self] in self.theme },
         onAuthorized: { [weak self] in self?.shortcutCenter.retryFailedRegistrations() }
@@ -84,6 +85,31 @@ final class AppEnvironment {
         self.ocr = OCRService()
         self.stitcher = FrameStitcher()
         self.pinGroups = PinGroupManager(config: config)
+        self.captureProtectionObservation = config.$settings
+            .map(\.capture.allowSelfCapture)
+            .removeDuplicates()
+            .sink { [weak self] allowed in
+                if Thread.isMainThread {
+                    MainActor.assumeIsolated {
+                        self?.applyCaptureProtection(allowed)
+                    }
+                } else {
+                    Task { @MainActor [weak self] in
+                        self?.applyCaptureProtection(allowed)
+                    }
+                }
+            }
+    }
+
+    @MainActor
+    private func applyCaptureProtection(_ allowed: Bool) {
+        ScreenCaptureProtection.setAllowsWindowCapture(allowed)
+        toastPresenter.allowsScreenCapture = allowed
+        if allowed {
+            pinGroups.rebuildPanelsForCaptureProtection()
+            desktopBar.refreshCaptureProtection()
+            ToolBallController.shared.refreshCaptureProtection()
+        }
     }
 
     var theme: Theme {

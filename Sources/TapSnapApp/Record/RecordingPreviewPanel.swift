@@ -3,6 +3,7 @@ import AVKit
 import SwiftUI
 import TapSnapActionsBar
 import TapSnapMedia
+import TapSnapSystem
 import TapSnapTheme
 import UniformTypeIdentifiers
 
@@ -104,7 +105,7 @@ final class RecordingPreviewPanel: NSObject, NSWindowDelegate, NSTextFieldDelega
         window.appearance = NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
         window.isReleasedWhenClosed = false
         window.hidesOnDeactivate = false
-        window.sharingType = .none
+        ScreenCaptureProtection.apply(to: window)
         window.delegate = self
         window.contentMinSize = NSSize(width: 550, height: 490)
         window.onCopyVideo = { [weak self] in self?.prepareVideo(save: false) }

@@ -59,9 +59,13 @@ final class CaptureCoordinator {
 
         Task { @MainActor in
             do {
+                let allowSelfCapture = environment.config.settings.capture.allowSelfCapture
+                let excludedWindowIDs = allowSelfCapture
+                    ? [environment.record.borderWindowID].compactMap { $0 }
+                    : [environment.record.borderWindowID, environment.toastPresenter.windowID].compactMap { $0 }
                 let frames = try await environment.capture.captureAllScreens(options: .init(
                     excludingCurrentApplication: outcome == .longShot,
-                    excludedWindowIDs: [environment.record.borderWindowID, environment.toastPresenter.windowID].compactMap { $0 },
+                    excludedWindowIDs: excludedWindowIDs,
                     hideDesktopIcons: environment.config.settings.capture.hideDesktopIcons
                 ))
                 guard session?.id == id else { return }
@@ -144,7 +148,7 @@ final class CaptureCoordinator {
                     return Self.viewRect(for: target, on: screen)
                 }
             }
-            view.borderStyle = captureSettings.selectionBorderStyle
+            view.borderConfiguration = captureSettings.selectionBorderConfiguration
             view.showsMagnifier = captureSettings.showMagnifier
             view.showsSizeLabel = captureSettings.showSelectionSize
             view.config = environment.config
@@ -404,7 +408,7 @@ final class CaptureCoordinator {
         Task { @MainActor in
             do {
                 let frame = try await environment.capture.capture(screen: screen,
-                    options: .init(excludingCurrentApplication: true,
+                    options: .init(excludingCurrentApplication: !environment.config.settings.capture.allowSelfCapture,
                                    hideDesktopIcons: environment.config.settings.capture.hideDesktopIcons))
                 guard session?.id == pending.id else { return }
                 pending.frames = [frame]

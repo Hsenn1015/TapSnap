@@ -5,6 +5,7 @@ import TapSnapActionsBar
 import TapSnapConfig
 import TapSnapIcons
 import TapSnapScreen
+import TapSnapSystem
 import TapSnapTheme
 import SwiftUI
 
@@ -50,7 +51,7 @@ final class DesktopBarController {
         panel.hidesOnDeactivate = false
         panel.isMovableByWindowBackground = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.sharingType = .none
+        ScreenCaptureProtection.apply(to: panel)
         window = panel
         updateContent()
         panel.orderFrontRegardless()
@@ -64,6 +65,16 @@ final class DesktopBarController {
     }
 
     func hide() { window?.orderOut(nil); window = nil }
+
+    /// 开启演示模式时重建已打开的桌面工具栏，绕过 macOS 对 `.none` 的单向锁定。
+    func refreshCaptureProtection() {
+        guard let old = window, old.sharingType == .none else { return }
+        let savedFrame = old.frame
+        window = nil
+        show()
+        window?.setFrame(savedFrame, display: true)
+        old.orderOut(nil)
+    }
 
     static func visibleFrame(_ frame: CGRect, screens: [CGRect]) -> CGRect {
         guard let screen = screens.first(where: { $0.intersects(frame) }) ?? screens.first else { return frame }

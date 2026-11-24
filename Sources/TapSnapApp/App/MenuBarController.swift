@@ -16,6 +16,9 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
     private let updater: AppUpdater?
     private var statusItem: NSStatusItem?
     private var updateMenuItem: NSMenuItem?
+    private var togglePinsMenuItem: NSMenuItem?
+    private var desktopBarMenuItem: NSMenuItem?
+    private var demoModeMenuItem: NSMenuItem?
     private var shortcutItems: [ShortcutAction: (item: NSMenuItem, title: String)] = [:]
     private var shortcutFailures: [ShortcutAction: String] = [:]
 
@@ -66,60 +69,94 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
         let menu = NSMenu()
         menu.delegate = self
 
-        menu.addItem(shortcutMenuItem("截图", action: #selector(startCapture), shortcut: .screenshot))
-        menu.addItem(menuItem("隐私截图", action: #selector(startPrivacyCapture), key: ""))
-        menu.addItem(shortcutMenuItem("截图并贴图", action: #selector(startCaptureAndPin), shortcut: .screenshotAndPin))
-        menu.addItem(menuItem("窗口截图", action: #selector(startWindowCapture)))
-        menu.addItem(menuItem("全屏截图", action: #selector(startFullScreenCapture)))
-        menu.addItem(menuItem("截图预设…", action: #selector(showScreenshotPresets)))
-        menu.addItem(menuItem("延时截图（3 秒）", action: #selector(startDelayedCapture), key: ""))
-        menu.addItem(shortcutMenuItem("贴图（剪贴板）", action: #selector(pinFromClipboard), shortcut: .pinFromClipboard))
+        // 核心捕获
+        menu.addItem(shortcutMenuItem("截图", action: #selector(startCapture), shortcut: .screenshot, symbol: "camera.viewfinder"))
+        menu.addItem(shortcutMenuItem("截图并贴图", action: #selector(startCaptureAndPin), shortcut: .screenshotAndPin, symbol: "pin"))
+        menu.addItem(shortcutMenuItem("长截图", action: #selector(startLongShot), shortcut: .longShot, symbol: "rectangle.expand.vertical"))
+        menu.addItem(shortcutMenuItem("屏幕录制", action: #selector(startRecording), shortcut: .recordScreen, symbol: "record.circle"))
+        menu.addItem(submenuItem("更多截图与编辑", symbol: "ellipsis.circle") { sub in
+            sub.addItem(menuItem("窗口截图", action: #selector(startWindowCapture), symbol: "macwindow"))
+            sub.addItem(menuItem("全屏截图", action: #selector(startFullScreenCapture), symbol: "rectangle.dashed"))
+            sub.addItem(menuItem("隐私截图", action: #selector(startPrivacyCapture), symbol: "eye.slash"))
+            sub.addItem(menuItem("延时截图（3 秒）", action: #selector(startDelayedCapture), symbol: "timer"))
+            sub.addItem(menuItem("截图预设…", action: #selector(showScreenshotPresets), symbol: "slider.horizontal.3"))
+            sub.addItem(.separator())
+            sub.addItem(menuItem("编辑最近截图", action: #selector(editRecentScreenshot), symbol: "pencil"))
+            sub.addItem(menuItem("编辑剪贴板图片", action: #selector(editClipboardImage), symbol: "doc.on.clipboard"))
+            sub.addItem(menuItem("打开图片…", action: #selector(editImageFile), symbol: "photo"))
+            sub.addItem(menuItem("最近录制…", action: #selector(showLastRecording), symbol: "film"))
+        })
+
         menu.addItem(.separator())
-        menu.addItem(menuItem("编辑最近截图", action: #selector(editRecentScreenshot)))
-        menu.addItem(menuItem("编辑剪贴板图片", action: #selector(editClipboardImage)))
-        menu.addItem(menuItem("打开图片…", action: #selector(editImageFile)))
+
+        // 识别与翻译
+        menu.addItem(shortcutMenuItem("文字识别", action: #selector(startOCR), shortcut: .ocrRegion, symbol: "text.viewfinder"))
+        menu.addItem(menuItem("截图翻译", action: #selector(startTranslation), symbol: "character.bubble"))
+        menu.addItem(submenuItem("更多识别", symbol: "sparkles") { sub in
+            sub.addItem(menuItem("表格识别", action: #selector(startTableRecognition), symbol: "tablecells"))
+            sub.addItem(menuItem("公式识别", action: #selector(startFormulaRecognition), symbol: "x.squareroot"))
+        })
+
         menu.addItem(.separator())
-        menu.addItem(shortcutMenuItem("长截图", action: #selector(startLongShot), shortcut: .longShot))
-        menu.addItem(shortcutMenuItem("屏幕录制", action: #selector(startRecording), shortcut: .recordScreen))
-        menu.addItem(menuItem("最近录制…", action: #selector(showLastRecording), key: ""))
-        menu.addItem(shortcutMenuItem("文字识别", action: #selector(startOCR), shortcut: .ocrRegion))
-        menu.addItem(menuItem("截图翻译", action: #selector(startTranslation)))
-        menu.addItem(menuItem("公式识别", action: #selector(startFormulaRecognition)))
-        menu.addItem(menuItem("表格识别", action: #selector(startTableRecognition), key: ""))
+
+        // 贴图与历史
+        menu.addItem(shortcutMenuItem("贴图（剪贴板）", action: #selector(pinFromClipboard), shortcut: .pinFromClipboard, symbol: "paperclip"))
+        menu.addItem(submenuItem("贴图管理", symbol: "square.on.square") { sub in
+            let togglePins = menuItem("隐藏所有贴图", action: #selector(toggleAllPins), symbol: "eye.slash")
+            togglePinsMenuItem = togglePins
+            sub.addItem(togglePins)
+            sub.addItem(menuItem("恢复上次关闭的贴图", action: #selector(restoreLastPin), symbol: "arrow.uturn.backward"))
+            sub.addItem(menuItem("贴图分组", action: #selector(showPinGroups), symbol: "folder"))
+        })
+        menu.addItem(shortcutMenuItem("剪贴板历史", action: #selector(showClipboardHistory), shortcut: .showHistory, symbol: "clock.arrow.circlepath"))
+
         menu.addItem(.separator())
-        menu.addItem(menuItem("隐藏所有贴图", action: #selector(toggleAllPins), key: ""))
-        menu.addItem(menuItem("恢复上次关闭的贴图", action: #selector(restoreLastPin), key: ""))
-        menu.addItem(menuItem("贴图分组", action: #selector(showPinGroups), key: ""))
-        menu.addItem(shortcutMenuItem("剪贴板历史", action: #selector(showClipboardHistory), shortcut: .showHistory))
-        menu.addItem(.separator())
-        menu.addItem(menuItem("设置…", action: #selector(openSettings), key: ","))
-        menu.addItem(menuItem("桌面工具栏", action: #selector(toggleDesktopBar)))
-        menu.addItem(menuItem("使用指南", action: #selector(showTutorial)))
-        menu.addItem(menuItem("权限检查", action: #selector(checkPermissions), key: ""))
-        menu.addItem(.separator())
-        menu.addItem(menuItem("关于 \(AppInfo.displayName)", action: #selector(showAbout), key: ""))
+
+        // 设置与维护
+        menu.addItem(menuItem("设置…", action: #selector(openSettings), key: ",", symbol: "gearshape"))
         if updater != nil {
-            let checkUpdate = menuItem("检查更新…", action: #selector(checkForUpdates))
-            updateMenuItem = checkUpdate
-            menu.addItem(checkUpdate)
+            let banner = menuItem("检查更新…", action: #selector(checkForUpdates), symbol: "arrow.down.circle")
+            banner.isHidden = true
+            updateMenuItem = banner
+            menu.addItem(banner)
         }
-        menu.addItem(menuItem(AppPaths.isDevelopmentBuild ? "退出开发版" : "退出", action: #selector(quit), key: "q"))
+        menu.addItem(submenuItem("更多", symbol: "ellipsis") { sub in
+            let desktopBar = menuItem("桌面工具栏", action: #selector(toggleDesktopBar), symbol: "dock.rectangle")
+            desktopBarMenuItem = desktopBar
+            sub.addItem(desktopBar)
+            let demoMode = menuItem("演示模式（允许录屏）", action: #selector(toggleDemoMode), symbol: "video.badge.checkmark")
+            demoModeMenuItem = demoMode
+            sub.addItem(demoMode)
+            sub.addItem(menuItem("权限检查", action: #selector(checkPermissions), symbol: "checkmark.shield"))
+            sub.addItem(menuItem("使用指南", action: #selector(showTutorial), symbol: "book"))
+            sub.addItem(.separator())
+            if updater != nil {
+                sub.addItem(menuItem("检查更新…", action: #selector(checkForUpdates), symbol: "arrow.triangle.2.circlepath"))
+            }
+            sub.addItem(menuItem("关于 \(AppInfo.displayName)", action: #selector(showAbout), symbol: "info.circle"))
+        })
+        menu.addItem(menuItem(AppPaths.isDevelopmentBuild ? "退出开发版" : "退出", action: #selector(quit), key: "q", symbol: "power"))
 
         return menu
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         refreshShortcutItems()
+        togglePinsMenuItem?.title = environment.pinGroups.isHidden ? "显示所有贴图" : "隐藏所有贴图"
+        desktopBarMenuItem?.state = environment.config.settings.appearance.showDesktopBar ? .on : .off
+        demoModeMenuItem?.state = environment.config.settings.capture.allowSelfCapture ? .on : .off
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(editRecentScreenshot) { return environment.recentScreenshot != nil }
+        if menuItem.action == #selector(restoreLastPin) { return environment.pinGroups.canRestoreLastClosed }
         if menuItem.action == #selector(checkForUpdates) { return updater?.canCheckForUpdates == true }
         return true
     }
 
     @MainActor private func refreshUpdateStatus() {
         let version = updater?.availableVersion
+        updateMenuItem?.isHidden = version == nil
         updateMenuItem?.title = version.map { "有新版 \($0) · 查看…" } ?? "检查更新…"
         let description = version.map { "\(AppInfo.displayName)，\($0) 可更新" } ?? AppInfo.displayName
         guard let button = statusItem?.button,
@@ -157,8 +194,8 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
         }
     }
 
-    private func shortcutMenuItem(_ title: String, action: Selector, shortcut: ShortcutAction) -> NSMenuItem {
-        let item = menuItem(title, action: action)
+    private func shortcutMenuItem(_ title: String, action: Selector, shortcut: ShortcutAction, symbol: String? = nil) -> NSMenuItem {
+        let item = menuItem(title, action: action, symbol: symbol)
         shortcutItems[shortcut] = (item, title)
         Self.updateShortcutMenuItem(item, title: title, binding: environment.config.binding(for: shortcut), failure: nil)
         return item
@@ -184,14 +221,38 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
         _ title: String,
         action: Selector,
         key: String = "",
-        modifiers: NSEvent.ModifierFlags = [.command]
+        modifiers: NSEvent.ModifierFlags = [.command],
+        symbol: String? = nil
     ) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
         item.target = self
         if !key.isEmpty {
             item.keyEquivalentModifierMask = modifiers
         }
+        if let symbol {
+            item.image = menuSymbolImage(symbol)
+        }
         return item
+    }
+
+    private func submenuItem(_ title: String, symbol: String? = nil, build: (NSMenu) -> Void) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        if let symbol {
+            item.image = menuSymbolImage(symbol)
+        }
+        let submenu = NSMenu(title: title)
+        submenu.delegate = self
+        build(submenu)
+        item.submenu = submenu
+        return item
+    }
+
+    private func menuSymbolImage(_ name: String) -> NSImage? {
+        let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(config)
+        image?.isTemplate = true
+        return image
     }
 
     // MARK: - 动作
@@ -216,6 +277,11 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
         }
     }
     @objc private func toggleDesktopBar() { environment.config.update { $0.appearance.showDesktopBar.toggle() } }
+    @objc private func toggleDemoMode() {
+        let next = !environment.config.settings.capture.allowSelfCapture
+        environment.config.update { $0.capture.allowSelfCapture = next }
+        environment.toast.info(next ? "已开启演示模式：允许截屏/录屏捕获 TapSnap 窗口" : "已关闭演示模式：已恢复隐藏浮窗保护")
+    }
     @objc private func showTutorial() { environment.tutorial.show() }
 
     @objc private func startCaptureAndPin() {

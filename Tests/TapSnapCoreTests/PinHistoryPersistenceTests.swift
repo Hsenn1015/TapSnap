@@ -316,8 +316,8 @@ final class PinHistoryPersistenceTests: XCTestCase {
             + abs(left.greenComponent - right.greenComponent) + abs(left.blueComponent - right.blueComponent)
         XCTAssertGreaterThan(difference, 0.15)
         for color in [left, right] {
-            XCTAssertGreaterThan(color.alphaComponent, 0.02)
-            XCTAssertLessThan(color.alphaComponent, 0.20)
+            XCTAssertGreaterThan(color.alphaComponent, 0.18)
+            XCTAssertLessThan(color.alphaComponent, 0.50)
         }
         for (x, y) in [(0, middleRow), (bitmap.pixelsWide - 1, middleRow), (middleColumn, 0),
                        (middleColumn, bitmap.pixelsHigh - 1), (middleColumn, middleRow),
@@ -458,5 +458,108 @@ final class PinHistoryPersistenceTests: XCTestCase {
         XCTAssertTrue(WindowLayerMonitor.coversScreen(screen, screens: [screen]))
         XCTAssertFalse(WindowLayerMonitor.coversScreen(screen.insetBy(dx: 0, dy: 16), screens: [screen]))
         XCTAssertFalse(WindowLayerMonitor.coversScreen(CGRect(x: -1512, y: 0, width: 800, height: 982), screens: [screen]))
+    }
+
+    @MainActor
+    func testScreenCaptureProtectionDemoModeTogglesTrackedWindows() throws {
+        let app = NSApplication.shared
+        guard let screen = NSScreen.screens.first else { throw XCTSkip("演示模式测试需要 macOS WindowServer") }
+        defer { ScreenCaptureProtection.setAllowsWindowCapture(false) }
+
+        XCTAssertFalse(ScreenCaptureProtection.allowsWindowCapture)
+        let root = directory()
+        let store = config(at: root)
+        store.update { $0.pin.snapToEdges = false; $0.pin.showShadow = true }
+        let manager = PinGroupManager(config: store, storageDirectory: root.appendingPathComponent("pins"))
+        let origin = CGPoint(x: screen.visibleFrame.midX.rounded() - 60, y: screen.visibleFrame.midY.rounded() - 40)
+        let item = manager.show(image(size: 120), at: origin)
+        defer { manager.closeAll(); manager.flushPersistence() }
+
+        let initialPin = try XCTUnwrap(app.windows.compactMap { $0 as? PinPanel }.first {
+            ($0.contentView as? PinImageView)?.item.id == item.id
+        })
+        let initialHalo = try XCTUnwrap(initialPin.childWindows?.first as? PinHaloPanel)
+        XCTAssertEqual(initialPin.sharingType, .none)
+        XCTAssertEqual(initialHalo.sharingType, .none)
+
+        // 开启演示模式后，重建已有贴图窗口即可立刻允许被截屏/录屏捕获，并保留原位置与外观。
+        ScreenCaptureProtection.setAllowsWindowCapture(true)
+        manager.rebuildPanelsForCaptureProtection()
+        let rebuiltPin = try XCTUnwrap(app.windows.compactMap { $0 as? PinPanel }.first {
+            ($0.contentView as? PinImageView)?.item.id == item.id && $0.isVisible
+        })
+        let rebuiltHalo = try XCTUnwrap(rebuiltPin.childWindows?.first as? PinHaloPanel)
+        XCTAssertTrue(ScreenCaptureProtection.allowsWindowCapture)
+        XCTAssertEqual(rebuiltPin.sharingType, .readOnly)
+        XCTAssertEqual(rebuiltHalo.sharingType, .readOnly)
+        XCTAssertEqual(rebuiltPin.frame, item.frame)
+
+        // 演示模式下新建的窗口也默认允许捕获。
+        let laterPin = PinPanel(frame: CGRect(x: 240, y: 100, width: 120, height: 80))
+        defer { laterPin.close() }
+        XCTAssertEqual(laterPin.sharingType, .readOnly)
+
+        // 关闭演示模式后，现有窗口立即恢复 .none 保护。
+        ScreenCaptureProtection.setAllowsWindowCapture(false)
+        XCTAssertEqual(rebuiltPin.sharingType, .none)
+        XCTAssertEqual(rebuiltHalo.sharingType, .none)
+        XCTAssertEqual(laterPin.sharingType, .none)
+
+        let defaultSettings = Settings()
+        XCTAssertFalse(defaultSettings.capture.allowSelfCapture)
+        store.update { $0.capture.allowSelfCapture = true }
+        let reloaded = config(at: root)
+        XCTAssertTrue(reloaded.settings.capture.allowSelfCapture)
+    }
+
+    @MainActor
+    func testPinShadowStylesAndCustomParametersRenderAndPersist() throws {
+        _ = NSApplication.shared
+        guard let screen = NSScreen.screens.first else { throw XCTSkip("阴影样式测试需要 macOS WindowServer") }
+
+        let root = directory()
+        let store = config(at: root)
+        XCTAssertEqual(store.settings.pin.shadowStyle, .auroraAmbient)
+        XCTAssertEqual(store.settings.pin.shadowIntensity, 1.0, accuracy: 0.001)
+        XCTAssertEqual(store.settings.pin.shadowSpread, 1.0, accuracy: 0.001)
+
+        store.update {
+            $0.pin.shadowStyle = .ambilight
+            $0.pin.shadowIntensity = 1.4
+            $0.pin.shadowSpread = 1.35
+        }
+        let reloaded = config(at: root)
+        XCTAssertEqual(reloaded.settings.pin.shadowStyle, .ambilight)
+        XCTAssertEqual(reloaded.settings.pin.shadowIntensity, 1.4, accuracy: 0.001)
+        XCTAssertEqual(reloaded.settings.pin.shadowSpread, 1.35, accuracy: 0.001)
+
+        // 验证 8x8 自适应主色提取能够区分左右主色。
+        let ctx = CGContext(data: nil, width: 16, height: 16, bitsPerComponent: 8, bytesPerRow: 16 * 4,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        ctx.setFillColor(CGColor(red: 1, green: 0.45, blue: 0.1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: 8, height: 16))
+        ctx.setFillColor(CGColor(red: 0.15, green: 0.55, blue: 1, alpha: 1))
+        ctx.fill(CGRect(x: 8, y: 0, width: 8, height: 16))
+        let palette = PinAmbientPalette.extract(from: ctx.makeImage()!)
+        XCTAssertGreaterThan(palette.left.red, palette.left.blue)
+        XCTAssertGreaterThan(palette.right.blue, palette.right.red)
+
+        // 验证全部 6 种阴影样式均保持贴图内部透明开口不被染色，且扩边随 spread 增大。
+        let pinFrame = CGRect(x: screen.visibleFrame.midX - 90, y: screen.visibleFrame.midY - 60, width: 180, height: 120)
+        let wideFrame = PinHaloPanel.frame(around: pinFrame, spread: 1.4)
+        let defaultFrame = PinHaloPanel.frame(around: pinFrame, spread: 1.0)
+        XCTAssertGreaterThan(wideFrame.width, defaultFrame.width)
+
+        let halo = PinHaloPanel(pinFrame: pinFrame)
+        defer { halo.close() }
+        for style in PinShadowStyle.allCases {
+            let appearance = PinShadowAppearance(style: style, intensity: 1.1, spread: 1.0, ambientPalette: palette)
+            halo.update(appearance: appearance, pinFrame: pinFrame)
+            let view = try XCTUnwrap(halo.contentView)
+            let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            let center = try XCTUnwrap(bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2))
+            XCTAssertLessThan(center.alphaComponent, 0.01, "Style \(style.rawValue) should keep pin interior transparent")
+        }
     }
 }

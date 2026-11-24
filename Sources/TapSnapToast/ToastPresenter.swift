@@ -14,6 +14,17 @@ public final class ToastPresenter {
     private let theme: () -> Theme
     private var panel: NSPanel?
     private var cancellable: AnyCancellable?
+    public var allowsScreenCapture = false {
+        didSet {
+            if allowsScreenCapture, let existing = panel, existing.sharingType == .none {
+                // macOS 对已设为 .none 的窗口单向锁定共享策略；重建面板以便立刻生效。
+                existing.orderOut(nil)
+                panel = nil
+            } else {
+                panel?.sharingType = allowsScreenCapture ? .readOnly : .none
+            }
+        }
+    }
     private var hideID: UUID?
 
     public convenience init(center: ToastCenter = .shared, theme: Theme = .dark) {
@@ -121,7 +132,7 @@ public final class ToastPresenter {
         panel.isMovableByWindowBackground = false
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
-        panel.sharingType = .none
+        panel.sharingType = allowsScreenCapture ? .readOnly : .none
         return panel
     }
 

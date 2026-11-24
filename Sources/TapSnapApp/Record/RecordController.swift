@@ -3,6 +3,7 @@ import Foundation
 import TapSnapCore
 import TapSnapMedia
 import TapSnapScreen
+import TapSnapSystem
 import TapSnapTheme
 import SwiftUI
 
@@ -135,7 +136,7 @@ final class RecordController {
         model.onFinish = { [weak self] in self?.finish() }
         model.onCancel = { [weak self] in self?.cancel() }
         let overlay = RecordingRegionOverlay(rect: rect, screen: screen,
-            borderStyle: environment.config.settings.capture.selectionBorderStyle)
+            borderConfiguration: environment.config.settings.capture.selectionBorderConfiguration)
         let window = Self.makeControlBar(for: rect, displayFrame: overlay.frame, visibleFrame: screen.visibleFrame,
                                          model: model, theme: environment.theme)
         barModel = model
@@ -162,7 +163,7 @@ final class RecordController {
         window.hasShadow = false
         window.level = .statusBar
         window.hidesOnDeactivate = false
-        window.sharingType = .none
+        ScreenCaptureProtection.apply(to: window)
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         window.setFrame(frame, display: false)
         return window

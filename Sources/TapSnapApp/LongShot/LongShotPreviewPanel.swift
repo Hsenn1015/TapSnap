@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import SwiftUI
 import TapSnapScreen
+import TapSnapSystem
 
 /// 操作栏固定在窗口内，图像单独滚动；预览缩放不会改变导出像素。
 final class LongShotPreviewPanel: NSObject, NSWindowDelegate {
@@ -164,7 +165,7 @@ final class LongShotPreviewPanel: NSObject, NSWindowDelegate {
         window.hidesOnDeactivate = false
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         window.isReleasedWhenClosed = false
-        window.sharingType = .none
+        ScreenCaptureProtection.apply(to: window)
         return window
     }
 

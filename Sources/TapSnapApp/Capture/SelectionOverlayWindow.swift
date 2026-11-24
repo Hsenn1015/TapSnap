@@ -6,6 +6,7 @@ import TapSnapActionsBar
 import TapSnapConfig
 import TapSnapCore
 import TapSnapScreen
+import TapSnapSystem
 import TapSnapTheme
 
 /// 截图覆盖层的老式无边框面板。
@@ -30,8 +31,8 @@ final class SelectionOverlayWindow: NSPanel {
         ignoresMouseEvents = false
         // 覆盖层铺在别人的窗口上，App 失活也不能收起来。
         hidesOnDeactivate = false
-        // 让覆盖层本身不被截进图里。
-        sharingType = .none
+        // 默认不让覆盖层本身被截进图里；开启演示模式后允许被录屏/截屏捕获。
+        ScreenCaptureProtection.apply(to: self)
         setFrame(frame, display: false)
     }
 
@@ -91,6 +92,10 @@ final class SelectionOverlayView: NSView {
 
     var showsMagnifier = true
     var showsSizeLabel = true { didSet { updateBar() } }
+    var borderConfiguration: SelectionBorderConfiguration {
+        get { borderView.configuration }
+        set { borderView.configuration = newValue }
+    }
     var borderStyle: SelectionBorderStyle {
         get { borderView.style }
         set { borderView.style = newValue }
@@ -191,11 +196,16 @@ final class SelectionOverlayView: NSView {
         addCursorRect(bounds, cursor: .crosshair)
     }
 
+    override func cursorUpdate(with event: NSEvent) {
+        guard pendingAction == nil else { return }
+        updateCursor(at: convert(event.locationInWindow, from: nil))
+    }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let mouseTracking { removeTrackingArea(mouseTracking) }
         let area = NSTrackingArea(rect: .zero,
-                                  options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self)
+                                  options: [.mouseEnteredAndExited, .mouseMoved, .cursorUpdate, .activeAlways, .inVisibleRect], owner: self)
         addTrackingArea(area)
         mouseTracking = area
         window?.acceptsMouseMovedEvents = true
@@ -214,8 +224,10 @@ final class SelectionOverlayView: NSView {
         setBarHover(barButton(at: point))
         if !selectsWindows {
             previewSnap(at: point)
+            updateCursor(at: point)
             return
         }
+        updateCursor(at: point)
         guard !lockedWindowSelection else { return }
         if barLayout()?.background.contains(point) == true { return }
         selection = Self.windowRegion(at: point, regions: windowRegions, bounds: bounds)
@@ -309,11 +321,13 @@ final class SelectionOverlayView: NSView {
         if let selection {
             if let handle = handleHit(at: point, in: selection) {
                 mode = .resizing(handle: handle, rect: selection)
+                updateCursor(at: point)
                 needsDisplay = true
                 return
             }
             if SelectionBorderView.outlineRect(for: selection, in: bounds).contains(point) {
                 mode = .moving(start: point, rect: selection)
+                updateCursor(at: point)
                 needsDisplay = true
                 return
             }
@@ -324,6 +338,7 @@ final class SelectionOverlayView: NSView {
         clearSnapPreview()
         mode = .creating(anchor: point)
         selection = CGRect(origin: point, size: .zero)
+        updateCursor(at: point)
         needsDisplay = true
     }
 
@@ -360,6 +375,7 @@ final class SelectionOverlayView: NSView {
         case .idle:
             return
         }
+        updateCursor(at: point)
         needsDisplay = true
     }
 
@@ -390,6 +406,7 @@ final class SelectionOverlayView: NSView {
         mode = .idle
         onSelectionChange?(selection, cursor, false)
         setBarHover(barButton(at: point))
+        updateCursor(at: point)
         needsDisplay = true
     }
 
@@ -834,9 +851,6 @@ final class SelectionOverlayView: NSView {
     }
 
     private func setBarHover(_ action: BarButton?, showsTip: Bool = true) {
-        if window?.isVisible == true {
-            (action == nil ? NSCursor.crosshair : NSCursor.pointingHand).set()
-        }
         guard action != hoveredBarButton || !showsTip else { return }
         hoveredBarButton = action
         hoverTip?.cancel()
@@ -851,6 +865,101 @@ final class SelectionOverlayView: NSView {
         }
         hoverTip = task
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: task)
+    }
+
+    private func updateCursor(at point: CGPoint) {
+        guard window?.isVisible == true else { return }
+        cursorForPoint(point).set()
+    }
+
+    func cursorForPoint(_ point: CGPoint) -> NSCursor {
+        switch mode {
+        case .creating:
+            return .crosshair
+        case .moving:
+            return .closedHand
+        case .resizing(let handle, _):
+            return Self.cursor(for: handle)
+        case .idle:
+            break
+        }
+
+        if let editorDock, !editorDock.isHidden, editorDock.frame.contains(point) {
+            return editorDockHover(at: point) == nil ? .arrow : .pointingHand
+        }
+        if barButton(at: point) != nil {
+            return .pointingHand
+        }
+        if barLayout()?.background.contains(point) == true || quickToolbarLayout()?.background.contains(point) == true {
+            return .arrow
+        }
+        if !selectsWindows, let selection, selection.width >= 1, selection.height >= 1 {
+            if let handle = handleHit(at: point, in: selection) {
+                return Self.cursor(for: handle)
+            }
+            if SelectionBorderView.outlineRect(for: selection, in: bounds).contains(point) {
+                return .openHand
+            }
+        }
+        return .crosshair
+    }
+
+    private static let diagonalNWSECursor: NSCursor = makeDiagonalCursor(nwse: true)
+    private static let diagonalNESWCursor: NSCursor = makeDiagonalCursor(nwse: false)
+
+    private static func cursor(for handle: Handle) -> NSCursor {
+        if #available(macOS 15, *) {
+            switch handle {
+            case .left, .right:
+                return .frameResize(position: .left, directions: .all)
+            case .top, .bottom:
+                return .frameResize(position: .top, directions: .all)
+            case .topLeft, .bottomRight:
+                return .frameResize(position: .topLeft, directions: .all)
+            case .topRight, .bottomLeft:
+                return .frameResize(position: .topRight, directions: .all)
+            }
+        }
+        switch handle {
+        case .left, .right: return .resizeLeftRight
+        case .top, .bottom: return .resizeUpDown
+        case .topLeft, .bottomRight: return diagonalNWSECursor
+        case .topRight, .bottomLeft: return diagonalNESWCursor
+        }
+    }
+
+    private static func makeDiagonalCursor(nwse: Bool) -> NSCursor {
+        let size = NSSize(width: 22, height: 22)
+        let image = NSImage(size: size, flipped: false) { _ in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            ctx.translateBy(x: size.width / 2, y: size.height / 2)
+            ctx.rotate(by: nwse ? -.pi / 4 : .pi / 4)
+
+            let arrow = CGMutablePath()
+            arrow.move(to: CGPoint(x: -7.5, y: 0))
+            arrow.addLine(to: CGPoint(x: -3.2, y: 3.8))
+            arrow.addLine(to: CGPoint(x: -3.2, y: 1.3))
+            arrow.addLine(to: CGPoint(x: 3.2, y: 1.3))
+            arrow.addLine(to: CGPoint(x: 3.2, y: 3.8))
+            arrow.addLine(to: CGPoint(x: 7.5, y: 0))
+            arrow.addLine(to: CGPoint(x: 3.2, y: -3.8))
+            arrow.addLine(to: CGPoint(x: 3.2, y: -1.3))
+            arrow.addLine(to: CGPoint(x: -3.2, y: -1.3))
+            arrow.addLine(to: CGPoint(x: -3.2, y: -3.8))
+            arrow.closeSubpath()
+
+            ctx.setLineJoin(.round)
+            ctx.setLineWidth(2.2)
+            ctx.setStrokeColor(NSColor.white.cgColor)
+            ctx.addPath(arrow)
+            ctx.strokePath()
+
+            ctx.setFillColor(NSColor.black.cgColor)
+            ctx.addPath(arrow)
+            ctx.fillPath()
+            return true
+        }
+        return NSCursor(image: image, hotSpot: NSPoint(x: 11, y: 11))
     }
 
     private func handleRects(for rect: CGRect) -> [(Handle, CGRect)] {
@@ -872,9 +981,31 @@ final class SelectionOverlayView: NSView {
     }
 
     private func handleHit(at point: CGPoint, in rect: CGRect) -> Handle? {
-        handleRects(for: rect)
-            .first { $0.1.insetBy(dx: -3, dy: -3).contains(point) }?
-            .0
+        if let direct = handleRects(for: rect)
+            .first(where: { $0.1.insetBy(dx: -4, dy: -4).contains(point) })?.0 {
+            return direct
+        }
+        // 整条边框线上任意位置均可直接拖拽缩放，无需精准点中小圆点。
+        let outline = SelectionBorderView.outlineRect(for: rect, in: bounds)
+        let tolerance: CGFloat = 4.5
+        let outer = outline.insetBy(dx: -tolerance, dy: -tolerance)
+        let inner = outline.insetBy(dx: tolerance, dy: tolerance)
+        guard outer.contains(point), !inner.contains(point) else { return nil }
+
+        let nearLeft = abs(point.x - outline.minX) <= tolerance
+        let nearRight = abs(point.x - outline.maxX) <= tolerance
+        let nearTop = abs(point.y - outline.maxY) <= tolerance
+        let nearBottom = abs(point.y - outline.minY) <= tolerance
+
+        if nearLeft && nearTop { return .topLeft }
+        if nearRight && nearTop { return .topRight }
+        if nearRight && nearBottom { return .bottomRight }
+        if nearLeft && nearBottom { return .bottomLeft }
+        if nearTop { return .top }
+        if nearBottom { return .bottom }
+        if nearLeft { return .left }
+        if nearRight { return .right }
+        return nil
     }
 
     // MARK: - 几何

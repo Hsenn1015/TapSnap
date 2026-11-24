@@ -257,4 +257,30 @@ final class SelectionOverlayDrawTests: XCTestCase {
             XCTAssertEqual(cropped.height, 90, style.displayName)
         }
     }
+
+    func testSelectionCursorUpdatesForHandlesEdgesMoveAndOutside() throws {
+        _ = NSApplication.shared
+        let bounds = CGRect(x: 0, y: 0, width: 320, height: 240)
+        let view = SelectionOverlayView(frame: bounds)
+        let selected = CGRect(x: 70, y: 70, width: 140, height: 90)
+        try dragSelection(in: view, rect: selected)
+
+        let outline = SelectionBorderView.outlineRect(for: selected, in: bounds)
+        // 选区外为十字准星
+        XCTAssertEqual(view.cursorForPoint(CGPoint(x: 10, y: 10)), .crosshair)
+        // 选区内部为可拖动移动的手型
+        XCTAssertEqual(view.cursorForPoint(CGPoint(x: selected.midX, y: selected.midY)), .openHand)
+        // 右边线任意非中点位置也能命中横向拉伸光标，不再是十字准星
+        let rightEdgeCursor = view.cursorForPoint(CGPoint(x: outline.maxX, y: outline.minY + 18))
+        XCTAssertNotEqual(rightEdgeCursor, .crosshair)
+        XCTAssertNotEqual(rightEdgeCursor, .openHand)
+        // 顶部边线任意位置命中纵向拉伸光标
+        let topEdgeCursor = view.cursorForPoint(CGPoint(x: outline.minX + 20, y: outline.maxY))
+        XCTAssertNotEqual(topEdgeCursor, .crosshair)
+        XCTAssertNotEqual(topEdgeCursor, .openHand)
+        // 左上角命中斜向拉伸光标
+        let cornerCursor = view.cursorForPoint(CGPoint(x: outline.minX, y: outline.maxY))
+        XCTAssertNotEqual(cornerCursor, .crosshair)
+        XCTAssertNotEqual(cornerCursor, .openHand)
+    }
 }

@@ -3,6 +3,7 @@ import Combine
 import Foundation
 import TapSnapActionsBar
 import TapSnapConfig
+import TapSnapSystem
 import TapSnapTheme
 
 /// 悬浮球以屏幕坐标拖动，边缘吸附后淡化；右键提供常用入口。
@@ -52,7 +53,7 @@ final class ToolBallController: ObservableObject {
         panel.level = .floating
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.sharingType = .none
+        ScreenCaptureProtection.apply(to: panel)
         let view = ToolBallView(frame: CGRect(origin: .zero, size: frame.size), theme: currentTheme)
         view.onCapture = { [weak self] in self?.onCapture?() }
         view.onHide = { [weak self] in self?.hide() }
@@ -71,6 +72,16 @@ final class ToolBallController: ObservableObject {
         window = nil
         isVisible = false
         defaults.set(false, forKey: visibleKey)
+    }
+
+    /// 开启演示模式时重建已打开的悬浮球，绕过 macOS 对 `.none` 的单向锁定。
+    func refreshCaptureProtection() {
+        guard isVisible, let old = window, old.sharingType == .none else { return }
+        let savedFrame = old.frame
+        window = nil
+        show()
+        window?.setFrame(savedFrame, display: true)
+        old.orderOut(nil)
     }
 
     private func moveWindow(to origin: CGPoint) {

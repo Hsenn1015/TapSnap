@@ -90,31 +90,46 @@ final class AuroraSelectionBorderTests: XCTestCase {
         XCTAssertEqual(border.layer?.opacity, 1)
     }
 
-    func testCoolWhiteSweepMakesOneLapAndStopsOnStyleChangeOrPause() throws {
+    func testAllSevenFamiliesAndMotionsAnimateCleanlyAndRespectPause() throws {
         let window = makeWindow()
         defer { window.close() }
         let border = try animatedBorder(in: window)
-        border.style = .coolWhiteSweep
-        let outline = SelectionBorderView.outlineRect(for: try XCTUnwrap(border.selectionRect), in: border.bounds)
-        let layers = try XCTUnwrap(border.layer?.sublayers)
-        let sweeps = layers.compactMap { $0 as? CAShapeLayer }.filter { $0.animation(forKey: "borderSweep") != nil }
-        XCTAssertEqual(sweeps.count, 3)
-        for sweep in sweeps {
-            let dash = try XCTUnwrap(sweep.lineDashPattern)
-            XCTAssertEqual(dash.reduce(0) { $0 + $1.doubleValue },
-                           2 * (outline.width + outline.height - 8 + 2 * .pi), accuracy: 0.01)
+
+        for style in SelectionBorderStyle.allCases {
+            for motion in style.availableMotions {
+                let palette = style.availablePalettes.first ?? .glacier
+                border.configuration = SelectionBorderConfiguration(style: style, motion: motion, palette: palette)
+                XCTAssertEqual(animationCount(in: border.layer), 1, "\(style.displayName)-\(motion.displayName)")
+            }
         }
-        XCTAssertEqual(animationCount(in: border.layer), sweeps.count)
+
+        // 验证离屏渲染不会把任何像素画进选区内部（严格裁剪在外部）。
+        let rect = CGRect(x: 32, y: 32, width: 120, height: 80)
+        let bounds = rect.insetBy(dx: -24, dy: -24)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        for style in SelectionBorderStyle.allCases {
+            let ctx = try XCTUnwrap(CGContext(
+                data: nil, width: Int(bounds.width), height: Int(bounds.height),
+                bitsPerComponent: 8, bytesPerRow: Int(bounds.width) * 4,
+                space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ))
+            SelectionBorderArtwork.drawAnimatedBorder(
+                SelectionBorderConfiguration(style: style),
+                around: CGRect(x: 24, y: 24, width: rect.width, height: rect.height),
+                in: CGRect(origin: .zero, size: bounds.size),
+                phase: 0.28,
+                context: ctx
+            )
+            let data = try XCTUnwrap(ctx.data)
+            let centerOffset = (Int(bounds.height / 2) * Int(bounds.width) + Int(bounds.width / 2)) * 4
+            let centerAlpha = data.load(fromByteOffset: centerOffset + 3, as: UInt8.self)
+            XCTAssertEqual(centerAlpha, 0, "\(style.displayName) 不应染色选区中心像素")
+        }
+
         border.isPaused = true
         XCTAssertEqual(animationCount(in: border.layer), 0)
         border.isPaused = false
-        XCTAssertEqual(animationCount(in: border.layer), sweeps.count)
-        for style in SelectionBorderStyle.allCases where style != .aurora && style != .coolWhiteSweep {
-            border.style = style
-            XCTAssertEqual(animationCount(in: border.layer), 0, style.displayName)
-        }
-        border.style = .coolWhiteSweep
-        XCTAssertEqual(animationCount(in: border.layer), sweeps.count)
+        XCTAssertEqual(animationCount(in: border.layer), 1)
         border.removeFromSuperview()
         XCTAssertEqual(animationCount(in: border.layer), 0)
     }

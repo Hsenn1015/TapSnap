@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import TapSnapConfig
 import TapSnapCore
 import TapSnapSystem
 import TapSnapTheme
@@ -11,6 +12,7 @@ final class PinPanel: NSPanel, NSWindowDelegate {
     var onFrameChanged: ((CGRect) -> Void)?
     private var halo: PinHaloPanel?
     private var haloEnabled = false
+    private var haloAppearance = PinShadowAppearance()
     private var placingInitialFrame = true
 
     init(frame: CGRect) {
@@ -29,8 +31,8 @@ final class PinPanel: NSPanel, NSWindowDelegate {
         animationBehavior = .none
         // NSPanel 默认随 App 失活隐藏；贴图必须一直贴着，不然切个 App 就没了。
         hidesOnDeactivate = false
-        // 贴图自身不应出现在截图结果里。
-        sharingType = .none
+        // 默认贴图自身不出现在截图结果里；开启演示模式后允许被截屏/录屏捕获。
+        ScreenCaptureProtection.apply(to: self)
         if self.frame != frame { setFrame(frame, display: false) }
         delegate = self
     }
@@ -42,18 +44,20 @@ final class PinPanel: NSPanel, NSWindowDelegate {
 
     func windowDidMove(_ notification: Notification) { onFrameChanged?(frame) }
     func windowDidResize(_ notification: Notification) {
-        if let halo { halo.setFrame(PinHaloPanel.frame(around: frame), display: true) }
+        if let halo { halo.setFrame(PinHaloPanel.frame(around: frame, spread: haloAppearance.spread), display: true) }
         onFrameChanged?(frame)
     }
 
-    func updateHalo(enabled: Bool) {
+    func updateHalo(enabled: Bool, appearance: PinShadowAppearance? = nil) {
         haloEnabled = enabled
+        if let appearance { haloAppearance = appearance }
         guard enabled, isVisible else {
             removeHalo()
             return
         }
 
-        let halo = self.halo ?? PinHaloPanel(pinFrame: frame)
+        let halo = self.halo ?? PinHaloPanel(pinFrame: frame, appearance: haloAppearance)
+        halo.update(appearance: haloAppearance, pinFrame: frame)
         if halo.level != level { halo.level = level }
         if halo.alphaValue != alphaValue { halo.alphaValue = alphaValue }
         if self.halo == nil {
@@ -102,6 +106,8 @@ final class PinImageView: NSView {
     var onToggleAlwaysOnTop: (() -> Void)?
     var onMoveToGroup: ((String?) -> Void)?
     var groupChoices: (() -> [String])?
+    var shadowStyleChoice: (() -> PinShadowStyle?)?
+    var onSelectShadowStyle: ((PinShadowStyle?) -> Void)?
     var doubleClickToClose = false
 
     init(item: PinItem) {
@@ -192,7 +198,33 @@ final class PinImageView: NSView {
         let groupEntry = NSMenuItem(title: "移到分组", action: nil, keyEquivalent: "")
         groupEntry.submenu = groupMenu
         menu.addItem(groupEntry)
+
+        if let currentShadow = shadowStyleChoice {
+            let shadowMenu = NSMenu()
+            let activeStyle = currentShadow()
+            for style in PinShadowStyle.allCases {
+                let entry = NSMenuItem(title: style.displayName, action: #selector(selectShadowStyleAction(_:)), keyEquivalent: "")
+                entry.representedObject = style.rawValue
+                entry.target = self
+                entry.state = activeStyle == style ? .on : .off
+                shadowMenu.addItem(entry)
+            }
+            shadowMenu.addItem(.separator())
+            let offEntry = NSMenuItem(title: "关闭阴影", action: #selector(selectShadowStyleAction(_:)), keyEquivalent: "")
+            offEntry.representedObject = ""
+            offEntry.target = self
+            offEntry.state = activeStyle == nil ? .on : .off
+            shadowMenu.addItem(offEntry)
+            let shadowEntry = NSMenuItem(title: "阴影样式", action: nil, keyEquivalent: "")
+            shadowEntry.submenu = shadowMenu
+            menu.addItem(shadowEntry)
+        }
         NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    @objc private func selectShadowStyleAction(_ sender: NSMenuItem) {
+        let raw = sender.representedObject as? String ?? ""
+        onSelectShadowStyle?(PinShadowStyle(rawValue: raw))
     }
 
     @objc private func toggleTopAction() { onToggleAlwaysOnTop?() }

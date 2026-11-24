@@ -115,20 +115,238 @@ public struct ScreenshotTranslationSettings: Codable, Hashable, Sendable {
     }
 }
 
-public enum SelectionBorderStyle: String, CaseIterable, Sendable {
-    case aurora, pixelSteps, twoTonePrint, fabricStitch, iceMint, monochrome, viewfinder, amberDash, coolWhiteSweep
+public enum PinShadowStyle: String, CaseIterable, Sendable {
+    case auroraAmbient, elevation, ambilight, frostedBezel, crispPaper, neonHalo
 
     public var displayName: String {
         switch self {
-        case .aurora: return "极光"
-        case .pixelSteps: return "像素阶梯"
-        case .twoTonePrint: return "双色套印"
-        case .fabricStitch: return "布纹缝线"
-        case .iceMint: return "冰蓝薄荷"
-        case .monochrome: return "黑白双线"
-        case .viewfinder: return "四角取景"
-        case .amberDash: return "琥珀虚线"
-        case .coolWhiteSweep: return "冷白追光"
+        case .auroraAmbient: return "极光环境柔晕"
+        case .elevation: return "物理悬浮深影"
+        case .ambilight: return "自适应取色溢光"
+        case .frostedBezel: return "磨砂玻璃画框"
+        case .crispPaper: return "锐利纸片硬影"
+        case .neonHalo: return "电光聚焦微晕"
+        }
+    }
+}
+
+public enum SelectionBorderStyle: String, CaseIterable, Sendable {
+    case liquidGlass, viewfinder, editorial, pixelSteps, titanium, fabricStitch, dualWingHUD
+
+    public var displayName: String {
+        switch self {
+        case .liquidGlass: return "液态玻璃"
+        case .viewfinder: return "光学取景器"
+        case .editorial: return "瑞士极简线"
+        case .pixelSteps: return "精致像素工艺"
+        case .titanium: return "阳极钛金属"
+        case .fabricStitch: return "匠心缝线"
+        case .dualWingHUD: return "双翼锁角"
+        }
+    }
+
+    public var availableMotions: [SelectionBorderMotion] {
+        switch self {
+        case .liquidGlass:
+            return [.diagonalGlint, .dewdropPulse, .dualSlide, .cornerBloom, .refractionTurn, .verticalTide]
+        case .viewfinder:
+            return [.focusLock, .rangeScan, .apertureBreathe]
+        case .editorial:
+            return [.silkyDash, .penGlider, .cornerNodes]
+        case .pixelSteps:
+            return [.pixelMarch, .pixelCorners, .crtScan]
+        case .titanium:
+            return [.brushedSheen, .chromeEdge, .titaniumBreathe]
+        case .fabricStitch:
+            return [.runningStitch, .threadSheen, .cornerKnots]
+        case .dualWingHUD:
+            return [.hudBrackets, .tickWave, .pingDot]
+        }
+    }
+
+    public var defaultMotion: SelectionBorderMotion { availableMotions[0] }
+
+    public var availablePalettes: [SelectionBorderPalette] {
+        switch self {
+        case .liquidGlass:
+            return [.glacier, .seasalt, .silverMist, .warmPearl, .titaniumIce, .motherOfPearl]
+        case .viewfinder:
+            return [.leica, .hasselblad, .cinemaCyan, .nightAmber]
+        case .editorial:
+            return [.swissMono, .linearIndigo, .braunOrange, .emerald]
+        case .pixelSteps:
+            return [.cyberPixel, .gameboy, .amberTerminal, .candyMint]
+        case .titanium:
+            return [.naturalTi, .desertTi, .spaceBlack, .cobaltTi]
+        case .fabricStitch:
+            return [.saddle, .denim, .forestCraft, .linen]
+        case .dualWingHUD:
+            return [.teOrange, .oscGreen, .avionics, .starship]
+        }
+    }
+
+    public var defaultPalette: SelectionBorderPalette { availablePalettes[0] }
+
+    /// 兼容旧版本保存的边框样式标识。
+    public static func fromPersistedRawValue(_ raw: String) -> SelectionBorderStyle? {
+        if let direct = SelectionBorderStyle(rawValue: raw) { return direct }
+        switch raw {
+        case "aurora", "iceMint", "coolWhiteSweep": return .liquidGlass
+        case "monochrome": return .editorial
+        case "amberDash": return .dualWingHUD
+        case "twoTonePrint": return .titanium
+        default: return nil
+        }
+    }
+}
+
+public enum SelectionBorderMotion: String, CaseIterable, Sendable {
+    // 液态玻璃
+    case diagonalGlint, dewdropPulse, dualSlide, cornerBloom, refractionTurn, verticalTide
+    // 光学取景器
+    case focusLock, rangeScan, apertureBreathe
+    // 瑞士极简线
+    case silkyDash, penGlider, cornerNodes
+    // 精致像素工艺
+    case pixelMarch, pixelCorners, crtScan
+    // 阳极钛金属
+    case brushedSheen, chromeEdge, titaniumBreathe
+    // 匠心缝线
+    case runningStitch, threadSheen, cornerKnots
+    // 双翼锁角（精密仪表）
+    case hudBrackets, tickWave, pingDot
+
+    public var displayName: String {
+        switch self {
+        case .diagonalGlint: return "静谧折光"
+        case .dewdropPulse: return "水膜呼吸"
+        case .dualSlide: return "双液滴对滑"
+        case .cornerBloom: return "四角折晶"
+        case .refractionTurn: return "棱镜缓转"
+        case .verticalTide: return "水光垂拂"
+        case .focusLock: return "对焦轻合"
+        case .rangeScan: return "测距扫描"
+        case .apertureBreathe: return "光圈呼吸"
+        case .silkyDash: return "现代丝滑虚线"
+        case .penGlider: return "笔尖单丝滑行"
+        case .cornerNodes: return "精密十字节点"
+        case .pixelMarch: return "点阵步进"
+        case .pixelCorners: return "像素角标轻跳"
+        case .crtScan: return "像素扫屏"
+        case .brushedSheen: return "拉丝掠光"
+        case .chromeEdge: return "双面镜棱"
+        case .titaniumBreathe: return "冷冽呼吸"
+        case .runningStitch: return "慢针走线"
+        case .threadSheen: return "丝线光泽"
+        case .cornerKnots: return "四角锁针"
+        case .hudBrackets: return "双翼锁角"
+        case .tickWave: return "刻度波浪"
+        case .pingDot: return "脉冲信标"
+        }
+    }
+
+    public var cycleDuration: Double {
+        switch self {
+        case .diagonalGlint: return 3.2
+        case .dewdropPulse: return 2.8
+        case .dualSlide: return 3.6
+        case .cornerBloom: return 3.4
+        case .refractionTurn: return 4.4
+        case .verticalTide: return 3.0
+        case .focusLock: return 2.4
+        case .rangeScan: return 2.8
+        case .apertureBreathe: return 3.6
+        case .silkyDash: return 3.2
+        case .penGlider: return 3.6
+        case .cornerNodes: return 3.0
+        case .pixelMarch: return 2.4
+        case .pixelCorners: return 2.0
+        case .crtScan: return 2.2
+        case .brushedSheen: return 3.0
+        case .chromeEdge: return 3.8
+        case .titaniumBreathe: return 3.6
+        case .runningStitch: return 3.0
+        case .threadSheen: return 3.2
+        case .cornerKnots: return 3.0
+        case .hudBrackets: return 2.4
+        case .tickWave: return 2.4
+        case .pingDot: return 3.4
+        }
+    }
+}
+
+public enum SelectionBorderPalette: String, CaseIterable, Sendable {
+    // 液态玻璃
+    case glacier, seasalt, silverMist, warmPearl, titaniumIce, motherOfPearl
+    // 光学取景器
+    case leica, hasselblad, cinemaCyan, nightAmber
+    // 瑞士极简线
+    case swissMono, linearIndigo, braunOrange, emerald
+    // 精致像素工艺
+    case cyberPixel, gameboy, amberTerminal, candyMint
+    // 阳极钛金属
+    case naturalTi, desertTi, spaceBlack, cobaltTi
+    // 匠心缝线
+    case saddle, denim, forestCraft, linen
+    // 双翼锁角（精密仪表）
+    case teOrange, oscGreen, avionics, starship
+
+    public var displayName: String {
+        switch self {
+        case .glacier: return "冰川白晶"
+        case .seasalt: return "海盐薄荷"
+        case .silverMist: return "暮雾银紫"
+        case .warmPearl: return "香槟珠光"
+        case .titaniumIce: return "极夜钛蓝"
+        case .motherOfPearl: return "珍珠母贝"
+        case .leica: return "徕卡红白"
+        case .hasselblad: return "哈苏冷钛"
+        case .cinemaCyan: return "电影冷青"
+        case .nightAmber: return "夜视琥珀"
+        case .swissMono: return "瑞士黑白"
+        case .linearIndigo: return "Linear 靛蓝"
+        case .braunOrange: return "博朗国际橙"
+        case .emerald: return "松石翡翠"
+        case .cyberPixel: return "霓虹紫青"
+        case .gameboy: return "掌机翠绿"
+        case .amberTerminal: return "琥珀终端"
+        case .candyMint: return "薄荷桃子"
+        case .naturalTi: return "原色钛金"
+        case .desertTi: return "沙漠金钛"
+        case .spaceBlack: return "深空黑钛"
+        case .cobaltTi: return "冰蓝铝钛"
+        case .saddle: return "鞍革焦糖"
+        case .denim: return "丹宁靛蓝"
+        case .forestCraft: return "英伦墨绿"
+        case .linen: return "亚麻炭灰"
+        case .teOrange: return "TE 工程橘"
+        case .oscGreen: return "示波荧光绿"
+        case .avionics: return "航电冰蓝"
+        case .starship: return "星舰琥珀"
+        }
+    }
+}
+
+public struct SelectionBorderConfiguration: Equatable, Hashable, Sendable {
+    public var style: SelectionBorderStyle
+    public var motion: SelectionBorderMotion
+    public var palette: SelectionBorderPalette
+
+    public init(
+        style: SelectionBorderStyle = .liquidGlass,
+        motion: SelectionBorderMotion? = nil,
+        palette: SelectionBorderPalette? = nil
+    ) {
+        self.style = style
+        if let motion, style.availableMotions.contains(motion) {
+            self.motion = motion
+        } else {
+            self.motion = style.defaultMotion
+        }
+        if let palette, style.availablePalettes.contains(palette) {
+            self.palette = palette
+        } else {
+            self.palette = style.defaultPalette
         }
     }
 }
@@ -147,10 +365,65 @@ public struct Settings: Codable, Hashable, Sendable {
         public var jpegQuality = 0.9
         public var showMagnifier = true
         public var showSelectionSize = true
+        private var allowDemoCapture: Bool?
+        /// 演示模式：开启后允许系统录屏、第三方录屏或双开 TapSnap 捕获本应用的选区、贴图与工具栏。
+        public var allowSelfCapture: Bool {
+            get { allowDemoCapture ?? false }
+            set { allowDemoCapture = newValue ? true : nil }
+        }
         private var selectionBorder: String?
+        private var selectionBorderMotionRaw: String?
+        private var selectionBorderPaletteRaw: String?
         public var selectionBorderStyle: SelectionBorderStyle {
-            get { selectionBorder.flatMap(SelectionBorderStyle.init(rawValue:)) ?? .aurora }
-            set { selectionBorder = newValue == .aurora ? nil : newValue.rawValue }
+            get { selectionBorder.flatMap(SelectionBorderStyle.fromPersistedRawValue) ?? .liquidGlass }
+            set {
+                selectionBorder = newValue == .liquidGlass ? nil : newValue.rawValue
+                if !newValue.availableMotions.contains(selectionBorderMotion) {
+                    selectionBorderMotionRaw = nil
+                }
+                if !newValue.availablePalettes.contains(selectionBorderPalette) {
+                    selectionBorderPaletteRaw = nil
+                }
+            }
+        }
+        public var selectionBorderMotion: SelectionBorderMotion {
+            get {
+                let style = selectionBorderStyle
+                if let raw = selectionBorderMotionRaw,
+                   let parsed = SelectionBorderMotion(rawValue: raw),
+                   style.availableMotions.contains(parsed) {
+                    return parsed
+                }
+                return style.defaultMotion
+            }
+            set {
+                let style = selectionBorderStyle
+                guard style.availableMotions.contains(newValue) else { return }
+                selectionBorderMotionRaw = newValue == style.defaultMotion ? nil : newValue.rawValue
+            }
+        }
+        public var selectionBorderPalette: SelectionBorderPalette {
+            get {
+                let style = selectionBorderStyle
+                if let raw = selectionBorderPaletteRaw,
+                   let parsed = SelectionBorderPalette(rawValue: raw),
+                   style.availablePalettes.contains(parsed) {
+                    return parsed
+                }
+                return style.defaultPalette
+            }
+            set {
+                let style = selectionBorderStyle
+                guard style.availablePalettes.contains(newValue) else { return }
+                selectionBorderPaletteRaw = newValue == style.defaultPalette ? nil : newValue.rawValue
+            }
+        }
+        public var selectionBorderConfiguration: SelectionBorderConfiguration {
+            SelectionBorderConfiguration(
+                style: selectionBorderStyle,
+                motion: selectionBorderMotion,
+                palette: selectionBorderPalette
+            )
         }
         /// 从左到右的常用按钮。nil 使用默认布局，空数组将所有可选按钮放进「更多」。
         public var selectionToolbarActions: [String]?
@@ -166,6 +439,30 @@ public struct Settings: Codable, Hashable, Sendable {
         public var doubleClickToClose = false
         public var showShadow = true
         public var snapToEdges = true
+        private var shadowStyleRaw: String?
+        private var shadowDepthScale: Double?
+        private var shadowSpreadScale: Double?
+
+        public var shadowStyle: PinShadowStyle {
+            get { shadowStyleRaw.flatMap(PinShadowStyle.init(rawValue:)) ?? .auroraAmbient }
+            set { shadowStyleRaw = newValue == .auroraAmbient ? nil : newValue.rawValue }
+        }
+        /// 阴影浓淡倍率（0.5 ~ 1.6，默认 1.0）。
+        public var shadowIntensity: Double {
+            get { min(max(shadowDepthScale ?? 1.0, 0.5), 1.6) }
+            set {
+                let clamped = min(max(newValue, 0.5), 1.6)
+                shadowDepthScale = abs(clamped - 1.0) < 0.001 ? nil : clamped
+            }
+        }
+        /// 阴影扩散范围倍率（0.6 ~ 1.5，默认 1.0）。
+        public var shadowSpread: Double {
+            get { min(max(shadowSpreadScale ?? 1.0, 0.6), 1.5) }
+            set {
+                let clamped = min(max(newValue, 0.6), 1.5)
+                shadowSpreadScale = abs(clamped - 1.0) < 0.001 ? nil : clamped
+            }
+        }
 
         public init() {}
     }

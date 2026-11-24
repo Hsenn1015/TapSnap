@@ -90,7 +90,7 @@ final class BrandingCompatibilityTests: XCTestCase {
             XCTAssertNil(config.binding(for: .recordScreen), "改名不能恢复用户已解绑的快捷键")
             XCTAssertEqual(config.settings.shortcuts.count, 2)
             XCTAssertEqual(config.settings.capture.saveDirectory, savedPath)
-            XCTAssertEqual(config.settings.capture.selectionBorderStyle, .aurora)
+            XCTAssertEqual(config.settings.capture.selectionBorderStyle, .liquidGlass)
         }
     }
 
@@ -116,9 +116,23 @@ final class BrandingCompatibilityTests: XCTestCase {
         let config = ConfigStore(fileURL: file)
 
         for style in SelectionBorderStyle.allCases {
-            config.update { $0.capture.selectionBorderStyle = style }
-            XCTAssertEqual(ConfigStore(fileURL: file).settings.capture.selectionBorderStyle, style)
+            let customMotion = style.availableMotions.last ?? style.defaultMotion
+            let customPalette = style.availablePalettes.last ?? style.defaultPalette
+            config.update {
+                $0.capture.selectionBorderStyle = style
+                $0.capture.selectionBorderMotion = customMotion
+                $0.capture.selectionBorderPalette = customPalette
+            }
+            let reloaded = ConfigStore(fileURL: file).settings.capture
+            XCTAssertEqual(reloaded.selectionBorderStyle, style)
+            XCTAssertEqual(reloaded.selectionBorderMotion, customMotion)
+            XCTAssertEqual(reloaded.selectionBorderPalette, customPalette)
         }
+
+        // 切换大风格时，动效与配色自动落回新风格的默认组合。
+        config.update { $0.capture.selectionBorderStyle = .fabricStitch }
+        XCTAssertEqual(config.settings.capture.selectionBorderMotion, .runningStitch)
+        XCTAssertEqual(config.settings.capture.selectionBorderPalette, .saddle)
 
         let data = try Data(contentsOf: file)
         var fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -128,7 +142,13 @@ final class BrandingCompatibilityTests: XCTestCase {
         fixture["capture"] = capture
         try JSONSerialization.data(withJSONObject: fixture).write(to: file)
         let loaded = ConfigStore(fileURL: file).settings.capture
-        XCTAssertEqual(loaded.selectionBorderStyle, .aurora)
+        XCTAssertEqual(loaded.selectionBorderStyle, .liquidGlass)
         XCTAssertFalse(loaded.showMagnifier)
+
+        // 旧版 "aurora" 字段平滑迁移为默认液态玻璃风格。
+        capture["selectionBorder"] = "aurora"
+        fixture["capture"] = capture
+        try JSONSerialization.data(withJSONObject: fixture).write(to: file)
+        XCTAssertEqual(ConfigStore(fileURL: file).settings.capture.selectionBorderStyle, .liquidGlass)
     }
 }

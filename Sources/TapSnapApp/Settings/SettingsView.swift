@@ -237,6 +237,22 @@ private struct GeneralSettings: View {
                 }
 
             }
+
+            SnapSettingGroup("录屏与演示", theme: theme) {
+                SnapSettingRow(
+                    "演示模式（允许录屏自身窗口）",
+                    subtitle: "开启后允许系统截屏、录屏软件或双开 TapSnap 捕获本应用的选区、贴图与工具栏",
+                    theme: theme
+                ) {
+                    SnapToggle(
+                        isOn: Binding(
+                            get: { config.settings.capture.allowSelfCapture },
+                            set: { value in config.update { $0.capture.allowSelfCapture = value } }
+                        ),
+                        theme: theme
+                    )
+                }
+            }
         }
     }
 }
@@ -264,18 +280,43 @@ private struct CaptureSettings: View {
                 }
             }
             SnapSettingGroup("选区边框", theme: theme) {
-                SnapSettingRow("边框样式", theme: theme) {
-                    Picker("边框样式", selection: bind(\.capture.selectionBorderStyle)) {
+                SnapSettingRow("边框风格", theme: theme) {
+                    Picker("边框风格", selection: bind(\.capture.selectionBorderStyle)) {
                         ForEach(SelectionBorderStyle.allCases, id: \.self) { style in
                             Text(style.displayName).tag(style)
                         }
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
-                    .frame(width: 144)
+                    .frame(width: 152)
                 }
-                SelectionBorderPreview(style: config.settings.capture.selectionBorderStyle)
-                    .frame(height: 108)
+                SnapRowDivider(theme: theme)
+                SnapSettingRow("动态效果", theme: theme) {
+                    Picker("动态效果", selection: bind(\.capture.selectionBorderMotion)) {
+                        ForEach(config.settings.capture.selectionBorderStyle.availableMotions, id: \.self) { motion in
+                            Text(motion.displayName).tag(motion)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(width: 152)
+                }
+                SnapRowDivider(theme: theme)
+                SnapSettingRow("主题配色", theme: theme) {
+                    Picker("主题配色", selection: bind(\.capture.selectionBorderPalette)) {
+                        ForEach(config.settings.capture.selectionBorderStyle.availablePalettes, id: \.self) { palette in
+                            Text(palette.displayName).tag(palette)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(width: 152)
+                }
+                borderPaletteSwatchStrip
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
+                SelectionBorderPreview(configuration: config.settings.capture.selectionBorderConfiguration)
+                    .frame(height: 122)
                     .clipShape(RoundedRectangle(cornerRadius: theme.metrics.radiusSM))
                     .padding(.horizontal, 14)
                     .padding(.bottom, 12)
@@ -329,6 +370,53 @@ private struct CaptureSettings: View {
         }
     }
 
+    private var borderPaletteSwatchStrip: some View {
+        let palettes = config.settings.capture.selectionBorderStyle.availablePalettes
+        let selected = config.settings.capture.selectionBorderPalette
+        let columns = [GridItem(.adaptive(minimum: 94), spacing: 6)]
+        return LazyVGrid(columns: columns, alignment: .leading, spacing: 6) {
+            ForEach(palettes, id: \.self) { palette in
+                let swatches = SelectionBorderArtwork.previewSwatches(for: palette)
+                let isSelected = palette == selected
+                Button {
+                    config.update { $0.capture.selectionBorderPalette = palette }
+                } label: {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color(red: swatches.0.red, green: swatches.0.green, blue: swatches.0.blue),
+                                        Color(red: swatches.1.red, green: swatches.1.green, blue: swatches.1.blue),
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 10, height: 10)
+                            .overlay(Circle().stroke(Color.black.opacity(0.22), lineWidth: 0.6))
+                        Text(palette.displayName)
+                            .font(.system(size: 11, weight: isSelected ? .medium : .regular))
+                            .foregroundStyle(isSelected ? theme.token(.foreground) : theme.token(.mutedForeground))
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(isSelected ? theme.token(.secondary) : theme.token(.background).opacity(0.6))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(isSelected ? theme.token(.primary) : theme.token(.border), lineWidth: isSelected ? 1.2 : 0.8)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
     private func row(_ title: String, _ binding: Binding<Bool>) -> some View {
         SnapSettingRow(title, theme: theme) {
             SnapToggle(isOn: binding, theme: theme)
@@ -354,11 +442,11 @@ private struct CaptureSettings: View {
 }
 
 private struct SelectionBorderPreview: NSViewRepresentable {
-    var style: SelectionBorderStyle
+    var configuration: SelectionBorderConfiguration
 
     func makeNSView(context: Context) -> PreviewView { PreviewView(frame: .zero) }
 
-    func updateNSView(_ view: PreviewView, context: Context) { view.border.style = style }
+    func updateNSView(_ view: PreviewView, context: Context) { view.border.configuration = configuration }
 
     final class PreviewView: NSView {
         let border = SelectionBorderView(frame: .zero)
@@ -409,14 +497,93 @@ private struct PinSettings: View {
         self.config = environment.config
     }
 
+    private var previewAppearance: PinShadowAppearance {
+        PinShadowAppearance(
+            settings: config.settings.pin,
+            ambientPalette: PinAmbientPalette(
+                left: RGBAColor(rgb: 0xfb923c, alpha: 1),
+                right: RGBAColor(rgb: 0xa855f7, alpha: 1)
+            )
+        )
+    }
+
     var body: some View {
         SettingsPage(title: "贴图", theme: theme) {
+            SnapSettingGroup("阴影与外观", theme: theme) {
+                row("显示阴影", bind(\.pin.showShadow))
+                if config.settings.pin.showShadow {
+                    SnapRowDivider(theme: theme)
+                    SnapSettingRow("阴影样式", subtitle: "在桌面贴图上右键也可快速切换", theme: theme) {
+                        Picker("阴影样式", selection: bind(\.pin.shadowStyle)) {
+                            ForEach(PinShadowStyle.allCases, id: \.self) { style in
+                                Text(style.displayName).tag(style)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(width: 156)
+                    }
+                    PinShadowPreview(appearance: previewAppearance)
+                        .frame(height: 122)
+                        .clipShape(RoundedRectangle(cornerRadius: theme.metrics.radiusSM))
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 10)
+                        .accessibilityHidden(true)
+                    SnapRowDivider(theme: theme)
+                    SnapSettingRow("阴影浓淡", theme: theme) {
+                        HStack(spacing: 8) {
+                            SnapSlider(
+                                value: Binding(
+                                    get: { config.settings.pin.shadowIntensity },
+                                    set: { value in config.update { $0.pin.shadowIntensity = value } }
+                                ),
+                                in: 0.5...1.6,
+                                theme: theme,
+                                width: 132
+                            )
+                            Text(String(format: "%.1fx", config.settings.pin.shadowIntensity))
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(theme.token(.mutedForeground))
+                                .frame(width: 34, alignment: .trailing)
+                        }
+                    }
+                    SnapRowDivider(theme: theme)
+                    SnapSettingRow("扩散范围", theme: theme) {
+                        HStack(spacing: 8) {
+                            SnapSlider(
+                                value: Binding(
+                                    get: { config.settings.pin.shadowSpread },
+                                    set: { value in config.update { $0.pin.shadowSpread = value } }
+                                ),
+                                in: 0.6...1.5,
+                                theme: theme,
+                                width: 132
+                            )
+                            Text(String(format: "%.1fx", config.settings.pin.shadowSpread))
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(theme.token(.mutedForeground))
+                                .frame(width: 34, alignment: .trailing)
+                        }
+                    }
+                    if abs(config.settings.pin.shadowIntensity - 1.0) > 0.01
+                        || abs(config.settings.pin.shadowSpread - 1.0) > 0.01 {
+                        SnapRowDivider(theme: theme)
+                        SnapSettingRow("阴影参数", subtitle: "将浓淡与扩散范围恢复为推荐默认值", theme: theme) {
+                            SnapButton("恢复默认", theme: theme, variant: .outline, size: .sm) {
+                                config.update {
+                                    $0.pin.shadowIntensity = 1.0
+                                    $0.pin.shadowSpread = 1.0
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             SnapSettingGroup("行为", theme: theme) {
                 row("默认置顶", bind(\.pin.alwaysOnTop))
                 SnapRowDivider(theme: theme)
                 row("双击关闭贴图", bind(\.pin.doubleClickToClose))
-                SnapRowDivider(theme: theme)
-                row("显示阴影", bind(\.pin.showShadow))
                 SnapRowDivider(theme: theme)
                 row("拖动时吸附屏幕边缘", bind(\.pin.snapToEdges))
                 SnapRowDivider(theme: theme)
@@ -450,6 +617,77 @@ private struct PinSettings: View {
             get: { config.settings[keyPath: keyPath] },
             set: { value in config.update { $0[keyPath: keyPath] = value } }
         )
+    }
+}
+
+private struct PinShadowPreview: NSViewRepresentable {
+    let appearance: PinShadowAppearance
+
+    func makeNSView(context: Context) -> Canvas { Canvas(shadowAppearance: appearance) }
+    func updateNSView(_ view: Canvas, context: Context) { view.shadowAppearance = appearance }
+
+    final class Canvas: NSView {
+        var shadowAppearance: PinShadowAppearance {
+            didSet { if shadowAppearance != oldValue { needsDisplay = true } }
+        }
+
+        init(shadowAppearance: PinShadowAppearance) {
+            self.shadowAppearance = shadowAppearance
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        override func draw(_ dirtyRect: NSRect) {
+            guard let context = NSGraphicsContext.current?.cgContext else { return }
+            let left = CGRect(x: bounds.minX, y: bounds.minY, width: bounds.width / 2, height: bounds.height)
+            context.setFillColor(RGBAColor(rgb: 0xf5f7fa).cgColor)
+            context.fill(left)
+            context.setFillColor(RGBAColor(rgb: 0x161c25).cgColor)
+            context.fill(bounds.offsetBy(dx: left.width, dy: 0))
+
+            let pinWidth = min(196, max(120, bounds.width * 0.44))
+            let pinHeight = min(64, max(44, bounds.height * 0.52))
+            let opening = CGRect(
+                x: (bounds.width - pinWidth) / 2,
+                y: (bounds.height - pinHeight) / 2 + 2,
+                width: pinWidth,
+                height: pinHeight
+            ).integral
+
+            PinShadowArtwork.draw(shadowAppearance, in: context, bounds: bounds, opening: opening)
+
+            // 绘制模拟贴图卡片（左白右彩，清晰展现白贴白对比与自适应取色效果）。
+            context.saveGState()
+            context.clip(to: opening)
+            context.setFillColor(CGColor(gray: 1, alpha: 1))
+            context.fill(opening)
+            let banner = CGRect(x: opening.minX, y: opening.maxY - 18, width: opening.width, height: 18)
+            if shadowAppearance.style == .ambilight {
+                let space = CGColorSpaceCreateDeviceRGB()
+                let colors = [
+                    CGColor(red: 0.98, green: 0.57, blue: 0.24, alpha: 1),
+                    CGColor(red: 0.66, green: 0.33, blue: 0.97, alpha: 1)
+                ] as CFArray
+                if let gradient = CGGradient(colorsSpace: space, colors: colors, locations: [0, 1]) {
+                    context.drawLinearGradient(
+                        gradient,
+                        start: CGPoint(x: opening.minX, y: opening.midY),
+                        end: CGPoint(x: opening.maxX, y: opening.midY),
+                        options: []
+                    )
+                }
+            } else {
+                context.setFillColor(RGBAColor(rgb: 0xf1f5f9).cgColor)
+                context.fill(banner)
+                context.setFillColor(RGBAColor(rgb: 0x3b82f6).cgColor)
+                context.fill(CGRect(x: opening.minX + 10, y: opening.maxY - 12, width: 28, height: 6))
+                context.setFillColor(RGBAColor(rgb: 0x94a3b8, alpha: 0.45).cgColor)
+                context.fill(CGRect(x: opening.minX + 10, y: opening.minY + 26, width: opening.width * 0.55, height: 5))
+                context.fill(CGRect(x: opening.minX + 10, y: opening.minY + 14, width: opening.width * 0.72, height: 5))
+            }
+            context.restoreGState()
+        }
     }
 }
 

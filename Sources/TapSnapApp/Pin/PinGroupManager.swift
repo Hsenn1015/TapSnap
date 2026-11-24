@@ -56,6 +56,8 @@ final class PinGroupManager: ObservableObject {
     @Published private(set) var closedStack: [PinItem] = []
     private var hiddenGroups: Set<String> = []
     private var panels: [UUID: PinPanel] = [:]
+    private var ambientPalettes: [UUID: (imageID: UUID, palette: PinAmbientPalette)] = [:]
+    private let config: ConfigStore
     private let archive: LocalImageArchive<Manifest>
     private let presentsWindows: Bool
     private let byteLimit: Int
@@ -68,6 +70,7 @@ final class PinGroupManager: ObservableObject {
     init(config: ConfigStore = .shared,
          storageDirectory: URL = AppPaths.applicationSupport.appendingPathComponent("pins", isDirectory: true),
          presentsWindows: Bool = true, byteLimit: Int = PinGroupManager.maximumContentBytes) {
+        self.config = config
         archive = LocalImageArchive(directory: storageDirectory)
         self.presentsWindows = presentsWindows
         self.byteLimit = byteLimit
@@ -110,6 +113,23 @@ final class PinGroupManager: ObservableObject {
     }
 
     func flushPersistence() { archive.flush() }
+
+    /// macOS 对已设为 `.none` 的窗口会单向锁定共享策略；开启演示模式时无感重建已打开的贴图窗口以立即生效。
+    func rebuildPanelsForCaptureProtection() {
+        guard presentsWindows, !panels.isEmpty else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            context.allowsImplicitAnimation = false
+            for item in items {
+                guard let old = panels[item.id], old.sharingType == .none else { continue }
+                panels.removeValue(forKey: item.id)
+                present(item)
+                refreshVisibility()
+                old.onFrameChanged = nil
+                old.close()
+            }
+        }
+    }
 
     private func updateFullScreenMonitoring() {
         guard started, presentsWindows else { return }
@@ -257,10 +277,33 @@ final class PinGroupManager: ObservableObject {
         }
         view.groupChoices = { [weak self] in self?.groupNames ?? [] }
         view.onMoveToGroup = { [weak self] in self?.move(item.id, toGroup: $0) }
+        view.shadowStyleChoice = { [weak self] in
+            guard let self, self.pinSettings.showShadow else { return nil }
+            return self.pinSettings.shadowStyle
+        }
+        view.onSelectShadowStyle = { [weak self] style in
+            self?.config.update { settings in
+                if let style {
+                    settings.pin.showShadow = true
+                    settings.pin.shadowStyle = style
+                } else {
+                    settings.pin.showShadow = false
+                }
+            }
+        }
         panel.onFrameChanged = { [weak self] frame in self?.updatePosition(item.id, frame: frame) }
         panel.contentView = view
         panels[item.id] = panel
         updatePanel(item)
+    }
+
+    private func ambientPalette(for item: PinItem) -> PinAmbientPalette {
+        if let cached = ambientPalettes[item.id], cached.imageID == item.imageID {
+            return cached.palette
+        }
+        let extracted = PinAmbientPalette.extract(from: item.image)
+        ambientPalettes[item.id] = (item.imageID, extracted)
+        return extracted
     }
 
     private func updatePanel(_ item: PinItem) {
@@ -268,7 +311,9 @@ final class PinGroupManager: ObservableObject {
         panel.alphaValue = CGFloat(item.opacity)
         panel.level = item.isAlwaysOnTop ? .floating : .normal
         panel.ignoresMouseEvents = item.isClickThrough
-        panel.updateHalo(enabled: pinSettings.showShadow)
+        let palette = pinSettings.shadowStyle == .ambilight ? ambientPalette(for: item) : .fallback
+        let appearance = PinShadowAppearance(settings: pinSettings, ambientPalette: palette)
+        panel.updateHalo(enabled: pinSettings.showShadow, appearance: appearance)
         view.doubleClickToClose = pinSettings.doubleClickToClose
         view.item = item
         view.frame = CGRect(origin: .zero, size: item.frame.size)
@@ -338,6 +383,7 @@ final class PinGroupManager: ObservableObject {
     func close(_ id: UUID) {
         if let item = items.first(where: { $0.id == id }) { closedStack.append(item) }
         panels.removeValue(forKey: id)?.orderOut(nil)
+        ambientPalettes.removeValue(forKey: id)
         items.removeAll { $0.id == id }
         enforceLimits()
         persist()
@@ -362,6 +408,7 @@ final class PinGroupManager: ObservableObject {
         closedStack.append(contentsOf: items)
         panels.values.forEach { $0.orderOut(nil) }
         panels.removeAll()
+        ambientPalettes.removeAll()
         items.removeAll()
         enforceLimits()
         persist()
