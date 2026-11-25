@@ -202,6 +202,7 @@ internal sealed partial class RecordingPreview : IDisposable
         rangeRow.Children.Add(reset);
         controls.Children.Add(ink.Inspector);
         int gifRate = 15, gifLimit = 1280;
+        double gifSpeed = 1.0;
 
         var statusRow = new DockPanel { LastChildFill = true, Margin = new Thickness(3, 3, 3, 1) };
         var cancel = RecordingWindow.Button("取消导出", () => export?.Cancel());
@@ -285,6 +286,15 @@ internal sealed partial class RecordingPreview : IDisposable
             }
             Choices("帧率", new[] { 10, 15, 24, 30 }, gifRate, n => $"{n} FPS", n => gifRate = n);
             Choices("最长边", new[] { 640, 960, 1280, 1920, 0 }, gifLimit, n => n == 0 ? "原始尺寸" : $"{n} 像素", n => gifLimit = n);
+            var speedGroup = new MenuItem { Header = "倍速" };
+            foreach (double sp in new[] { 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0 })
+            {
+                double val = sp;
+                var item = new MenuItem { Header = $"{val:0.##}×", IsChecked = Math.Abs(gifSpeed - val) < 0.01 };
+                item.Click += (_, _) => gifSpeed = val;
+                speedGroup.Items.Add(item);
+            }
+            menu.Items.Add(speedGroup);
             gifOptions.ContextMenu = menu;
             menu.IsOpen = true;
         };
@@ -334,7 +344,7 @@ internal sealed partial class RecordingPreview : IDisposable
             }
             using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
             export = cancellation;
-            double start = from, end = to;
+            double start = from, end = to, speed = gifSpeed;
             int rate = gifRate, limit = gifLimit;
             SetExporting(true);
             status.Text = "正在导出…";
@@ -353,7 +363,7 @@ internal sealed partial class RecordingPreview : IDisposable
                     }
                     layers = RecordingOverlay.Prepare(marks, reference, start, end, w, h, format == ".gif");
                 }
-                if (format == ".gif") await Task.Run(() => SaveGif(path, start, end, rate, limit, cancellation.Token, layers), cancellation.Token);
+                if (format == ".gif") await Task.Run(() => SaveGif(path, start, end, rate, limit, cancellation.Token, layers, speed), cancellation.Token);
                 else if (start == 0 && end == full && layers.Length == 0)
                 {
                     string original = await PrepareAsync().WaitAsync(cancellation.Token);

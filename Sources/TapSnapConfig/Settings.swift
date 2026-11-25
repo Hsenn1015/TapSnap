@@ -18,6 +18,7 @@ public enum ScreenshotTranslationProvider: String, CaseIterable, Codable, Sendab
 
 /// 截图秒译（松手即译悬停浮卡）的框选标识与浮卡视觉风格。
 public enum QuickTranslateStyle: String, CaseIterable, Codable, Hashable, Sendable {
+    case cleanCard
     case liquidGlass
     case editorial
     case inlineBilingual
@@ -25,6 +26,7 @@ public enum QuickTranslateStyle: String, CaseIterable, Codable, Hashable, Sendab
 
     public var displayName: String {
         switch self {
+        case .cleanCard: return "极简分块卡片"
         case .liquidGlass: return "液态玻璃语义胶囊"
         case .editorial: return "聚光取词取景器"
         case .inlineBilingual: return "原地双语高亮卡"
@@ -34,10 +36,11 @@ public enum QuickTranslateStyle: String, CaseIterable, Codable, Hashable, Sendab
 
     public var summary: String {
         switch self {
-        case .liquidGlass: return "冰蓝靛紫液态边框 + 左上角语义胶囊 + 指向尖角浮卡"
-        case .editorial: return "极轻暗幕四角取词标 + 无顶栏首行直出译文卡"
-        case .inlineBilingual: return "琥珀青蓝双色边 + 原文荧光高亮，支持仅译文 / 双语 / 覆盖原文"
-        case .dynamicBubble: return "薄荷青柔光选区 + 灵动岛药丸展开气泡与侧边迷你浮豆"
+        case .cleanCard: return "macOS 原生分块白/深灰卡：原文块 + 语言互换条 + 译文块，支持朗读与改字"
+        case .liquidGlass: return "冰蓝靛紫液态毛玻璃 + 「译」胶囊徽标与指向尖角浮卡"
+        case .editorial: return "轻暗幕四角取景框 + 3pt 渐变色条无顶栏首行直出译文"
+        case .inlineBilingual: return "柔和琥珀高亮原选区 + 三态切换（仅译文 / 双语对照 / 覆盖原文）"
+        case .dynamicBubble: return "薄荷绿灵动岛加载胶囊展开气泡 + 外侧竖排迷你动作豆"
         }
     }
 }
@@ -105,8 +108,8 @@ public struct ScreenshotTranslationSettings: Codable, Hashable, Sendable {
     private var apiProfiles: [String: TranslationAPIConfiguration] = [:]
 
     public var quickTranslateStyle: QuickTranslateStyle {
-        get { quickTranslateStyleRaw.flatMap(QuickTranslateStyle.init(rawValue:)) ?? .liquidGlass }
-        set { quickTranslateStyleRaw = newValue == .liquidGlass ? nil : newValue.rawValue }
+        get { quickTranslateStyleRaw.flatMap(QuickTranslateStyle.init(rawValue:)) ?? .cleanCard }
+        set { quickTranslateStyleRaw = newValue == .cleanCard ? nil : newValue.rawValue }
     }
 
     public init() {}

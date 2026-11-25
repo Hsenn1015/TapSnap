@@ -35,6 +35,7 @@ internal sealed class RecognitionSettings
     public string AiModel { get; set; } = "";
     public string? TranslationEndpoint { get; set; }
     public string? TranslationModel { get; set; }
+    public TranslationSettings Translation { get; set; } = new();
     public string FormulaPython { get; set; } = "";
     public PrivacyRuleMode Mode(PrivacyRuleKind kind) =>
         Modes.GetValueOrDefault(kind, PrivacyRules.Definitions.First(rule => rule.Kind == kind).DefaultMode);

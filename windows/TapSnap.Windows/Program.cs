@@ -61,7 +61,9 @@ internal sealed class TapSnapHost : IDisposable
     public TapSnapHost(Application application)
     {
         app = application;
+        Desktop.AllowSelfCapture = settings.AllowSelfCapture;
         SnapTheme.Initialize(app, settings.DarkTheme);
+        TranslationEngine.Prewarm(RecognitionService.Settings);
         hotkeyActions = new()
         {
             ["capture"] = ("截图", () => Select(CaptureAction.Edit)),
@@ -70,6 +72,7 @@ internal sealed class TapSnapHost : IDisposable
             ["longShot"] = ("滚动长截图", () => Select(CaptureAction.LongShot)),
             ["record"] = ("屏幕录制", ToggleRecording),
             ["ocr"] = ("文字识别", () => Select(CaptureAction.Text)),
+            ["quickTranslate"] = ("截图秒译", () => Select(CaptureAction.QuickTranslate)),
             ["history"] = ("剪贴板历史", ToggleHistory),
             ["ocrFull"] = ("全屏文字识别", () => RecognitionService.OpenResult(Desktop.Capture(Desktop.CursorMonitor), RecognitionMode.Text)),
             ["toolBall"] = ("显示／隐藏悬浮球", () => ToggleDesktop(true))
@@ -111,6 +114,7 @@ internal sealed class TapSnapHost : IDisposable
         Shortcut("ocr");
         Shortcut("ocrFull");
         Add("二维码 / 条形码", () => Select(CaptureAction.Barcode));
+        Shortcut("quickTranslate");
         Add("截图翻译", () => Select(CaptureAction.Translation));
         Add("公式识别", () => Select(CaptureAction.Formula));
         Add("表格识别", () => Select(CaptureAction.Table));
@@ -179,6 +183,8 @@ internal sealed class TapSnapHost : IDisposable
     private void Select(CaptureAction action, bool windowOnly = false, Action<Selection>? accept = null)
     {
         if (selecting) return;
+        if (action is CaptureAction.Translation or CaptureAction.QuickTranslate)
+            TranslationEngine.Prewarm(RecognitionService.Settings);
         selecting = true;
         Selection? selection;
         try
@@ -241,9 +247,9 @@ internal sealed class TapSnapHost : IDisposable
                 else CopyImage(shot.Image);
                 break;
             case CaptureAction.Pin:
-                if (autoPrivacy) OpenEditor(shot.Image, shot.ScreenRegion, true, pins.Add, completionTitle: "贴图",
+                if (autoPrivacy) OpenEditor(shot.Image, shot.ScreenRegion, true, img => pins.Add(img, shot.ScreenRegion), completionTitle: "贴图",
                     captureID: captureSequence, capturedAt: shot.CapturedAt);
-                else pins.Add(shot.Image);
+                else pins.Add(shot.Image, shot.ScreenRegion);
                 break;
             case CaptureAction.Save:
                 if (autoPrivacy || !Images.SaveWithDialog(shot.Image, settings.OutputFolder, preset?.SaveFormat ?? settings.SaveFormat))
@@ -262,6 +268,12 @@ internal sealed class TapSnapHost : IDisposable
             case CaptureAction.Barcode: Recognize(RecognitionMode.Barcode); break;
             case CaptureAction.Table: Recognize(RecognitionMode.Table); break;
             case CaptureAction.Translation: Recognize(RecognitionMode.Translation); break;
+            case CaptureAction.QuickTranslate:
+                if (autoPrivacy) OpenEditor(shot.Image, shot.ScreenRegion, true,
+                    output => RecognitionService.OpenQuickTranslate(output, shot.ScreenRegion),
+                    completionTitle: "秒译", captureID: captureSequence, capturedAt: shot.CapturedAt);
+                else RecognitionService.OpenQuickTranslate(shot.Image, shot.ScreenRegion);
+                break;
             case CaptureAction.Formula: Recognize(RecognitionMode.Formula); break;
         }
     }
@@ -651,8 +663,14 @@ internal sealed class TapSnapHost : IDisposable
             WindowStartupLocation = WindowStartupLocation.CenterScreen, UseLayoutRounding = true
         };
         SnapTheme.StyleWindow(window);
+        var settingsLifetime = new CancellationTokenSource();
         settingsWindow = window;
-        window.Closed += (_, _) => settingsWindow = null;
+        window.Closed += (_, _) =>
+        {
+            settingsWindow = null;
+            settingsLifetime.Cancel();
+            settingsLifetime.Dispose();
+        };
         var layout = new DockPanel();
         var navigation = new ListBox
         {
@@ -671,15 +689,17 @@ internal sealed class TapSnapHost : IDisposable
         var keys = new StackPanel();
         var recordOptions = new StackPanel();
         var captureOptions = new StackPanel();
+        var translationPage = RecognitionSettingsWindow.BuildTranslationPanel(settingsLifetime.Token);
         var annotation = new StackPanel();
         var privacy = new StackPanel();
         var pin = new StackPanel();
         var about = new StackPanel();
         var pages = new (string Title, string Icon, FrameworkElement Content)[]
         {
-            ("通用", "settings", general), ("截图", "⌗", captureOptions), ("隐私打码", "shield", privacy),
-            ("贴图", "pin", pin), ("标注", "✎", annotation), ("录屏", "●", recordOptions),
-            ("长截图", "↕", LongShotWindow.SettingsContent(settings)), ("快捷键", "keyboard", keys), ("关于", "info", about)
+            ("通用", "settings", general), ("截图", "⌗", captureOptions), ("截图翻译", "译", translationPage),
+            ("隐私打码", "shield", privacy), ("贴图", "pin", pin), ("标注", "✎", annotation),
+            ("录屏", "●", recordOptions), ("长截图", "↕", LongShotWindow.SettingsContent(settings)),
+            ("快捷键", "keyboard", keys), ("关于", "info", about)
         };
         var views = new List<ScrollViewer>();
         foreach (var (title, icon, content) in pages)
@@ -709,9 +729,17 @@ internal sealed class TapSnapHost : IDisposable
         }
 
         var appearance = SettingsLayout.Group(general, "外观");
-        Option(appearance, "深色界面", settings.DarkTheme, v => { settings.DarkTheme = v; SnapTheme.Apply(app, v); }, "跟随设置而非系统外观");
-        Option(appearance, "显示悬浮球", settings.ShowToolBall, v => { if (v != settings.ShowToolBall) ToggleDesktop(true); }, "桌面边缘的快捷截图入口");
+        Option(appearance, "深色界面", settings.DarkTheme, v => { settings.DarkTheme = v; SnapTheme.Apply(app, v); });
+        Option(appearance, "显示悬浮球", settings.ShowToolBall, v => { if (v != settings.ShowToolBall) ToggleDesktop(true); });
         Option(appearance, "显示桌面工具栏", settings.ShowDesktopToolbar, v => { if (v != settings.ShowDesktopToolbar) ToggleDesktop(false); });
+        var demoGroup = SettingsLayout.Group(general, "录屏与演示");
+        Option(demoGroup, "演示模式（允许录屏）", settings.AllowSelfCapture, v =>
+        {
+            settings.AllowSelfCapture = v;
+            Desktop.AllowSelfCapture = v;
+            Desktop.RefreshCaptureVisibility(app);
+        });
+        demoGroup.ToolTip = "开启后允许系统截屏、录屏软件捕获本应用的选区、贴图与工具栏";
         Option(SettingsLayout.Group(general, "启动"), "登录时启动", settings.StartAtLogin, v =>
         {
             using var registry = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");
@@ -730,11 +758,13 @@ internal sealed class TapSnapHost : IDisposable
 
         var selectionTools = SettingsLayout.Group(captureOptions, "框选工具栏");
         SettingsLayout.Row(selectionTools, "常用按钮",
-            RecordingWindow.Button("自定义…", () => new SelectionToolbarSettingsWindow(settings) { Owner = window }.ShowDialog()),
-            "选择普通截图时直接显示的按钮");
+            RecordingWindow.Button("自定义…", () => new SelectionToolbarSettingsWindow(settings) { Owner = window }.ShowDialog()));
 
         var borders = SettingsLayout.Group(captureOptions, "选区边框");
-        var preview = new SelectionBorder(settings.SelectionBorder);
+        settings.SelectionBorder = SelectionBorderCatalog.ResolveStyle(settings.SelectionBorder);
+        settings.SelectionBorderMotion = SelectionBorderCatalog.ResolveMotion(settings.SelectionBorder, settings.SelectionBorderMotion);
+        settings.SelectionBorderPalette = SelectionBorderCatalog.ResolvePalette(settings.SelectionBorder, settings.SelectionBorderPalette);
+        var preview = new SelectionBorder(settings.SelectionBorder, settings.SelectionBorderMotion, settings.SelectionBorderPalette);
         var sample = new Grid { Height = 108, IsHitTestVisible = false, ClipToBounds = true, UseLayoutRounding = true };
         sample.ColumnDefinitions.Add(new ColumnDefinition());
         sample.ColumnDefinitions.Add(new ColumnDefinition());
@@ -755,12 +785,46 @@ internal sealed class TapSnapHost : IDisposable
             var selection = bounds;
             selection.Inflate(-Math.Max(28, bounds.Width * 0.18), -25);
             tint.Data = new CombinedGeometry(GeometryCombineMode.Exclude, new RectangleGeometry(bounds), new RectangleGeometry(selection));
-            preview.Update(selection, true, settings.SelectionBorder);
+            preview.Update(selection, true, settings.SelectionBorder, settings.SelectionBorderMotion, settings.SelectionBorderPalette);
         }
         sample.SizeChanged += (_, _) => PreviewBorder();
-        AddChoice(borders, "边框样式", new[] { "极光", "像素阶梯", "双色套印", "布纹缝线", "冰蓝薄荷", "黑白双线", "四角取景", "琥珀虚线", "冷白追光" },
-            settings.SelectionBorder, choice => { settings.SelectionBorder = choice; PreviewBorder(); });
-        borders.Children.Add(new Border { Child = sample, Margin = new Thickness(13, 0, 13, 12) });
+        var borderStyleBox = new ComboBox { ItemsSource = SelectionBorderCatalog.Styles, SelectedItem = settings.SelectionBorder, Width = 152 };
+        var borderMotionBox = new ComboBox { ItemsSource = SelectionBorderCatalog.MotionsFor(settings.SelectionBorder), SelectedItem = settings.SelectionBorderMotion, Width = 152 };
+        var borderPaletteBox = new ComboBox { ItemsSource = SelectionBorderCatalog.PalettesFor(settings.SelectionBorder), SelectedItem = settings.SelectionBorderPalette, Width = 152 };
+        bool syncingBorderBoxes = false;
+        borderStyleBox.SelectionChanged += (_, _) =>
+        {
+            if (syncingBorderBoxes || borderStyleBox.SelectedItem is not string chosen) return;
+            syncingBorderBoxes = true;
+            settings.SelectionBorder = chosen;
+            settings.SelectionBorderMotion = SelectionBorderCatalog.ResolveMotion(chosen, settings.SelectionBorderMotion);
+            settings.SelectionBorderPalette = SelectionBorderCatalog.ResolvePalette(chosen, settings.SelectionBorderPalette);
+            borderMotionBox.ItemsSource = SelectionBorderCatalog.MotionsFor(chosen);
+            borderMotionBox.SelectedItem = settings.SelectionBorderMotion;
+            borderPaletteBox.ItemsSource = SelectionBorderCatalog.PalettesFor(chosen);
+            borderPaletteBox.SelectedItem = settings.SelectionBorderPalette;
+            syncingBorderBoxes = false;
+            settings.Save();
+            PreviewBorder();
+        };
+        borderMotionBox.SelectionChanged += (_, _) =>
+        {
+            if (syncingBorderBoxes || borderMotionBox.SelectedItem is not string m) return;
+            settings.SelectionBorderMotion = m;
+            settings.Save();
+            PreviewBorder();
+        };
+        borderPaletteBox.SelectionChanged += (_, _) =>
+        {
+            if (syncingBorderBoxes || borderPaletteBox.SelectedItem is not string p) return;
+            settings.SelectionBorderPalette = p;
+            settings.Save();
+            PreviewBorder();
+        };
+        SettingsLayout.Row(borders, "边框风格", borderStyleBox);
+        SettingsLayout.Row(borders, "动态效果", borderMotionBox);
+        SettingsLayout.Row(borders, "主题配色", borderPaletteBox);
+        borders.Children.Add(new Border { Child = sample, Margin = new Thickness(13, 4, 13, 12) });
         var behavior = SettingsLayout.Group(captureOptions, "行为");
         Option(behavior, "截图时隐藏桌面图标", settings.HideDesktopIcons, v => settings.HideDesktopIcons = v);
         Option(behavior, "播放快门声", settings.ShutterSound, v => settings.ShutterSound = v);
@@ -799,9 +863,52 @@ internal sealed class TapSnapHost : IDisposable
         var video = SettingsLayout.Group(recordOptions, "画面");
         AddChoice(video, "帧率", new[] { 30, 60 }, settings.RecordFrameRate == 60 ? 60 : 30, rate => settings.RecordFrameRate = rate, 88);
         Option(video, "包含光标", settings.RecordCursor, v => settings.RecordCursor = v);
-        Option(video, "摄像头画中画", settings.RecordCamera, v => settings.RecordCamera = v);
-        Option(video, "显示按键", settings.RecordShowKeys, v => settings.RecordShowKeys = v);
-        Option(video, "显示鼠标点击", settings.RecordShowClicks, v => settings.RecordShowClicks = v);
+
+        var effectsGroup = SettingsLayout.Group(recordOptions, "演示与鼠标动效");
+        var mousePreview = new RecordingMouseEffectsPreview
+        {
+            Height = 112,
+            ShowsClicks = settings.RecordShowClicks,
+            ShowsScrolls = settings.RecordShowScrolls,
+            ClickStyle = RecordingMouseEffectCatalog.ResolveClickStyle(settings.RecordClickStyle),
+            ScrollStyle = RecordingMouseEffectCatalog.ResolveScrollStyle(settings.RecordScrollStyle),
+            Palette = RecordingMouseEffectCatalog.ResolvePalette(settings.RecordEffectPalette),
+            EffectScale = settings.RecordEffectScale
+        };
+        Option(effectsGroup, "摄像头画中画", settings.RecordCamera, v => settings.RecordCamera = v);
+        Option(effectsGroup, "显示快捷键", settings.RecordShowKeys, v => settings.RecordShowKeys = v);
+        Option(effectsGroup, "显示鼠标点击", settings.RecordShowClicks, v =>
+        {
+            settings.RecordShowClicks = v;
+            mousePreview.ShowsClicks = v;
+            mousePreview.Refresh();
+        });
+        Option(effectsGroup, "显示滚轮滑动", settings.RecordShowScrolls, v =>
+        {
+            settings.RecordShowScrolls = v;
+            mousePreview.ShowsScrolls = v;
+            mousePreview.Refresh();
+        });
+        AddChoice(effectsGroup, "点击动效样式", RecordingMouseEffectCatalog.ClickStyles,
+            RecordingMouseEffectCatalog.ResolveClickStyle(settings.RecordClickStyle),
+            s => { settings.RecordClickStyle = s; mousePreview.ClickStyle = s; mousePreview.Refresh(); }, 152);
+        AddChoice(effectsGroup, "滚轮动效样式", RecordingMouseEffectCatalog.ScrollStyles,
+            RecordingMouseEffectCatalog.ResolveScrollStyle(settings.RecordScrollStyle),
+            s => { settings.RecordScrollStyle = s; mousePreview.ScrollStyle = s; mousePreview.Refresh(); }, 152);
+        AddChoice(effectsGroup, "动效配色", RecordingMouseEffectCatalog.Palettes,
+            RecordingMouseEffectCatalog.ResolvePalette(settings.RecordEffectPalette),
+            p => { settings.RecordEffectPalette = p; mousePreview.Palette = p; mousePreview.Refresh(); }, 152);
+        SettingsLayout.Slider(effectsGroup, "动效尺寸", 75, 145, Math.Round(settings.RecordEffectScale * 100), 5,
+            v => { settings.RecordEffectScale = v / 100d; mousePreview.EffectScale = settings.RecordEffectScale; mousePreview.Refresh(); },
+            settings.Save, "%");
+        effectsGroup.Children.Add(new Border
+        {
+            Child = mousePreview,
+            CornerRadius = new CornerRadius(6),
+            ClipToBounds = true,
+            Margin = new Thickness(13, 4, 13, 12)
+        });
+
         var audio = SettingsLayout.Group(recordOptions, "声音");
         Option(audio, "录制系统声音", settings.RecordSystemAudio, v => settings.RecordSystemAudio = v);
         Option(audio, "录制麦克风", settings.RecordMicrophone, v => settings.RecordMicrophone = v);
@@ -811,15 +918,16 @@ internal sealed class TapSnapHost : IDisposable
         SettingsLayout.Row(SettingsLayout.Group(pin, "分组"), "贴图分组", RecordingWindow.Button("管理…", pins.Groups));
         pin.Children.Add(pins.PreferencesContent());
         var product = SettingsLayout.Group(about, "TapSnap");
-        SettingsLayout.Row(product, "使用指南", RecordingWindow.Button("打开…", ShowGuide), "截图、标注、贴图与录屏");
+        SettingsLayout.Row(product, "使用指南", RecordingWindow.Button("打开…", ShowGuide));
         SettingsLayout.Row(product, "桌面截图", RecordingWindow.Button("检查权限", CheckCapture));
 
         void Refresh()
         {
             keys.Children.Clear();
-            Option(SettingsLayout.Group(keys, "冲突处理"), "尝试优先响应冲突组合", settings.PreferPriorityHotkeys,
-                value => { settings.PreferPriorityHotkeys = value; BindHotkeys(); Refresh(); },
-                "检测到冲突时尝试响应。系统保留快捷键仍由 Windows 处理。");
+            var conflictGroup = SettingsLayout.Group(keys, "冲突处理");
+            Option(conflictGroup, "尝试优先响应冲突组合", settings.PreferPriorityHotkeys,
+                value => { settings.PreferPriorityHotkeys = value; BindHotkeys(); Refresh(); });
+            conflictGroup.ToolTip = "检测到冲突时尝试响应；系统保留快捷键仍由 Windows 处理";
             var bindings = SettingsLayout.Group(keys, "全局快捷键");
             foreach (var (id, definition) in hotkeyActions)
             {

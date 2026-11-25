@@ -20,8 +20,57 @@ internal sealed record PinInfo(Guid Id, string Group, int X, int Y, double Width
     bool Topmost, bool ClickThrough, long ContentBytes = 0, int QuarterTurns = 0, bool FlipHorizontal = false,
     bool FlipVertical = false);
 
+internal static class PinShadowCatalog
+{
+    public static readonly string[] Styles =
+    [
+        "极光环境柔晕", "物理悬浮深影", "自适应取色溢光", "磨砂玻璃画框", "锐利纸片硬影", "电光聚焦微晕"
+    ];
+
+    public static string Resolve(string? raw) =>
+        raw is not null && Styles.Contains(raw) ? raw : Styles[0];
+
+    public static Color SampleAmbientColor(BitmapSource image)
+    {
+        try
+        {
+            var bgra = image.Format == PixelFormats.Bgra32 ? image : new FormatConvertedBitmap(image, PixelFormats.Bgra32, null, 0);
+            int w = bgra.PixelWidth, h = bgra.PixelHeight;
+            if (w < 2 || h < 2) return Color.FromRgb(0x63, 0x66, 0xf1);
+            int stride = w * 4;
+            byte[] row = new byte[stride];
+            long rSum = 0, gSum = 0, bSum = 0, count = 0;
+            int stepY = Math.Max(1, h / 12);
+            int stepX = Math.Max(1, w / 16);
+            for (int y = 0; y < h; y += stepY)
+            {
+                bgra.CopyPixels(new Int32Rect(0, y, w, 1), row, stride, 0);
+                for (int x = 0; x < w; x += stepX)
+                {
+                    int idx = x * 4;
+                    byte b = row[idx], g = row[idx + 1], r = row[idx + 2];
+                    int max = Math.Max(r, Math.Max(g, b));
+                    int min = Math.Min(r, Math.Min(g, b));
+                    int weight = 1 + (max - min) / 24;
+                    rSum += r * weight;
+                    gSum += g * weight;
+                    bSum += b * weight;
+                    count += weight;
+                }
+            }
+            if (count == 0) return Color.FromRgb(0x63, 0x66, 0xf1);
+            return Color.FromRgb((byte)(rSum / count), (byte)(gSum / count), (byte)(bSum / count));
+        }
+        catch
+        {
+            return Color.FromRgb(0x63, 0x66, 0xf1);
+        }
+    }
+}
+
 internal sealed record PinPreferences(bool DoubleClickToClose = false, bool Shadow = true, bool Snap = true,
-    bool HideInFullscreen = false, bool DefaultTopmost = true, double DefaultOpacity = 1);
+    bool HideInFullscreen = false, bool DefaultTopmost = true, double DefaultOpacity = 1,
+    string ShadowStyle = "极光环境柔晕", double ShadowIntensity = 1.0, double ShadowSpread = 1.0);
 
 internal sealed class PinManager
 {
@@ -75,14 +124,34 @@ internal sealed class PinManager
         catch (JsonException) { }
     }
 
-    public void Add(BitmapSource image)
+    public void Add(BitmapSource image) => Add(image, null);
+
+    public void Add(BitmapSource image, DrawingRect? screenRegion)
     {
         var bytes = ContentBytes(image);
         Directory.CreateDirectory(folder);
-        var cursor = Desktop.Cursor;
-        double fit = Math.Min(1, Math.Min(680d / image.PixelWidth, 540d / image.PixelHeight));
-        var item = new PinInfo(Guid.NewGuid(), "默认", cursor.X, cursor.Y, Math.Max(32, image.PixelWidth * fit),
-            Math.Max(32, image.PixelHeight * fit), preferences.DefaultOpacity, preferences.DefaultTopmost, false, bytes);
+        double width, height;
+        int x, y;
+        if (screenRegion is { Width: > 0, Height: > 0 } rect)
+        {
+            double scale = Desktop.ScaleForMonitor(rect);
+            int pad = preferences.Shadow ? (int)Math.Round(12 * scale) : 0;
+            width = Math.Max(32, rect.Width / scale + (preferences.Shadow ? 24 : 0));
+            height = Math.Max(32, rect.Height / scale + (preferences.Shadow ? 24 : 0));
+            x = rect.Left - pad;
+            y = rect.Top - pad;
+        }
+        else
+        {
+            var cursor = Desktop.Cursor;
+            double fit = Math.Min(1, Math.Min(680d / image.PixelWidth, 540d / image.PixelHeight));
+            width = Math.Max(32, image.PixelWidth * fit);
+            height = Math.Max(32, image.PixelHeight * fit);
+            x = cursor.X;
+            y = cursor.Y;
+        }
+        var item = new PinInfo(Guid.NewGuid(), "默认", x, y, width, height,
+            preferences.DefaultOpacity, preferences.DefaultTopmost, false, bytes);
         if (bytes <= MaximumContentBytes) Images.Save(image, PathFor(item.Id));
         MakeRoom(bytes);
         Show(item, image);
@@ -213,7 +282,8 @@ internal sealed class PinManager
 
     private void Show(PinInfo info, BitmapSource image)
     {
-        var pin = new PinWindow(info, image, preferences);
+        var pin = new PinWindow(info, image, preferences, style =>
+            SetPreferences(preferences with { Shadow = true, ShadowStyle = style }));
         open.Add(pin);
         pin.Changed += Save;
         pin.Closed += (_, _) =>
@@ -329,15 +399,37 @@ internal sealed class PinManager
     public StackPanel PreferencesContent()
     {
         var panel = new StackPanel();
-        var rows = SettingsLayout.Group(panel, "行为");
-        Option("双击关闭贴图", preferences.DoubleClickToClose, value => preferences with { DoubleClickToClose = value });
-        Option("显示阴影", preferences.Shadow, value => preferences with { Shadow = value });
-        Option("拖动时吸附到屏幕边缘", preferences.Snap, value => preferences with { Snap = value });
-        Option("其他应用全屏时隐藏", preferences.HideInFullscreen, value => preferences with { HideInFullscreen = value });
-        Option("默认置顶", preferences.DefaultTopmost, value => preferences with { DefaultTopmost = value });
-        SettingsLayout.Slider(SettingsLayout.Group(panel, "外观"), "默认不透明度", 15, 100,
+        var appearance = SettingsLayout.Group(panel, "阴影与外观");
+        SettingsLayout.Toggle(appearance, "显示阴影", preferences.Shadow,
+            v => SetPreferences(preferences with { Shadow = v }));
+        var styleBox = new ComboBox
+        {
+            ItemsSource = PinShadowCatalog.Styles,
+            SelectedItem = PinShadowCatalog.Resolve(preferences.ShadowStyle),
+            Width = 152
+        };
+        styleBox.ToolTip = "在桌面贴图上右键也可快速切换";
+        styleBox.SelectionChanged += (_, _) =>
+        {
+            if (styleBox.SelectedItem is string s)
+                SetPreferences(preferences with { ShadowStyle = s });
+        };
+        SettingsLayout.Row(appearance, "阴影样式", styleBox);
+        SettingsLayout.Slider(appearance, "阴影浓淡", 50, 160,
+            Math.Round(preferences.ShadowIntensity * 100), 10,
+            v => SetPreferences(preferences with { ShadowIntensity = v / 100d }, save: false), Save, "%");
+        SettingsLayout.Slider(appearance, "扩散范围", 60, 150,
+            Math.Round(preferences.ShadowSpread * 100), 10,
+            v => SetPreferences(preferences with { ShadowSpread = v / 100d }, save: false), Save, "%");
+        SettingsLayout.Slider(appearance, "默认不透明度", 15, 100,
             preferences.DefaultOpacity * 100, 1,
             v => SetPreferences(preferences with { DefaultOpacity = v / 100d }, save: false), Save, "%");
+
+        var rows = SettingsLayout.Group(panel, "行为");
+        Option("默认置顶", preferences.DefaultTopmost, value => preferences with { DefaultTopmost = value });
+        Option("双击关闭贴图", preferences.DoubleClickToClose, value => preferences with { DoubleClickToClose = value });
+        Option("拖动时吸附到屏幕边缘", preferences.Snap, value => preferences with { Snap = value });
+        Option("其他应用全屏时隐藏", preferences.HideInFullscreen, value => preferences with { HideInFullscreen = value });
         return panel;
 
         void Option(string title, bool value, Func<bool, PinPreferences> apply) =>
@@ -415,13 +507,17 @@ internal sealed class PinWindow : Window
     private readonly BitmapSource original;
     private readonly Border imageFrame;
     private readonly Image imageView;
+    private readonly Color ambientColor;
+    private readonly Action<string>? selectShadowStyle;
     private PinPreferences preferences;
 
-    public PinWindow(PinInfo info, BitmapSource image, PinPreferences preferences)
+    public PinWindow(PinInfo info, BitmapSource image, PinPreferences preferences, Action<string>? selectShadowStyle = null)
     {
         Info = info;
         this.preferences = preferences;
+        this.selectShadowStyle = selectShadowStyle;
         original = Image = image;
+        ambientColor = PinShadowCatalog.SampleAmbientColor(image);
         Title = "TapSnap 贴图";
         Width = info.Width;
         Height = info.Height;
@@ -495,6 +591,21 @@ internal sealed class PinWindow : Window
         Add("水平翻转", () => Flip(horizontal: true));
         Add("垂直翻转", () => Flip(horizontal: false));
         Add("置顶 / 取消置顶", () => { Topmost = !Topmost; Info = Info with { Topmost = Topmost }; Changed?.Invoke(); });
+        var shadowMenu = new MenuItem { Header = "阴影样式" };
+        foreach (string styleName in PinShadowCatalog.Styles)
+        {
+            string s = styleName;
+            var item = new MenuItem { Header = s };
+            item.Click += (_, _) => selectShadowStyle?.Invoke(s);
+            shadowMenu.Items.Add(item);
+        }
+        ContextMenu.Opened += (_, _) =>
+        {
+            string current = PinShadowCatalog.Resolve(this.preferences.ShadowStyle);
+            foreach (var entry in shadowMenu.Items.OfType<MenuItem>())
+                entry.IsChecked = this.preferences.Shadow && Equals(entry.Header, current);
+        };
+        ContextMenu.Items.Add(shadowMenu);
         Add("鼠标穿透", () => SetClickThrough(true));
         Add("关闭", Close);
     }
@@ -518,7 +629,11 @@ internal sealed class PinWindow : Window
     public void UpdatePreferences(PinPreferences previous, PinPreferences updated)
     {
         preferences = updated;
-        if (previous.Shadow != updated.Shadow) UpdateShadow();
+        if (previous.Shadow != updated.Shadow ||
+            previous.ShadowStyle != updated.ShadowStyle ||
+            Math.Abs(previous.ShadowIntensity - updated.ShadowIntensity) > 0.001 ||
+            Math.Abs(previous.ShadowSpread - updated.ShadowSpread) > 0.001)
+            UpdateShadow();
         if (previous.DefaultTopmost != updated.DefaultTopmost)
         {
             Topmost = updated.DefaultTopmost;
@@ -533,11 +648,99 @@ internal sealed class PinWindow : Window
 
     private void UpdateShadow()
     {
-        imageFrame.Margin = preferences.Shadow ? new Thickness(10) : new Thickness(0);
-        imageFrame.Effect = preferences.Shadow ? new DropShadowEffect
+        if (!preferences.Shadow)
         {
-            BlurRadius = 16, ShadowDepth = 3, Direction = 270, Opacity = 0.32
-        } : null;
+            imageFrame.Margin = new Thickness(0);
+            imageFrame.Padding = new Thickness(0);
+            imageFrame.BorderThickness = new Thickness(0);
+            imageFrame.Background = Brushes.Transparent;
+            imageFrame.CornerRadius = new CornerRadius(0);
+            imageFrame.Effect = null;
+            return;
+        }
+
+        double intensity = Math.Clamp(preferences.ShadowIntensity, 0.5, 1.6);
+        double spread = Math.Clamp(preferences.ShadowSpread, 0.6, 1.5);
+        string style = PinShadowCatalog.Resolve(preferences.ShadowStyle);
+
+        imageFrame.Margin = new Thickness(Math.Round(12 * spread));
+        imageFrame.Padding = new Thickness(0);
+        imageFrame.BorderThickness = new Thickness(0);
+        imageFrame.Background = Brushes.Transparent;
+        imageFrame.CornerRadius = new CornerRadius(0);
+
+        switch (style)
+        {
+            case "物理悬浮深影":
+                imageFrame.Effect = new DropShadowEffect
+                {
+                    Color = Colors.Black,
+                    BlurRadius = 24 * spread,
+                    ShadowDepth = 8 * spread,
+                    Direction = 270,
+                    Opacity = Math.Clamp(0.42 * intensity, 0.12, 0.85)
+                };
+                break;
+            case "自适应取色溢光":
+                imageFrame.Effect = new DropShadowEffect
+                {
+                    Color = ambientColor,
+                    BlurRadius = 26 * spread,
+                    ShadowDepth = 2,
+                    Direction = 270,
+                    Opacity = Math.Clamp(0.55 * intensity, 0.15, 0.90)
+                };
+                break;
+            case "磨砂玻璃画框":
+                imageFrame.Padding = new Thickness(5);
+                imageFrame.CornerRadius = new CornerRadius(6);
+                imageFrame.Background = SnapTheme.Brush(SnapTheme.IsDark ? 0x1e293bu : 0xf8fafcu, 215);
+                imageFrame.BorderBrush = SnapTheme.Brush(0xffffffu, 128);
+                imageFrame.BorderThickness = new Thickness(1);
+                imageFrame.Effect = new DropShadowEffect
+                {
+                    Color = Colors.Black,
+                    BlurRadius = 18 * spread,
+                    ShadowDepth = 4,
+                    Direction = 270,
+                    Opacity = Math.Clamp(0.28 * intensity, 0.10, 0.72)
+                };
+                break;
+            case "锐利纸片硬影":
+                imageFrame.BorderBrush = SnapTheme.Brush(0x18181bu, 190);
+                imageFrame.BorderThickness = new Thickness(1);
+                imageFrame.Effect = new DropShadowEffect
+                {
+                    Color = Color.FromRgb(0x18, 0x18, 0x1b),
+                    BlurRadius = 2,
+                    ShadowDepth = 6 * spread,
+                    Direction = 315,
+                    Opacity = Math.Clamp(0.50 * intensity, 0.15, 0.90)
+                };
+                break;
+            case "电光聚焦微晕":
+                imageFrame.BorderBrush = SnapTheme.Brush(0x38bdf8u, 200);
+                imageFrame.BorderThickness = new Thickness(1);
+                imageFrame.Effect = new DropShadowEffect
+                {
+                    Color = Color.FromRgb(0x38, 0xbd, 0xf8),
+                    BlurRadius = 22 * spread,
+                    ShadowDepth = 0,
+                    Direction = 270,
+                    Opacity = Math.Clamp(0.58 * intensity, 0.18, 0.92)
+                };
+                break;
+            default: // 极光环境柔晕
+                imageFrame.Effect = new DropShadowEffect
+                {
+                    Color = Color.FromRgb(0x63, 0x66, 0xf1),
+                    BlurRadius = 22 * spread,
+                    ShadowDepth = 3,
+                    Direction = 270,
+                    Opacity = Math.Clamp(0.36 * intensity, 0.12, 0.80)
+                };
+                break;
+        }
     }
 
     private void Rotate(int direction)

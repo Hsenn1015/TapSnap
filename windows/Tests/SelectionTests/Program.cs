@@ -108,6 +108,12 @@ Check(OperationShortcut.Match(new(6, 'Z'), null) == OperationShortcut.Redo &&
       OperationShortcut.Match(new(2, 0xbb), null) == OperationShortcut.ZoomIn &&
       OperationShortcut.Match(new(2, 0xbb), new Dictionary<string, Hotkey>()) is null,
     "重做和缩放的默认备用键会随清除而停用");
+Check(Settings.Defaults().ContainsKey("quickTranslate") &&
+      oldSettings.SelectionBorder == "液态玻璃" &&
+      oldSettings.RecordClickStyle == "液态玻璃水波" &&
+      oldSettings.RecordScrollStyle == "液态滚动胶囊" &&
+      Math.Abs(oldSettings.RecordEffectScale - 1.0) < 0.001,
+    "新版设置默认值包含截图秒译快捷键与边框和录屏动效配置");
 
 static void Check(bool passed, string description)
 {

@@ -21,6 +21,7 @@ struct PrivacyAISettingsView: View {
                         Text(provider.title).tag(Optional(provider))
                     }
                 }
+                .help("自动检查使用本机规则；AI 补查支持文字和图片定位（图片定位需要视觉模型）")
                 if let draft {
                     TextField("API 地址", text: field(\.baseURL))
                         .accessibilityLabel("API 地址")
@@ -40,15 +41,7 @@ struct PrivacyAISettingsView: View {
                     if !result.isEmpty {
                         Text(result).font(.caption)
                     }
-                    Text(draft.provider == .local
-                         ? "填入已运行的本机兼容服务和已安装模型名称。"
-                         : "API Key 存在仅当前 macOS 用户可读的本机文件中。")
-                        .font(.caption)
-                        .foregroundStyle(theme.token(.mutedForeground))
                 }
-                Text("自动检查使用本机规则。AI 补查支持文字和图片定位，图片定位需要视觉模型，例如 DeepSeek Flash 或 Qwen3-VL。")
-                    .font(.caption)
-                    .foregroundStyle(theme.token(.mutedForeground))
             }
             .textFieldStyle(.roundedBorder)
             .padding(10)

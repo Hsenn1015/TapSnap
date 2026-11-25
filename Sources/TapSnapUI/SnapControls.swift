@@ -109,6 +109,7 @@ public struct SnapSegmented<Item: Hashable>: View {
     public var items: [Item]
     @Binding public var selection: Item
     public var theme: Theme
+    public var fullWidth: Bool
     public var title: (Item) -> String
 
     @Namespace private var namespace
@@ -117,11 +118,13 @@ public struct SnapSegmented<Item: Hashable>: View {
         items: [Item],
         selection: Binding<Item>,
         theme: Theme,
+        fullWidth: Bool = false,
         title: @escaping (Item) -> String
     ) {
         self.items = items
         self._selection = selection
         self.theme = theme
+        self.fullWidth = fullWidth
         self.title = title
     }
 
@@ -132,8 +135,10 @@ public struct SnapSegmented<Item: Hashable>: View {
                 Text(title(item))
                     .font(.system(size: 12, weight: isSelected ? .medium : .regular))
                     .foregroundStyle(isSelected ? theme.token(.foreground) : theme.token(.mutedForeground))
-                    .padding(.horizontal, 10)
-                    .frame(height: 24)
+                    .lineLimit(1)
+                    .padding(.horizontal, fullWidth ? 6 : 10)
+                    .frame(maxWidth: fullWidth ? .infinity : nil)
+                    .frame(height: 26)
                     .background {
                         if isSelected {
                             RoundedRectangle(cornerRadius: theme.metrics.radiusSM, style: .continuous)

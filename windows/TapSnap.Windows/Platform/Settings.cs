@@ -37,7 +37,10 @@ internal sealed class Settings
     public bool HideDesktopIcons { get; set; }
     public bool ShowMagnifier { get; set; } = true;
     public bool ShowSelectionSize { get; set; } = true;
-    public string SelectionBorder { get; set; } = "极光";
+    public bool AllowSelfCapture { get; set; }
+    public string SelectionBorder { get; set; } = "液态玻璃";
+    public string SelectionBorderMotion { get; set; } = "静谧折光";
+    public string SelectionBorderPalette { get; set; } = "冰川白晶";
     public string[]? SelectionToolbarActions { get; set; }
     public string SaveFormat { get; set; } = "png";
     public bool LongShotAutoScroll { get; set; } = true;
@@ -54,6 +57,11 @@ internal sealed class Settings
     public bool RecordCamera { get; set; }
     public bool RecordShowKeys { get; set; }
     public bool RecordShowClicks { get; set; }
+    public bool RecordShowScrolls { get; set; }
+    public string RecordClickStyle { get; set; } = "液态玻璃水波";
+    public string RecordScrollStyle { get; set; } = "液态滚动胶囊";
+    public string RecordEffectPalette { get; set; } = "液态冰蓝";
+    public double RecordEffectScale { get; set; } = 1.0;
     public int DesktopToolbarX { get; set; } = int.MinValue;
     public int DesktopToolbarY { get; set; } = int.MinValue;
     public int ToolBallX { get; set; } = int.MinValue;
@@ -67,6 +75,7 @@ internal sealed class Settings
         ["longShot"] = new(6, 0x4C),
         ["record"] = new(6, 0x52),
         ["ocr"] = new(6, 0x4F),
+        ["quickTranslate"] = new(6, 0x54),
         ["history"] = new(6, 0x48)
     };
 

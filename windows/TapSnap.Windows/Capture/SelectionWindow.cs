@@ -85,7 +85,7 @@ internal sealed class SelectionWindow : Window
         var image = new Image { Source = screenshot, Stretch = Stretch.Fill, IsHitTestVisible = false };
         canvas.Children.Add(image);
         canvas.Children.Add(shade);
-        border = new SelectionBorder(settings.SelectionBorder);
+        border = new SelectionBorder(settings.SelectionBorder, settings.SelectionBorderMotion, settings.SelectionBorderPalette);
         canvas.Children.Add(border);
 
         tag = Badge(dimensions);
@@ -109,7 +109,7 @@ internal sealed class SelectionWindow : Window
             buttons.Children.Add(Choice(action switch
             {
                 CaptureAction.Record => "开始录屏", CaptureAction.LongShot => "开始长截图",
-                CaptureAction.Pin => "贴图 ↵", _ => "确认 ↵"
+                CaptureAction.Pin => "贴图 ↵", CaptureAction.QuickTranslate => "秒译 ↵", _ => "确认 ↵"
             }, "确认当前选区 ↵", action, primary: true));
             toolbar.Padding = new Thickness(6, 4, 6, 4);
             toolbar.Background = SnapTheme.Brush(0, 204);
@@ -162,6 +162,12 @@ internal sealed class SelectionWindow : Window
         PreviewKeyDown += (_, e) =>
         {
             if (e.Key == Key.Escape) { e.Handled = true; session.End(); return; }
+            if (e.Key == Key.Tab && action == CaptureAction.QuickTranslate)
+            {
+                e.Handled = true;
+                CycleQuickTranslateTarget();
+                return;
+            }
             if (start.HasValue || session.Finishing) return;
             var operation = ShowsEditorDock ? OperationShortcut.Match(Shortcuts.FromEvent(e), settings.OperationHotkeys) : null;
             if (locked && region.HasValue && operation?.Tool is { } tool)
@@ -343,7 +349,21 @@ internal sealed class SelectionWindow : Window
         {
             locked = region.HasValue;
             PublishSelection();
+            if (action == CaptureAction.QuickTranslate && region is { Width: >= 8, Height: >= 8 })
+                _ = Finish(CaptureAction.QuickTranslate);
         }
+    }
+
+    private void CycleQuickTranslateTarget()
+    {
+        var list = TranslationCatalog.TargetLanguages;
+        var ts = RecognitionService.Settings.Translation;
+        int current = Array.FindIndex(list, l => l.Code.Equals(ts.TargetLanguage, StringComparison.OrdinalIgnoreCase));
+        var next = list[(current + 1) % list.Length];
+        ts.TargetLanguage = next.Code;
+        RecognitionService.SaveSettings(RecognitionService.Settings);
+        dimensions.Text = $"目标语言：{next.DisplayName}";
+        tag.Visibility = Visibility.Visible;
     }
 
     private void PublishSelection()

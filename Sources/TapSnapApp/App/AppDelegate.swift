@@ -57,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updater?.start()
         Log.shared.info("TapSnap \(AppInfo.version) 已启动")
         environment.screenPermission.restoreOnLaunch()
+        TranslationModelClient.prewarm(config: environment.config)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

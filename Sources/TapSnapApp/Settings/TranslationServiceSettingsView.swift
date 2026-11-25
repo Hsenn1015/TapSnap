@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import TapSnapConfig
 import TapSnapPrivacy
@@ -12,6 +13,8 @@ struct TranslationServiceSettingsView: View {
     private let onSave: (_ settingsChanged: Bool) -> Void
     @State private var draft: ScreenshotTranslationSettings
     @State private var key = ""
+    @State private var revealsKey = false
+    @State private var keyCopied = false
     @State private var status = ""
     @State private var statusIsError = false
     @State private var trial: Task<Void, Never>?
@@ -63,7 +66,8 @@ struct TranslationServiceSettingsView: View {
                 settingsPageBody
             }
         }
-        .onDisappear { clearTrial(); key = "" }
+        .onAppear { loadSavedKey() }
+        .onDisappear { clearTrial() }
     }
 
     // MARK: - 设置页完整布局
@@ -71,11 +75,24 @@ struct TranslationServiceSettingsView: View {
     private var settingsPageBody: some View {
         VStack(alignment: .leading, spacing: 14) {
             SnapSettingGroup("翻译引擎", theme: theme) {
-                SnapSettingRow("翻译服务", subtitle: serviceSummary, theme: theme) {
+                VStack(alignment: .leading, spacing: 9) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("翻译服务")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(theme.token(.foreground))
+                        Spacer(minLength: 8)
+                        Text(serviceSummary)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(theme.token(.mutedForeground))
+                            .lineLimit(1)
+                    }
                     providerSegmented
+                        .frame(maxWidth: .infinity)
                 }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
                 SnapRowDivider(theme: theme)
-                SnapSettingRow("默认目标语言", subtitle: "截图翻译时默认译成的语言", theme: theme) {
+                SnapSettingRow("默认目标语言", theme: theme) {
                     Picker("默认目标语言", selection: $draft.targetLanguage) {
                         ForEach(Self.supportedLanguages, id: \.code) { item in
                             Text(item.name).tag(item.code)
@@ -85,11 +102,7 @@ struct TranslationServiceSettingsView: View {
                     .frame(width: 120)
                 }
                 SnapRowDivider(theme: theme)
-                SnapSettingRow(
-                    "打开后自动翻译",
-                    subtitle: "关闭后先展示本机 OCR 原文，方便清理杂项或勾选段落后再翻译，节省 API 额度",
-                    theme: theme
-                ) {
+                SnapSettingRow("打开后自动翻译", theme: theme) {
                     SnapToggle(
                         isOn: Binding(
                             get: { draft.autoTranslateOnOpen },
@@ -101,6 +114,7 @@ struct TranslationServiceSettingsView: View {
                         theme: theme
                     )
                 }
+                .help("关闭后先展示本机 OCR 原文，可勾选段落后再翻译")
             }
 
             quickTranslateStyleGroup
@@ -116,54 +130,14 @@ struct TranslationServiceSettingsView: View {
     }
 
     private var quickTranslateStyleGroup: some View {
-        SnapSettingGroup("截图秒译（悬停浮卡）", theme: theme) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("框选屏幕文字松手即弹出译文浮卡，不跳转大窗；框选期间按 Tab 可快速切换目标语言，在「快捷键」中可为截图秒译绑定全局热键。")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(theme.token(.mutedForeground))
-                    .fixedSize(horizontal: false, vertical: true)
+        let secondaryStyles = QuickTranslateStyle.allCases.filter { $0 != .cleanCard }
+        return SnapSettingGroup("截图秒译样式", theme: theme) {
+            VStack(alignment: .leading, spacing: 8) {
+                quickTranslateStyleCard(for: .cleanCard, badge: "推荐")
 
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
-                    ForEach(QuickTranslateStyle.allCases, id: \.self) { style in
-                        let selected = draft.quickTranslateStyle == style
-                        Button {
-                            draft.quickTranslateStyle = style
-                            config.update { $0.translation.quickTranslateStyle = style }
-                        } label: {
-                            VStack(alignment: .leading, spacing: 5) {
-                                HStack(spacing: 6) {
-                                    quickTranslateStyleAccentDot(for: style)
-                                    Text(style.displayName)
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(theme.token(.foreground))
-                                        .lineLimit(1)
-                                    Spacer(minLength: 2)
-                                    if selected {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .font(.system(size: 12))
-                                            .foregroundStyle(theme.token(.primary))
-                                    }
-                                }
-                                Text(style.summary)
-                                    .font(.system(size: 10.5))
-                                    .foregroundStyle(theme.token(.mutedForeground))
-                                    .lineLimit(2)
-                                    .multilineTextAlignment(.leading)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 9)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(
-                                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                    .fill(selected ? theme.token(.accent).opacity(0.65) : theme.token(.secondary).opacity(0.45))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                    .strokeBorder(selected ? theme.token(.primary) : theme.token(.border), lineWidth: selected ? 1.4 : 1)
-                            )
-                        }
-                        .buttonStyle(.plain)
+                    ForEach(secondaryStyles, id: \.self) { style in
+                        quickTranslateStyleCard(for: style, badge: nil)
                     }
                 }
             }
@@ -172,17 +146,65 @@ struct TranslationServiceSettingsView: View {
         }
     }
 
+    private func quickTranslateStyleCard(for style: QuickTranslateStyle, badge: String?) -> some View {
+        let selected = draft.quickTranslateStyle == style
+        return Button {
+            draft.quickTranslateStyle = style
+            config.update { $0.translation.quickTranslateStyle = style }
+        } label: {
+            HStack(spacing: 7) {
+                quickTranslateStyleAccentDot(for: style)
+                Text(style.displayName)
+                    .font(.system(size: 12, weight: selected ? .semibold : .medium))
+                    .foregroundStyle(theme.token(.foreground))
+                    .lineLimit(1)
+                if let badge {
+                    Text(badge)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color(red: 0.04, green: 0.48, blue: 1.0))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(Color(red: 0.04, green: 0.48, blue: 1.0).opacity(0.12), in: Capsule())
+                }
+                Spacer(minLength: 2)
+                if selected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Color(red: 0.04, green: 0.48, blue: 1.0))
+                }
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(selected ? theme.token(.accent).opacity(0.65) : theme.token(.secondary).opacity(0.45))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(
+                        selected ? Color(red: 0.04, green: 0.48, blue: 1.0).opacity(0.75) : theme.token(.border),
+                        lineWidth: selected ? 1.3 : 1
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .help(style.summary)
+    }
+
     @ViewBuilder
     private func quickTranslateStyleAccentDot(for style: QuickTranslateStyle) -> some View {
         let colors: [Color] = switch style {
+        case .cleanCard:
+            [Color(red: 0.04, green: 0.48, blue: 1.0), Color(red: 0.24, green: 0.56, blue: 1.0)]
         case .liquidGlass:
-            [Color(red: 0.22, green: 0.74, blue: 0.97), Color(red: 0.44, green: 0.38, blue: 0.98)]
+            [Color(red: 0.20, green: 0.70, blue: 0.96), Color(red: 0.42, green: 0.40, blue: 0.96)]
         case .editorial:
-            [Color(red: 0.38, green: 0.72, blue: 0.99), Color(red: 0.39, green: 0.40, blue: 0.95)]
+            [Color(red: 0.34, green: 0.68, blue: 0.98), Color(red: 0.39, green: 0.40, blue: 0.94)]
         case .inlineBilingual:
-            [Color(red: 0.98, green: 0.72, blue: 0.22), Color(red: 0.22, green: 0.74, blue: 0.97)]
+            [Color(red: 0.96, green: 0.70, blue: 0.22), Color(red: 0.92, green: 0.54, blue: 0.18)]
         case .dynamicBubble:
-            [Color(red: 0.20, green: 0.83, blue: 0.60), Color(red: 0.22, green: 0.74, blue: 0.97)]
+            [Color(red: 0.18, green: 0.78, blue: 0.58), Color(red: 0.20, green: 0.68, blue: 0.92)]
         }
         Circle()
             .fill(LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing))
@@ -192,7 +214,7 @@ struct TranslationServiceSettingsView: View {
     private func apiSettingsGroup(_ api: TranslationAPIConfiguration) -> some View {
         SnapSettingGroup("第三方翻译 API", theme: theme) {
             VStack(alignment: .leading, spacing: 0) {
-                SnapSettingRow("翻译引擎", subtitle: "低延迟专业翻译，支持整图批量直出", theme: theme) {
+                SnapSettingRow("翻译引擎", theme: theme) {
                     Picker("翻译引擎", selection: apiProviderBinding) {
                         ForEach(TranslationAPIProvider.allCases, id: \.self) {
                             Text($0.title).tag($0)
@@ -201,6 +223,7 @@ struct TranslationServiceSettingsView: View {
                     .labelsHidden()
                     .frame(width: 180)
                 }
+                .help(api.provider.hint)
                 SnapRowDivider(theme: theme)
 
                 if api.provider.requiresAppID {
@@ -217,13 +240,9 @@ struct TranslationServiceSettingsView: View {
                     SnapRowDivider(theme: theme)
                 }
 
-                SnapSettingRow(
-                    api.provider.secretLabel,
-                    subtitle: api.provider.requiresSecret ? "仅保存在本机 0600 密钥文件，留空沿用已存" : "留空使用免密快捷通道，填入官方 Key 更稳",
-                    theme: theme
-                ) {
+                SnapSettingRow(api.provider.secretLabel, theme: theme) {
                     secureField(
-                        placeholder: api.provider.requiresSecret ? "留空沿用已保存密钥" : "可选，留空走免密通道",
+                        placeholder: api.provider.requiresSecret ? "输入密钥" : "可选（留空免密）",
                         width: 240
                     )
                 }
@@ -243,7 +262,7 @@ struct TranslationServiceSettingsView: View {
 
                 if api.provider.supportsCustomEndpoint {
                     SnapRowDivider(theme: theme)
-                    SnapSettingRow("自定义端点", subtitle: "留空使用官方地址，可填反代 URL", theme: theme) {
+                    SnapSettingRow("自定义端点", theme: theme) {
                         SnapTextField(
                             text: apiField(\.customBaseURL),
                             theme: theme,
@@ -257,11 +276,6 @@ struct TranslationServiceSettingsView: View {
                 SnapRowDivider(theme: theme)
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(api.provider.hint)
-                        .font(.system(size: 11))
-                        .foregroundStyle(theme.token(.mutedForeground))
-                        .fixedSize(horizontal: false, vertical: true)
-
                     if !status.isEmpty {
                         statusBanner
                     }
@@ -333,19 +347,12 @@ struct TranslationServiceSettingsView: View {
                 }
                 SnapRowDivider(theme: theme)
 
-                SnapSettingRow("API Key", subtitle: "留空则沿用已保存的密钥", theme: theme) {
-                    secureField(placeholder: "留空沿用已保存密钥", width: 240)
+                SnapSettingRow("API Key", theme: theme) {
+                    secureField(placeholder: "输入 API Key", width: 240)
                 }
                 SnapRowDivider(theme: theme)
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(draft.provider == .local
-                         ? "填写 localhost 或回环 IP 地址及已下载的模型名称，使用前请先启动本机服务。"
-                         : "仅将待翻译文字发送至上方地址，截图原图始终留在本机。")
-                        .font(.system(size: 11))
-                        .foregroundStyle(theme.token(.mutedForeground))
-                        .fixedSize(horizontal: false, vertical: true)
-
                     if !status.isEmpty {
                         statusBanner
                     }
@@ -380,14 +387,13 @@ struct TranslationServiceSettingsView: View {
     private var appleSettingsGroup: some View {
         SnapSettingGroup("Apple 设备端翻译", theme: theme) {
             VStack(alignment: .leading, spacing: 10) {
-                Text("使用 macOS 原生设备端翻译，无需 API Key，文字与截图均不离开本机。缺少对应语言包时系统将提示一键下载。")
-                    .font(.system(size: 12))
-                    .foregroundStyle(theme.token(.mutedForeground))
-                    .fixedSize(horizontal: false, vertical: true)
                 if !status.isEmpty {
                     statusBanner
                 }
                 HStack {
+                    Text("本机离线运行，无需密钥")
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.token(.mutedForeground))
                     Spacer()
                     SnapButton("保存翻译服务", theme: theme, variant: .primary, size: .sm, isEnabled: canSave, action: save)
                         .keyboardShortcut(.defaultAction)
@@ -462,11 +468,6 @@ struct TranslationServiceSettingsView: View {
                             SnapTextField(text: apiField(\.customBaseURL), theme: theme, placeholder: api.provider.endpointPlaceholder, width: 220, monospaced: true)
                         }
                     }
-
-                    Text(api.provider.hint)
-                        .font(.system(size: 11))
-                        .foregroundStyle(theme.token(.mutedForeground))
-                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(10)
                 .background(theme.token(.muted).opacity(0.6), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -499,26 +500,17 @@ struct TranslationServiceSettingsView: View {
                     compactFieldRow("Key") {
                         secureField(placeholder: "留空沿用已保存密钥", width: 220)
                     }
-
-                    Text(draft.provider == .local
-                         ? "请先启动本机兼容服务，仅允许 localhost / 回环地址。"
-                         : "仅发送待翻译文本至上方服务，原图留在本机。")
-                        .font(.system(size: 11))
-                        .foregroundStyle(theme.token(.mutedForeground))
-                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(10)
                 .background(theme.token(.muted).opacity(0.6), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             } else {
-                HStack(alignment: .top, spacing: 8) {
+                HStack(spacing: 8) {
                     Image(systemName: "lock.shield")
-                        .font(.system(size: 13))
+                        .font(.system(size: 12))
                         .foregroundStyle(theme.token(.primary))
-                        .padding(.top, 1)
-                    Text("macOS 设备端离线翻译，无需网络和密钥。缺少语言包时系统会提示下载。")
+                    Text("本机离线运行，无需密钥")
                         .font(.system(size: 12))
                         .foregroundStyle(theme.token(.mutedForeground))
-                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -530,14 +522,9 @@ struct TranslationServiceSettingsView: View {
             }
 
             HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("打开后自动翻译")
-                        .font(.system(size: 11.5, weight: .medium))
-                        .foregroundStyle(theme.token(.foreground))
-                    Text("关闭可先清理杂项再手动翻译")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(theme.token(.mutedForeground))
-                }
+                Text("打开后自动翻译")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(theme.token(.foreground))
                 Spacer()
                 SnapToggle(
                     isOn: Binding(
@@ -550,6 +537,7 @@ struct TranslationServiceSettingsView: View {
                     theme: theme
                 )
             }
+            .help("关闭后先展示本机 OCR 原文，方便清理杂项或勾选段落后再翻译")
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
             .background(theme.token(.muted).opacity(0.45), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -612,26 +600,27 @@ struct TranslationServiceSettingsView: View {
             selection: Binding(
                 get: { draft.provider ?? availableProviders.first ?? .api },
                 set: { newValue in
-                    endpointChanged()
                     draft.provider = newValue
+                    endpointChanged()
                 }
             ),
             theme: theme,
+            fullWidth: true,
             title: \.title
         )
     }
 
     private var apiProviderBinding: Binding<TranslationAPIProvider> {
         Binding(get: { draft.apiProvider }, set: {
-            endpointChanged()
             draft.apiProvider = $0
+            endpointChanged()
         })
     }
 
     private var onlineProviderBinding: Binding<PrivacyAIProvider> {
         Binding(get: { draft.onlineProvider }, set: {
-            endpointChanged()
             draft.onlineProvider = $0
+            endpointChanged()
         })
     }
 
@@ -658,14 +647,53 @@ struct TranslationServiceSettingsView: View {
     }
 
     private func secureField(placeholder: String, width: CGFloat) -> some View {
-        SecureField(placeholder, text: Binding(get: { key }, set: {
+        let binding = Binding(get: { key }, set: {
             clearTrial()
             key = $0
-        }))
-        .textFieldStyle(.plain)
-        .font(.system(size: 12, design: .monospaced))
-        .foregroundStyle(theme.token(.foreground))
-        .padding(.horizontal, 8)
+        })
+        return HStack(spacing: 4) {
+            Group {
+                if revealsKey {
+                    TextField(placeholder, text: binding)
+                } else {
+                    SecureField(placeholder, text: binding)
+                }
+            }
+            .textFieldStyle(.plain)
+            .font(.system(size: 12, design: .monospaced))
+            .foregroundStyle(theme.token(.foreground))
+
+            if !key.isEmpty {
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(key, forType: .string)
+                    keyCopied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                        keyCopied = false
+                    }
+                } label: {
+                    Image(systemName: keyCopied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(keyCopied ? Color.green : theme.token(.mutedForeground))
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.plain)
+                .help(keyCopied ? "已复制密钥" : "复制当前密钥")
+            }
+
+            Button {
+                revealsKey.toggle()
+            } label: {
+                Image(systemName: revealsKey ? "eye.slash" : "eye")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(revealsKey ? theme.token(.foreground) : theme.token(.mutedForeground))
+                    .frame(width: 20, height: 20)
+            }
+            .buttonStyle(.plain)
+            .help(revealsKey ? "隐藏明文密钥" : "查看已配置密钥")
+        }
+        .padding(.leading, 8)
+        .padding(.trailing, 5)
         .frame(width: width, height: 26)
         .background(theme.token(.background), in: RoundedRectangle(cornerRadius: theme.metrics.radiusSM, style: .continuous))
         .overlay(
@@ -714,24 +742,35 @@ struct TranslationServiceSettingsView: View {
     private func modelField(_ path: WritableKeyPath<PrivacyAIConfiguration, String>) -> Binding<String> {
         Binding(get: { draft.modelConfiguration?[keyPath: path] ?? "" }, set: { value in
             guard var model = draft.modelConfiguration else { return }
-            if path == \.baseURL { endpointChanged() } else { clearTrial() }
             model[keyPath: path] = value
             draft.saveModel(model)
+            if path == \.baseURL { endpointChanged() } else { clearTrial() }
         })
     }
 
     private func apiField(_ path: WritableKeyPath<TranslationAPIConfiguration, String>) -> Binding<String> {
         Binding(get: { draft.apiConfiguration?[keyPath: path] ?? "" }, set: { value in
             guard var api = draft.apiConfiguration else { return }
-            if path == \.customBaseURL { endpointChanged() } else { clearTrial() }
             api[keyPath: path] = value
             draft.saveAPI(api)
+            if path == \.customBaseURL { endpointChanged() } else { clearTrial() }
         })
+    }
+
+    private func loadSavedKey() {
+        keyCopied = false
+        if let api = draft.apiConfiguration {
+            key = (try? config.translationKeys.read(for: api)) ?? ""
+        } else if let model = draft.modelConfiguration {
+            key = (try? config.translationKeys.read(for: model)) ?? ""
+        } else {
+            key = ""
+        }
     }
 
     private func endpointChanged() {
         clearTrial()
-        key = ""
+        loadSavedKey()
     }
 
     private func clearTrial() {
@@ -744,6 +783,7 @@ struct TranslationServiceSettingsView: View {
     private func removeSavedModelKey(for model: PrivacyAIConfiguration) {
         do {
             try config.translationKeys.remove(for: model)
+            revealsKey = false
             endpointChanged()
             statusIsError = false
             status = "已移除该地址保存的密钥"
@@ -756,6 +796,7 @@ struct TranslationServiceSettingsView: View {
     private func removeSavedAPIKey(for api: TranslationAPIConfiguration) {
         do {
             try config.translationKeys.remove(for: api)
+            revealsKey = false
             endpointChanged()
             statusIsError = false
             status = "已移除 \(api.provider.title) 已保存的密钥"
@@ -806,9 +847,9 @@ struct TranslationServiceSettingsView: View {
                     if draft.provider == .online { settings.translation.onlineProvider = draft.onlineProvider }
                 }
             }
-            key = ""
             statusIsError = false
             status = "已保存"
+            TranslationModelClient.prewarm(config: config)
             onSave(config.settings.translation != previous)
         } catch {
             statusIsError = true

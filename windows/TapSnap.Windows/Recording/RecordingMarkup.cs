@@ -98,22 +98,24 @@ internal sealed record RecordingOverlay(RecordingMark Mark, Int32Rect Area, byte
         }
     }
 
-    public static IEnumerable<(double Time, ushort Delay)> GifSamples(double from, double to, int fps, RecordingOverlay[] overlays)
+    public static IEnumerable<(double Time, ushort Delay)> GifSamples(double from, double to, int fps,
+        RecordingOverlay[] overlays, double speed = 1.0)
     {
         // Include mark boundaries between regular samples (e.g. a single 60 fps
         // frame at 10 fps GIF output). Coalesce times that share one GIF clock tick.
+        double clampedSpeed = Math.Clamp(speed, 0.25, 4.0);
         var edges = overlays.SelectMany(o => new[] { o.Mark.Start, o.Mark.End })
             .Where(t => t > from && t < to).Distinct().Order().ToArray();
         int edge = 0, index = 1, previousTick = 0;
-        int total = Math.Max(1, (int)Math.Round((to - from) * 100));
+        int total = Math.Max(1, (int)Math.Round((to - from) / clampedSpeed * 100));
         double previous = from;
         while (true)
         {
-            double next = from + (double)index / fps;
+            double next = from + (double)index * clampedSpeed / fps;
             if (edge < edges.Length && edges[edge] <= next) next = edges[edge++];
             else index++;
             if (next >= to) break;
-            int tick = (int)Math.Round((next - from) * 100);
+            int tick = (int)Math.Round((next - from) / clampedSpeed * 100);
             if (tick >= total) break;
             if (tick > previousTick) yield return (previous, (ushort)(tick - previousTick));
             previous = next;

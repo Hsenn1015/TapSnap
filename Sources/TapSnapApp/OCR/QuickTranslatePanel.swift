@@ -1,9 +1,12 @@
 import AppKit
+import AVFoundation
 import Combine
 import CoreServices
+import NaturalLanguage
 import SwiftUI
 import TapSnapConfig
 import TapSnapOCR
+import TapSnapPrivacy
 import TapSnapSystem
 import TapSnapTheme
 import TapSnapUI
@@ -11,8 +14,8 @@ import Translation
 
 /// 截图秒译悬停浮卡控制器。
 ///
-/// 拖选松手后直接在选区旁弹出轻量译文浮卡，支持 4 种原生视觉样式、
-/// 点外部 / Esc 秒退、钉住、行内切换样式与目标语言，以及一键展开到完整翻译大窗。
+/// 拖选松手后直接在选区旁弹出轻量译文浮卡，支持 5 套克制耐看的原生 macOS 视觉风格、
+/// 内容自适应尺寸、四边四角零抖动缩放、1:1 丝滑拖动、文本排版定制、语音朗读与即时改字重译。
 @MainActor
 final class QuickTranslatePanel: NSObject, NSWindowDelegate {
     struct PopoverPlacement: Equatable {
@@ -36,15 +39,15 @@ final class QuickTranslatePanel: NSObject, NSWindowDelegate {
 
     private var anchorAppKitRect: CGRect = .zero
     private var visibleScreenRect: CGRect = CGRect(x: 0, y: 0, width: 1440, height: 900)
-    private var lastCardSize: CGSize = CGSize(width: 340, height: 140)
+    private var lastCardSize: CGSize = CGSize(width: 392, height: 228)
     private var userMovedManually = false
     private var overlayOriginalActive = false
     private var isResizing = false
     private var resizeStartCardFrame: CGRect = .zero
 
-    /// 外留边量，确保柔和多层阴影（blur 14 + offset 7）、顶/底尖角和灵动岛豆子按钮都在窗口内自然消散，绝不出现方正裁切框。
+    /// 外留边量，确保柔和多层阴影、顶/底尖角和灵动气泡外侧豆子都在窗口内自然消散，绝不出现方正裁切框。
     static let windowInset: CGFloat = 36
-    /// 灵动岛样式右侧竖排豆子按钮宽度 + 间距。
+    /// 灵动气泡样式右侧竖排豆子按钮宽度 + 间距。
     static let dynamicBubbleBeansReserve: CGFloat = 34
 
     func show(image: CGImage, captureRect: CGRect, environment: AppEnvironment) {
@@ -194,6 +197,8 @@ final class QuickTranslatePanel: NSObject, NSWindowDelegate {
 
     static func defaultCardSize(for style: QuickTranslateStyle, compactLoading: Bool) -> CGSize {
         switch style {
+        case .cleanCard:
+            return CGSize(width: 392, height: 224)
         case .liquidGlass:
             return CGSize(width: 320, height: 132)
         case .editorial:
@@ -201,12 +206,14 @@ final class QuickTranslatePanel: NSObject, NSWindowDelegate {
         case .inlineBilingual:
             return CGSize(width: 348, height: 138)
         case .dynamicBubble:
-            return compactLoading ? CGSize(width: 236, height: 46) : CGSize(width: 344, height: 142)
+            return compactLoading ? CGSize(width: 236, height: 46) : CGSize(width: 344, height: 168)
         }
     }
 
     static func minimumCardSize(for style: QuickTranslateStyle) -> CGSize {
         switch style {
+        case .cleanCard:
+            return CGSize(width: 318, height: 196)
         case .liquidGlass:
             return CGSize(width: 286, height: 112)
         case .editorial:
@@ -226,7 +233,7 @@ final class QuickTranslatePanel: NSObject, NSWindowDelegate {
     }
 
     static func autoMaximumBodyHeight(in visible: CGRect) -> CGFloat {
-        min(380, max(160, floor(visible.height * 0.48)))
+        min(360, max(150, floor(visible.height * 0.44)))
     }
 
     /// 按文本长度、行数与当前译文字号智能估算卡片理想宽度：单词紧凑、句子适中、长段自动展宽。
@@ -242,6 +249,7 @@ final class QuickTranslatePanel: NSObject, NSWindowDelegate {
         in visible: CGRect
     ) -> CGFloat {
         let minAutoWidth: CGFloat = switch style {
+        case .cleanCard: 356
         case .liquidGlass: 316
         case .editorial: 258
         case .inlineBilingual: 346
@@ -265,7 +273,7 @@ final class QuickTranslatePanel: NSObject, NSWindowDelegate {
             return (maxLine, total, max(1, lines.count))
         }
 
-        let horizontalChrome: CGFloat = (style == .dynamicBubble ? dynamicBubbleBeansReserve : 0) + 34
+        let horizontalChrome: CGFloat = (style == .dynamicBubble ? dynamicBubbleBeansReserve : 0) + (style == .cleanCard ? 52 : 34)
         var desiredContentWidth: CGFloat = 0
 
         if let translatedText, !translatedText.isEmpty {
@@ -275,11 +283,9 @@ final class QuickTranslatePanel: NSObject, NSWindowDelegate {
             if metrics.totalMass <= 210 * fontScale && metrics.lineCount == 1 {
                 fromMass = fromLongest
             } else if metrics.totalMass <= 720 * fontScale {
-                // 目标落在 2~3 行，视觉最均衡
-                fromMass = max(330, min(440, ceil(metrics.totalMass / 2.2) + horizontalChrome))
+                fromMass = max(336, min(444, ceil(metrics.totalMass / 2.2) + horizontalChrome))
             } else {
-                // 长段落展宽至舒适阅读列宽（约 460~560pt）
-                fromMass = max(440, min(maxAutoWidth, ceil(metrics.totalMass / 3.4) + horizontalChrome))
+                fromMass = max(444, min(maxAutoWidth, ceil(metrics.totalMass / 3.4) + horizontalChrome))
             }
             desiredContentWidth = max(min(fromLongest, maxAutoWidth), fromMass)
         } else if let sourceText, !sourceText.isEmpty {
@@ -287,7 +293,7 @@ final class QuickTranslatePanel: NSObject, NSWindowDelegate {
             desiredContentWidth = min(maxAutoWidth, max(minAutoWidth, metrics.longestLine + horizontalChrome))
         }
 
-        if showsBilingual, let sourceText, !sourceText.isEmpty {
+        if (showsBilingual || style == .cleanCard), let sourceText, !sourceText.isEmpty {
             let srcMetrics = estimatedLineWidth(sourceText, cjkWidth: 12.2, asciiWidth: 6.9)
             let srcDesired = min(maxAutoWidth, max(minAutoWidth, ceil(min(srcMetrics.longestLine, srcMetrics.totalMass / 2.2)) + horizontalChrome + 12))
             desiredContentWidth = max(desiredContentWidth, srcDesired)
@@ -453,9 +459,8 @@ final class QuickTranslatePanel: NSObject, NSWindowDelegate {
         guard let model = viewModel else { return }
         isResizing = false
         model.manualCardSize = nil
-        // 触发一次自适应重排；SwiftUI 测量新尺寸后 updateCardSize 会无缝收紧或展宽。
         let adaptiveW = model.adaptiveWidth
-        lastCardSize = CGSize(width: adaptiveW, height: min(lastCardSize.height, Self.autoMaximumBodyHeight(in: visibleScreenRect) + 120))
+        lastCardSize = CGSize(width: adaptiveW, height: min(lastCardSize.height, Self.autoMaximumBodyHeight(in: visibleScreenRect) + 180))
         repositionWindow(animated: true)
     }
 
@@ -543,14 +548,12 @@ final class QuickTranslatePanel: NSObject, NSWindowDelegate {
             guard let self, let panel = self.window else { return event }
             if let eventWindow = event.window {
                 if eventWindow === panel {
-                    // 点击落在了卡片外的透明阴影留白区，等效于点外部关闭。
                     let clickPoint = NSEvent.mouseLocation
                     let cardFrame = panel.frame.insetBy(dx: Self.windowInset - 4, dy: Self.windowInset - 4)
                     if !cardFrame.contains(clickPoint) {
                         self.dismissIfUnpinnedOutside()
                     }
                 } else {
-                    // 允许系统弹出的菜单/Popover 正常交互，不误关浮卡。
                     let className = NSStringFromClass(type(of: eventWindow))
                     if !className.contains("Menu") && !className.contains("Popover") && !className.contains("NSPopup") {
                         self.dismissIfUnpinnedOutside()
@@ -564,6 +567,10 @@ final class QuickTranslatePanel: NSObject, NSWindowDelegate {
             if event.keyCode == 53 { // Esc
                 if self.viewModel?.isTypographyPopoverOpen == true {
                     self.viewModel?.isTypographyPopoverOpen = false
+                    return nil
+                }
+                if self.viewModel?.isEditingSource == true {
+                    self.viewModel?.isEditingSource = false
                     return nil
                 }
                 self.close()
@@ -651,23 +658,80 @@ private final class QuickTranslateHighlightView: NSView {
         let path = CGPath(roundedRect: insetRect, cornerWidth: 6, cornerHeight: 6, transform: nil)
         switch style {
         case .inlineBilingual:
-            ctx.setFillColor(NSColor(srgbRed: 0.98, green: 0.74, blue: 0.24, alpha: 0.14).cgColor)
+            ctx.setFillColor(NSColor(srgbRed: 0.96, green: 0.72, blue: 0.24, alpha: 0.14).cgColor)
             ctx.addPath(path)
             ctx.fillPath()
-            ctx.setStrokeColor(NSColor(srgbRed: 0.98, green: 0.72, blue: 0.22, alpha: 0.78).cgColor)
-            ctx.setLineWidth(1.5)
+            ctx.setStrokeColor(NSColor(srgbRed: 0.96, green: 0.70, blue: 0.22, alpha: 0.68).cgColor)
+            ctx.setLineWidth(1.4)
             ctx.addPath(path)
             ctx.strokePath()
         case .editorial:
-            ctx.setFillColor(NSColor(srgbRed: 0.38, green: 0.65, blue: 0.98, alpha: 0.10).cgColor)
+            ctx.setFillColor(NSColor(srgbRed: 0.34, green: 0.62, blue: 0.98, alpha: 0.10).cgColor)
             ctx.addPath(path)
             ctx.fillPath()
-            ctx.setStrokeColor(NSColor(srgbRed: 0.38, green: 0.65, blue: 0.98, alpha: 0.55).cgColor)
+            ctx.setStrokeColor(NSColor(srgbRed: 0.34, green: 0.62, blue: 0.98, alpha: 0.50).cgColor)
             ctx.setLineWidth(1.2)
             ctx.addPath(path)
             ctx.strokePath()
         default:
             break
+        }
+    }
+}
+
+// MARK: - 朗读器
+
+@MainActor
+private final class QuickTranslateSpeaker: NSObject, AVSpeechSynthesizerDelegate {
+    private let synthesizer = AVSpeechSynthesizer()
+    var onFinished: (() -> Void)?
+
+    override init() {
+        super.init()
+        synthesizer.delegate = self
+    }
+
+    func speak(_ text: String, languageCode: String?) {
+        stop()
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return }
+        let utterance = AVSpeechUtterance(string: cleaned)
+        if let code = languageCode, let voice = AVSpeechSynthesisVoice(language: Self.bcp47(for: code)) {
+            utterance.voice = voice
+        }
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        synthesizer.speak(utterance)
+    }
+
+    func stop() {
+        if synthesizer.isSpeaking {
+            synthesizer.stopSpeaking(at: .immediate)
+        }
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        Task { @MainActor [weak self] in
+            self?.onFinished?()
+        }
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        Task { @MainActor [weak self] in
+            self?.onFinished?()
+        }
+    }
+
+    private static func bcp47(for code: String) -> String {
+        switch code {
+        case "zh-Hans": return "zh-CN"
+        case "zh-Hant": return "zh-TW"
+        case "en": return "en-US"
+        case "ja": return "ja-JP"
+        case "ko": return "ko-KR"
+        case "fr": return "fr-FR"
+        case "de": return "de-DE"
+        case "es": return "es-ES"
+        default: return code
         }
     }
 }
@@ -690,9 +754,14 @@ final class QuickTranslateViewModel: ObservableObject {
         }
     }
 
+    enum SpeechTarget: Equatable {
+        case source, translation
+    }
+
     struct AppleRequest: Identifiable {
         let id = UUID()
         let text: String
+        let source: String
         let target: String
         let allowDownload: Bool
     }
@@ -715,11 +784,18 @@ final class QuickTranslateViewModel: ObservableObject {
     @Published private(set) var phase: Phase = .recognizing
     @Published private(set) var appleRequest: AppleRequest?
     @Published var style: QuickTranslateStyle
+    @Published var sourceLanguage: String = "auto"
     @Published var targetLanguage: String
+    @Published private(set) var detectedLanguageCode: String?
+    @Published var editableSourceText: String = ""
+    @Published var isEditingSource = false
+    @Published var isResultExpanded = true
     @Published var inlineMode: InlineDisplayMode = .bilingual
     @Published var showOriginal = false
     @Published var isPinned = false
     @Published var copied = false
+    @Published var copiedSource = false
+    @Published var speakingTarget: SpeechTarget?
     @Published var placedAbove: Bool
     @Published var arrowOffsetX: CGFloat
     @Published var manualCardSize: CGSize?
@@ -731,8 +807,10 @@ final class QuickTranslateViewModel: ObservableObject {
     private var dictionarySummary: String?
     private var activeTask: Task<Void, Never>?
     private var copiedResetTask: Task<Void, Never>?
+    private var copiedSourceResetTask: Task<Void, Never>?
     private var typographyObservation: AnyCancellable?
     private var currentRequestID: UUID?
+    private let speaker = QuickTranslateSpeaker()
 
     private let onExpandFullWindow: @MainActor (CGImage, CGRect, OCRDocument?) -> Void
     private let onRecapture: @MainActor () -> Void
@@ -783,6 +861,10 @@ final class QuickTranslateViewModel: ObservableObject {
         self.onResetAutoSize = onResetAutoSize
         self.onManualMove = onManualMove
 
+        self.speaker.onFinished = { [weak self] in
+            self?.speakingTarget = nil
+        }
+
         self.typographyObservation = environment.config.$settings
             .map(\.translation.style)
             .removeDuplicates()
@@ -794,7 +876,12 @@ final class QuickTranslateViewModel: ObservableObject {
 
     var theme: Theme { environment.theme }
     var isManuallyResized: Bool { manualCardSize != nil }
-    var autoMaxBodyHeight: CGFloat { QuickTranslatePanel.autoMaximumBodyHeight(in: visibleScreenRect) }
+    var autoMaxBodyHeight: CGFloat {
+        if style == .cleanCard {
+            return min(280, max(140, floor(visibleScreenRect.height * 0.34)))
+        }
+        return QuickTranslatePanel.autoMaximumBodyHeight(in: visibleScreenRect)
+    }
 
     var fontDesign: Font.Design {
         switch typography.fontFamily {
@@ -805,8 +892,15 @@ final class QuickTranslateViewModel: ObservableObject {
         }
     }
 
+    /// 克制的系统蓝色（默认强调色，当用户在排版中切换其他强调色时联动）。
+    var systemBlue: Color {
+        theme.isDark
+            ? Color(red: 0.24, green: 0.56, blue: 1.0)
+            : Color(red: 0.04, green: 0.48, blue: 1.0)
+    }
+
     var accentColor: Color {
-        typography.accent.rgb.color
+        typography.accent == .amber ? systemBlue : typography.accent.rgb.color
     }
 
     func updateTypography(_ transform: (inout TranslationTypographyStyle) -> Void) {
@@ -814,6 +908,76 @@ final class QuickTranslateViewModel: ObservableObject {
         transform(&next)
         typography = next
         environment.config.update { $0.translation.style = next }
+    }
+
+    var effectiveProvider: ScreenshotTranslationProvider? {
+        if let configured = environment.config.settings.translation.provider {
+            return configured
+        }
+        if #available(macOS 15, *) {
+            return .apple
+        }
+        return nil
+    }
+
+    var providerBadgeText: String {
+        switch effectiveProvider {
+        case .apple: return "Apple 翻译"
+        case .api: return environment.config.settings.translation.apiProvider.title
+        case .local: return "本地模型"
+        case .online: return environment.config.settings.translation.onlineProvider.title
+        case .none: return "未配置引擎"
+        }
+    }
+
+    var sourceLanguageName: String {
+        sourceLanguage == "auto" ? "自动检测" : CaptureCoordinator.quickTranslateLanguageName(for: sourceLanguage)
+    }
+
+    var targetLanguageName: String {
+        targetLanguage == "auto" ? "自动选择" : CaptureCoordinator.quickTranslateLanguageName(for: targetLanguage)
+    }
+
+    var detectedLanguageName: String? {
+        detectedLanguageCode.map { CaptureCoordinator.quickTranslateLanguageName(for: $0) }
+    }
+
+    /// 当目标语言设为「自动选择」时，中文自动译英文，其他语言自动译简体中文。
+    var resolvedTargetLanguage: String {
+        guard targetLanguage == "auto" else { return targetLanguage }
+        let src = sourceLanguage == "auto" ? (detectedLanguageCode ?? "en") : sourceLanguage
+        return src.hasPrefix("zh") ? "en" : "zh-Hans"
+    }
+
+    var resolvedTargetLanguageName: String {
+        CaptureCoordinator.quickTranslateLanguageName(for: resolvedTargetLanguage)
+    }
+
+    var isOverlayOriginal: Bool {
+        style == .inlineBilingual && inlineMode == .overlayOriginal
+    }
+
+    var isLoading: Bool {
+        switch phase {
+        case .recognizing, .translating: return true
+        default: return false
+        }
+    }
+
+    var translatedText: String? {
+        if case .translated(_, let translated, _) = phase { return translated }
+        return nil
+    }
+
+    var currentSourceText: String {
+        switch phase {
+        case .translated(let src, _, _), .translating(let src), .needsDownload(let src), .needsConfiguration(let src):
+            return src
+        case .failed(let src, _):
+            return src ?? recognizedText
+        default:
+            return recognizedText
+        }
     }
 
     var adaptiveWidth: CGFloat {
@@ -866,48 +1030,10 @@ final class QuickTranslateViewModel: ObservableObject {
     func resetAutoSize() { onResetAutoSize() }
     func markManuallyMoved() { onManualMove() }
 
-    var effectiveProvider: ScreenshotTranslationProvider? {
-        if let configured = environment.config.settings.translation.provider {
-            return configured
-        }
-        if #available(macOS 15, *) {
-            return .apple
-        }
-        return nil
-    }
-
-    var providerBadgeText: String {
-        switch effectiveProvider {
-        case .apple: return "Apple 翻译"
-        case .api: return environment.config.settings.translation.apiProvider.title
-        case .local: return "本地模型"
-        case .online: return environment.config.settings.translation.onlineProvider.title
-        case .none: return "未配置引擎"
-        }
-    }
-
-    var targetLanguageName: String {
-        CaptureCoordinator.quickTranslateLanguageName(for: targetLanguage)
-    }
-
-    var isOverlayOriginal: Bool {
-        style == .inlineBilingual && inlineMode == .overlayOriginal
-    }
-
-    var isLoading: Bool {
-        switch phase {
-        case .recognizing, .translating: return true
-        default: return false
-        }
-    }
-
-    var translatedText: String? {
-        if case .translated(_, let translated, _) = phase { return translated }
-        return nil
-    }
-
     func start() {
         activeTask?.cancel()
+        speaker.stop()
+        speakingTarget = nil
         phase = .recognizing
         let ocrLanguages = environment.config.settings.ocr.languages
         let img = image
@@ -924,6 +1050,8 @@ final class QuickTranslateViewModel: ObservableObject {
                     return
                 }
                 self.recognizedText = text
+                self.editableSourceText = text
+                self.detectedLanguageCode = Self.detectLanguageCode(for: text)
                 self.dictionarySummary = Self.lookupDictionarySummary(for: text)
                 self.translateRecognizedText(allowDownload: false)
             } catch {
@@ -931,6 +1059,16 @@ final class QuickTranslateViewModel: ObservableObject {
                 self.phase = .failed(sourceText: nil, message: "文字识别失败：\(error.localizedDescription)")
             }
         }
+    }
+
+    func commitEditedSourceAndRetranslate() {
+        isEditingSource = false
+        let trimmed = editableSourceText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != recognizedText else { return }
+        recognizedText = trimmed
+        detectedLanguageCode = Self.detectLanguageCode(for: trimmed)
+        dictionarySummary = Self.lookupDictionarySummary(for: trimmed)
+        translateRecognizedText(allowDownload: false)
     }
 
     func translateRecognizedText(allowDownload: Bool) {
@@ -946,10 +1084,13 @@ final class QuickTranslateViewModel: ObservableObject {
             return
         }
 
+        let source = sourceLanguage
+        let target = resolvedTargetLanguage
         phase = .translating(sourceText: text)
+
         if provider == .apple {
             if #available(macOS 15, *) {
-                let req = AppleRequest(text: text, target: targetLanguage, allowDownload: allowDownload)
+                let req = AppleRequest(text: text, source: source, target: target, allowDownload: allowDownload)
                 currentRequestID = req.id
                 appleRequest = req
             } else {
@@ -958,24 +1099,40 @@ final class QuickTranslateViewModel: ObservableObject {
             return
         }
 
-        let target = targetLanguage
         let config = environment.config
         let requestID = UUID()
         currentRequestID = requestID
         activeTask = Task { @MainActor [weak self] in
             do {
-                let translated = try await TranslationModelClient.translate(
+                var latest = ""
+                for try await partial in TranslationModelClient.translateStream(
                     text,
-                    source: "auto",
+                    source: source,
                     target: target,
                     config: config
-                )
+                ) {
+                    guard !Task.isCancelled, let self, self.currentRequestID == requestID else { return }
+                    latest = partial
+                    let cleaned = partial.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !cleaned.isEmpty {
+                        self.phase = .translated(
+                            sourceText: text,
+                            translatedText: cleaned,
+                            dictionarySummary: self.dictionarySummary
+                        )
+                    }
+                }
                 guard !Task.isCancelled, let self, self.currentRequestID == requestID else { return }
-                self.phase = .translated(
-                    sourceText: text,
-                    translatedText: translated.trimmingCharacters(in: .whitespacesAndNewlines),
-                    dictionarySummary: self.dictionarySummary
-                )
+                let finalTrimmed = latest.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !finalTrimmed.isEmpty {
+                    self.phase = .translated(
+                        sourceText: text,
+                        translatedText: finalTrimmed,
+                        dictionarySummary: self.dictionarySummary
+                    )
+                }
+            } catch is CancellationError {
+                return
             } catch {
                 guard !Task.isCancelled, let self, self.currentRequestID == requestID else { return }
                 self.phase = .failed(sourceText: text, message: error.localizedDescription)
@@ -1017,12 +1174,116 @@ final class QuickTranslateViewModel: ObservableObject {
         onStyleOrModeChanged(style, isOverlayOriginal)
     }
 
+    func selectSourceLanguage(_ code: String) {
+        guard sourceLanguage != code else { return }
+        sourceLanguage = code
+        if !recognizedText.isEmpty {
+            translateRecognizedText(allowDownload: false)
+        }
+    }
+
     func selectTargetLanguage(_ code: String) {
         guard targetLanguage != code else { return }
         targetLanguage = code
-        environment.config.update { $0.translation.targetLanguage = code }
+        if code != "auto" {
+            environment.config.update { $0.translation.targetLanguage = code }
+        }
         if !recognizedText.isEmpty {
             translateRecognizedText(allowDownload: false)
+        }
+    }
+
+    func selectAppleTranslation() {
+        objectWillChange.send()
+        environment.config.update { $0.translation.provider = .apple }
+        if !recognizedText.isEmpty {
+            translateRecognizedText(allowDownload: false)
+        }
+    }
+
+    func selectAPIProvider(_ apiProvider: TranslationAPIProvider) {
+        objectWillChange.send()
+        environment.config.update {
+            $0.translation.provider = .api
+            $0.translation.apiProvider = apiProvider
+        }
+        TranslationModelClient.prewarm(config: environment.config)
+        if !recognizedText.isEmpty {
+            translateRecognizedText(allowDownload: false)
+        }
+    }
+
+    func selectOnlineModel(_ onlineProvider: PrivacyAIProvider) {
+        objectWillChange.send()
+        environment.config.update {
+            $0.translation.provider = .online
+            $0.translation.onlineProvider = onlineProvider
+        }
+        TranslationModelClient.prewarm(config: environment.config)
+        if !recognizedText.isEmpty {
+            translateRecognizedText(allowDownload: false)
+        }
+    }
+
+    func selectLocalModel() {
+        objectWillChange.send()
+        environment.config.update { $0.translation.provider = .local }
+        TranslationModelClient.prewarm(config: environment.config)
+        if !recognizedText.isEmpty {
+            translateRecognizedText(allowDownload: false)
+        }
+    }
+
+    var activeAPIProvider: TranslationAPIProvider? {
+        effectiveProvider == .api ? environment.config.settings.translation.apiProvider : nil
+    }
+
+    var activeOnlineProvider: PrivacyAIProvider? {
+        effectiveProvider == .online ? environment.config.settings.translation.onlineProvider : nil
+    }
+
+    func swapLanguages() {
+        let effectiveSource = sourceLanguage == "auto" ? (detectedLanguageCode ?? "en") : sourceLanguage
+        let effectiveTarget = resolvedTargetLanguage
+        guard effectiveSource != effectiveTarget else { return }
+        sourceLanguage = effectiveTarget
+        targetLanguage = effectiveSource
+        environment.config.update { $0.translation.targetLanguage = effectiveSource }
+        if !recognizedText.isEmpty {
+            translateRecognizedText(allowDownload: false)
+        }
+    }
+
+    func toggleSpeak(_ target: SpeechTarget) {
+        if speakingTarget == target {
+            speaker.stop()
+            speakingTarget = nil
+            return
+        }
+        switch target {
+        case .source:
+            let text = currentSourceText
+            guard !text.isEmpty else { return }
+            let lang = sourceLanguage == "auto" ? detectedLanguageCode : sourceLanguage
+            speakingTarget = .source
+            speaker.speak(text, languageCode: lang)
+        case .translation:
+            guard let text = translatedText, !text.isEmpty else { return }
+            speakingTarget = .translation
+            speaker.speak(text, languageCode: resolvedTargetLanguage)
+        }
+    }
+
+    func copySourceText() {
+        let text = currentSourceText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        environment.pinTransfer.copy(text)
+        copiedSource = true
+        copiedSourceResetTask?.cancel()
+        copiedSourceResetTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(1400))
+            guard !Task.isCancelled else { return }
+            self?.copiedSource = false
         }
     }
 
@@ -1059,10 +1320,32 @@ final class QuickTranslateViewModel: ObservableObject {
         activeTask = nil
         copiedResetTask?.cancel()
         copiedResetTask = nil
+        copiedSourceResetTask?.cancel()
+        copiedSourceResetTask = nil
         typographyObservation?.cancel()
         typographyObservation = nil
+        speaker.stop()
+        speakingTarget = nil
         appleRequest = nil
         currentRequestID = nil
+    }
+
+    /// 本地毫秒级语种检测（macOS 原生 NaturalLanguage）。
+    static func detectLanguageCode(for text: String) -> String? {
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(text)
+        guard let dominant = recognizer.dominantLanguage else { return nil }
+        switch dominant {
+        case .simplifiedChinese: return "zh-Hans"
+        case .traditionalChinese: return "zh-Hant"
+        case .english: return "en"
+        case .japanese: return "ja"
+        case .korean: return "ko"
+        case .french: return "fr"
+        case .german: return "de"
+        case .spanish: return "es"
+        default: return dominant.rawValue
+        }
     }
 
     /// 单词或极短英文词组时，调用 macOS 本地词典提取音标/词性摘要（零网络延迟）。
@@ -1077,7 +1360,6 @@ final class QuickTranslateViewModel: ObservableObject {
         guard let raw = DCSCopyTextDefinition(nil, trimmed as CFString, range)?.takeRetainedValue() as String? else {
             return nil
         }
-        // 提取首行音标/词性，例如 "ephemeral | əˈfem(ə)rəl | adjective"
         let firstLine = raw.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
         let parts = firstLine.split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }
         if parts.count >= 2 {
@@ -1094,12 +1376,13 @@ final class QuickTranslateViewModel: ObservableObject {
     }
 }
 
-// MARK: - SwiftUI 浮卡视图（4 套样式全内置）
+// MARK: - SwiftUI 浮卡视图（5 套克制耐看原生风格）
 
 private struct QuickTranslatePopoverView: View {
     @ObservedObject var model: QuickTranslateViewModel
     let onMeasuredSize: (CGSize) -> Void
     @State private var measuredBodyHeight: CGFloat = 42
+    @State private var measuredSourceHeight: CGFloat = 34
 
     private var isDark: Bool { model.theme.isDark }
 
@@ -1107,6 +1390,8 @@ private struct QuickTranslatePopoverView: View {
         ZStack {
             Group {
                 switch model.style {
+                case .cleanCard:
+                    cleanBentoCard
                 case .liquidGlass:
                     liquidGlassCard
                 case .editorial:
@@ -1117,6 +1402,7 @@ private struct QuickTranslatePopoverView: View {
                     dynamicBubbleCard
                 }
             }
+            .fixedSize(horizontal: false, vertical: !model.isManuallyResized)
             .background(
                 GeometryReader { proxy in
                     Color.clear
@@ -1134,10 +1420,11 @@ private struct QuickTranslatePopoverView: View {
                 }
             }
         }
-        .animation(model.isManuallyResized ? nil : .spring(response: 0.28, dampingFraction: 0.84), value: model.style)
-        .animation(model.isManuallyResized ? nil : .spring(response: 0.28, dampingFraction: 0.84), value: model.isLoading)
+        .animation(model.isManuallyResized ? nil : .spring(response: 0.26, dampingFraction: 0.86), value: model.style)
+        .animation(model.isManuallyResized ? nil : .spring(response: 0.26, dampingFraction: 0.86), value: model.isLoading)
         .animation(model.isManuallyResized ? nil : .easeOut(duration: 0.16), value: model.showOriginal)
         .animation(model.isManuallyResized ? nil : .easeOut(duration: 0.16), value: model.inlineMode)
+        .animation(model.isManuallyResized ? nil : .easeOut(duration: 0.16), value: model.isResultExpanded)
     }
 
     private var cardResizeOverlay: some View {
@@ -1153,16 +1440,15 @@ private struct QuickTranslatePopoverView: View {
         QuickTranslateDragSurface { model.markManuallyMoved() }
     }
 
-    /// 卡片顶部极简居中拖动手柄：视觉克制，一眼可知可拖动，且整个顶部区域可直接按住拖拽移动浮卡。
     private var topDragGrabber: some View {
         HStack {
             Spacer(minLength: 0)
             Capsule()
-                .fill(isDark ? Color.white.opacity(0.22) : Color.black.opacity(0.14))
-                .frame(width: 30, height: 3.5)
+                .fill(isDark ? Color.white.opacity(0.18) : Color.black.opacity(0.12))
+                .frame(width: 28, height: 3)
             Spacer(minLength: 0)
         }
-        .frame(height: 9)
+        .frame(height: 8)
         .contentShape(Rectangle())
         .background(cardDragBackground)
     }
@@ -1174,19 +1460,1205 @@ private struct QuickTranslatePopoverView: View {
             .allowsHitTesting(false)
     }
 
+    // MARK: - 样式 1（默认）：极简分块卡片（参考 Bob 原生 macOS 风格）
+
+    private var cleanBentoCard: some View {
+        let cardWidth = model.activeCardWidth
+        let cardHeight = model.activeCardHeight
+        let cornerRadius: CGFloat = 13
+        let typo = model.typography
+
+        return VStack(alignment: .leading, spacing: 8) {
+            // 1. 极简顶栏：左侧图钉（钉住变系统蓝）+ 右侧单色功能图标，整行可拖动
+            HStack(spacing: 4) {
+                Button {
+                    model.isPinned.toggle()
+                } label: {
+                    Image(systemName: model.isPinned ? "pin.fill" : "pin")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(model.isPinned ? model.accentColor : secondaryTextColor)
+                        .frame(width: 26, height: 24)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(model.isPinned ? (isDark ? Color.white.opacity(0.08) : Color.white) : Color.clear)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .strokeBorder(
+                                    model.isPinned ? hairlineBorderColor : Color.clear,
+                                    lineWidth: 1
+                                )
+                        )
+                }
+                .buttonStyle(.plain)
+                .help(model.isPinned ? "取消置顶钉住" : "钉住窗口（点外部不关闭）")
+
+                Spacer(minLength: 8)
+
+                if model.isManuallyResized {
+                    plainToolbarIcon(symbol: "arrow.down.right.and.arrow.up.left", help: "恢复按内容自适应大小") {
+                        model.resetAutoSize()
+                    }
+                }
+                plainTypographyButton
+                plainToolbarIcon(symbol: "scissors", help: "重新框选秒译") {
+                    model.recapture()
+                }
+                plainToolbarIcon(symbol: "arrow.up.left.and.arrow.down.right", help: "展开完整翻译大窗") {
+                    model.expandToFullWindow()
+                }
+                plainStyleSwitcherMenu
+                plainToolbarIcon(symbol: "xmark", help: "关闭 Esc") {
+                    model.close()
+                }
+            }
+            .padding(.horizontal, 2)
+            .background(cardDragBackground)
+
+            // 2. 原文分块卡片（浅灰圆角块，支持行内修改重译、朗读、复制与识别语种标签）
+            VStack(alignment: .leading, spacing: 8) {
+                if model.phase == .recognizing {
+                    HStack(spacing: 7) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .scaleEffect(0.70)
+                        Text("正在识别选区文字…")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(secondaryTextColor)
+                    }
+                    .padding(.vertical, 4)
+                } else if model.phase == .empty {
+                    Text("选区内未识别到文字")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(secondaryTextColor)
+                        .padding(.vertical, 4)
+                } else if model.isEditingSource {
+                    VStack(alignment: .leading, spacing: 6) {
+                        TextEditor(text: $model.editableSourceText)
+                            .font(.system(size: typo.sourceFontSize, design: model.fontDesign))
+                            .foregroundStyle(primaryTextColor)
+                            .scrollContentBackground(.hidden)
+                            .frame(minHeight: 44, maxHeight: 110)
+                        HStack(spacing: 6) {
+                            Spacer()
+                            Button("取消") {
+                                model.editableSourceText = model.currentSourceText
+                                model.isEditingSource = false
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11))
+                            .foregroundStyle(secondaryTextColor)
+                            Button("重新翻译") {
+                                model.commitEditedSourceAndRetranslate()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(model.accentColor)
+                            .controlSize(.mini)
+                        }
+                    }
+                } else {
+                    let sourceTextView = Text(model.currentSourceText)
+                        .font(.system(size: typo.sourceFontSize, weight: .regular, design: model.fontDesign))
+                        .foregroundStyle(primaryTextColor)
+                        .lineSpacing(max(2.5, typo.lineSpacing * 0.72))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .background(
+                            GeometryReader { proxy in
+                                Color.clear.preference(key: QuickTranslateSourceHeightKey.self, value: proxy.size.height)
+                            }
+                        )
+
+                    let maxSourceH: CGFloat = if let cardHeight {
+                        max(120, floor((cardHeight - 165) * 0.45))
+                    } else {
+                        min(210, max(120, floor(model.visibleScreenRect.height * 0.25)))
+                    }
+                    let naturalSourceH = ceil(measuredSourceHeight) + 4
+                    let fittedSourceH = min(max(22, naturalSourceH), maxSourceH)
+                    ScrollView(.vertical, showsIndicators: naturalSourceH > maxSourceH + 1) {
+                        sourceTextView
+                            .padding(.bottom, 2)
+                    }
+                    .frame(height: fittedSourceH)
+                    .clipped()
+                    .onPreferenceChange(QuickTranslateSourceHeightKey.self) { h in
+                        if h > 1, abs(h - measuredSourceHeight) > 0.5 {
+                            measuredSourceHeight = h
+                        }
+                    }
+                }
+
+                // 原文块底部操作：朗读 + 复制 + 已识别语种胶囊 + 改字图标
+                if !model.currentSourceText.isEmpty && !model.isEditingSource {
+                    HStack(spacing: 8) {
+                        microMonoIcon(
+                            symbol: model.speakingTarget == .source ? "speaker.wave.2.fill" : "speaker.wave.2",
+                            active: model.speakingTarget == .source,
+                            help: model.speakingTarget == .source ? "停止朗读" : "朗读原文"
+                        ) { model.toggleSpeak(.source) }
+
+                        microMonoIcon(
+                            symbol: model.copiedSource ? "checkmark" : "doc.on.doc",
+                            active: model.copiedSource,
+                            help: model.copiedSource ? "已复制原文" : "复制原文"
+                        ) { model.copySourceText() }
+
+                        if let detected = model.detectedLanguageName {
+                            HStack(spacing: 3) {
+                                Text("已识别")
+                                    .foregroundStyle(secondaryTextColor)
+                                Text(detected)
+                                    .foregroundStyle(model.accentColor)
+                                    .fontWeight(.medium)
+                            }
+                            .font(.system(size: 11))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(bentoChipFillColor, in: Capsule())
+                        }
+
+                        Spacer(minLength: 4)
+
+                        microMonoIcon(symbol: "pencil", active: false, help: "编辑原文并重新翻译") {
+                            model.editableSourceText = model.currentSourceText
+                            model.isEditingSource = true
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(bentoSectionFillColor, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            // 3. 对称语言切换条：自动检测 ▾   ⇄   自动选择 / 目标语言 ▾
+            HStack(spacing: 0) {
+                sourceLanguageMenu
+                    .frame(maxWidth: .infinity)
+
+                Button {
+                    model.swapLanguages()
+                } label: {
+                    Image(systemName: "arrow.left.arrow.right")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(secondaryTextColor)
+                        .frame(width: 28, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("互换源语言与目标语言")
+
+                bentoTargetLanguageMenu
+                    .frame(maxWidth: .infinity)
+            }
+            .frame(height: 32)
+            .background(bentoSectionFillColor, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+
+            // 4. 译文结果分块卡片（引擎标题 + 可折叠 + 正文 + 朗读/复制）
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 7) {
+                    providerPickerMenu(prominent: true)
+                    if model.targetLanguage == "auto", model.translatedText != nil {
+                        Text("→ \(model.resolvedTargetLanguageName)")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(secondaryTextColor)
+                    }
+                    Spacer()
+                    Button {
+                        model.isResultExpanded.toggle()
+                    } label: {
+                        Image(systemName: model.isResultExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(secondaryTextColor)
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(model.isResultExpanded ? "收起译文" : "展开译文")
+                }
+
+                if model.isResultExpanded {
+                    translationBodyView(forceBilingual: false, suppressInlineOriginal: true)
+                        .frame(maxWidth: .infinity, maxHeight: model.isManuallyResized ? .infinity : nil, alignment: .topLeading)
+
+                    if model.translatedText != nil {
+                        HStack(spacing: 8) {
+                            microMonoIcon(
+                                symbol: model.speakingTarget == .translation ? "speaker.wave.2.fill" : "speaker.wave.2",
+                                active: model.speakingTarget == .translation,
+                                help: model.speakingTarget == .translation ? "停止朗读" : "朗读译文"
+                            ) { model.toggleSpeak(.translation) }
+
+                            microMonoIcon(
+                                symbol: model.copied ? "checkmark" : "doc.on.doc",
+                                active: model.copied,
+                                help: model.copied ? "已复制译文" : "复制译文"
+                            ) { model.copyTranslation() }
+
+                            if model.copied {
+                                Text("已复制")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(model.accentColor)
+                            }
+                            Spacer()
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, maxHeight: model.isManuallyResized ? .infinity : nil, alignment: .topLeading)
+            .background(bentoSectionFillColor, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 8)
+        .padding(.bottom, 10)
+        .frame(width: cardWidth, height: cardHeight, alignment: .topLeading)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(bentoOuterSurfaceColor)
+                cardDragBackground
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .overlay(alignment: .bottomTrailing) { resizeCornerGrip }
+        .overlay { cardResizeOverlay }
+        .overlay {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(hairlineBorderColor, lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+        .shadow(color: Color.black.opacity(isDark ? 0.34 : 0.11), radius: 14, x: 0, y: 7)
+        .shadow(color: Color.black.opacity(isDark ? 0.22 : 0.05), radius: 3, x: 0, y: 1.5)
+    }
+
+    // MARK: - 样式 2：液态玻璃语义胶囊
+
+    private var liquidGlassCard: some View {
+        let cardWidth = model.activeCardWidth
+        let cardHeight = model.activeCardHeight.map { max(96, $0 - 7) }
+        let cornerRadius: CGFloat = 16
+        return VStack(spacing: 0) {
+            if !model.placedAbove {
+                caretView(pointingUp: true, fill: glassSurfaceColor, stroke: Color(red: 0.22, green: 0.70, blue: 0.96).opacity(0.36))
+                    .frame(width: cardWidth, height: 7, alignment: .leading)
+                    .padding(.leading, max(18, min(cardWidth - 30, model.arrowOffsetX - 6)))
+                    .offset(y: 1)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                topDragGrabber
+
+                HStack(spacing: 6) {
+                    Text("译")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 18, height: 18)
+                        .background(
+                            LinearGradient(
+                                colors: [Color(red: 0.16, green: 0.66, blue: 0.96), Color(red: 0.42, green: 0.40, blue: 0.96)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            in: Circle()
+                        )
+                    languageMenu
+                    providerPickerMenu(prominent: false)
+
+                    Spacer(minLength: 4)
+
+                    if model.isManuallyResized {
+                        iconActionButton(symbol: "arrow.down.right.and.arrow.up.left", help: "恢复按内容自适应大小") {
+                            model.resetAutoSize()
+                        }
+                    }
+                    typographyPopoverButton
+                    styleSwitcherMenu
+                    iconToggleButton(
+                        symbol: model.isPinned ? "pin.fill" : "pin",
+                        active: model.isPinned,
+                        help: model.isPinned ? "取消钉住" : "钉住浮卡（点外部不关闭）"
+                    ) { model.isPinned.toggle() }
+                    iconActionButton(symbol: "xmark", help: "关闭 Esc") { model.close() }
+                }
+                .background(cardDragBackground)
+
+                translationBodyView(forceBilingual: false, suppressInlineOriginal: false)
+                    .frame(maxWidth: .infinity, maxHeight: model.isManuallyResized ? .infinity : nil, alignment: .topLeading)
+
+                HStack(spacing: 6) {
+                    if case .translated = model.phase {
+                        microChipButton(
+                            title: model.showOriginal ? "隐藏原文" : "原文",
+                            symbol: "text.quote",
+                            active: model.showOriginal
+                        ) { model.showOriginal.toggle() }
+                    }
+                    microChipButton(title: "朗读", symbol: model.speakingTarget == .translation ? "speaker.wave.2.fill" : "speaker.wave.2", active: model.speakingTarget == .translation) {
+                        model.toggleSpeak(.translation)
+                    }
+                    microChipButton(title: "展开大窗", symbol: "arrow.up.left.and.arrow.down.right") {
+                        model.expandToFullWindow()
+                    }
+                    Spacer(minLength: 4)
+                    if model.translatedText != nil {
+                        copyPrimaryButton
+                    }
+                }
+                .background(cardDragBackground)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 5)
+            .padding(.bottom, 12)
+            .frame(width: cardWidth, height: cardHeight, alignment: .topLeading)
+            .background {
+                ZStack {
+                    QuickTranslateVisualEffectBackground(
+                        cornerRadius: cornerRadius,
+                        isDark: isDark,
+                        material: .hudWindow
+                    )
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(glassTintColor)
+                    cardDragBackground
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(alignment: .bottomTrailing) { resizeCornerGrip }
+            .overlay { cardResizeOverlay }
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.24, green: 0.72, blue: 0.98).opacity(isDark ? 0.42 : 0.34),
+                                Color(red: 0.44, green: 0.42, blue: 0.96).opacity(isDark ? 0.30 : 0.22),
+                                Color.white.opacity(isDark ? 0.16 : 0.55)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1.0
+                    )
+                    .allowsHitTesting(false)
+            }
+            .shadow(color: Color.black.opacity(isDark ? 0.30 : 0.10), radius: 14, x: 0, y: 7)
+            .shadow(color: Color.black.opacity(isDark ? 0.20 : 0.05), radius: 3.5, x: 0, y: 1.5)
+
+            if model.placedAbove {
+                caretView(pointingUp: false, fill: glassSurfaceColor, stroke: Color(red: 0.44, green: 0.42, blue: 0.96).opacity(0.30))
+                    .frame(width: cardWidth, height: 7, alignment: .leading)
+                    .padding(.leading, max(18, min(cardWidth - 30, model.arrowOffsetX - 6)))
+                    .offset(y: -1)
+            }
+        }
+    }
+
+    // MARK: - 样式 3：聚光取词取景器（无顶栏，第 1 行即译文）
+
+    private var editorialCard: some View {
+        let cardWidth = model.activeCardWidth
+        let cardHeight = model.activeCardHeight
+        let cornerRadius: CGFloat = 13
+        return HStack(spacing: 0) {
+            LinearGradient(
+                colors: [Color(red: 0.24, green: 0.72, blue: 0.98), Color(red: 0.42, green: 0.42, blue: 0.96)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(width: 3.0)
+
+            VStack(alignment: .leading, spacing: 7) {
+                topDragGrabber
+
+                translationBodyView(forceBilingual: false, suppressInlineOriginal: false)
+                    .frame(maxWidth: .infinity, maxHeight: model.isManuallyResized ? .infinity : nil, alignment: .topLeading)
+
+                HStack(spacing: 5) {
+                    languageMenu
+                    providerPickerMenu(prominent: false)
+                    if case .translated = model.phase {
+                        microTextButton(model.showOriginal ? "收起原文" : "原文") {
+                            model.showOriginal.toggle()
+                        }
+                    }
+                    Spacer(minLength: 4)
+                    if model.isManuallyResized {
+                        iconActionButton(symbol: "arrow.down.right.and.arrow.up.left", help: "恢复按内容自适应大小") {
+                            model.resetAutoSize()
+                        }
+                    }
+                    typographyPopoverButton
+                    styleSwitcherMenu
+                    iconActionButton(symbol: "arrow.up.left.and.arrow.down.right", help: "展开翻译大窗") {
+                        model.expandToFullWindow()
+                    }
+                    iconToggleButton(
+                        symbol: model.isPinned ? "pin.fill" : "pin",
+                        active: model.isPinned,
+                        help: model.isPinned ? "取消钉住" : "钉住浮卡"
+                    ) { model.isPinned.toggle() }
+                    if model.translatedText != nil {
+                        copyPrimaryButton
+                    }
+                }
+                .background(cardDragBackground)
+            }
+            .padding(.horizontal, 13)
+            .padding(.top, 4)
+            .padding(.bottom, 11)
+        }
+        .frame(width: cardWidth, height: cardHeight, alignment: .topLeading)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(bentoOuterSurfaceColor)
+                cardDragBackground
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .overlay(alignment: .bottomTrailing) { resizeCornerGrip }
+        .overlay { cardResizeOverlay }
+        .overlay {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(hairlineBorderColor, lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+        .shadow(color: Color.black.opacity(isDark ? 0.30 : 0.10), radius: 14, x: 0, y: 7)
+        .shadow(color: Color.black.opacity(isDark ? 0.20 : 0.05), radius: 3.5, x: 0, y: 1.5)
+    }
+
+    // MARK: - 样式 4：原地双语高亮卡（支持仅译文 / 双语对照 / 覆盖原文）
+
+    private var inlineBilingualCard: some View {
+        let cardWidth = model.activeCardWidth
+        let cardHeight = model.activeCardHeight
+        let cornerRadius: CGFloat = 15
+        return VStack(alignment: .leading, spacing: 8) {
+            topDragGrabber
+
+            HStack(spacing: 5) {
+                HStack(spacing: 2) {
+                    ForEach(QuickTranslateViewModel.InlineDisplayMode.allCases, id: \.self) { mode in
+                        let selected = model.inlineMode == mode
+                        Button {
+                            model.selectInlineMode(mode)
+                        } label: {
+                            Text(mode.title)
+                                .font(.system(size: 10.5, weight: selected ? .semibold : .medium))
+                                .foregroundStyle(selected ? (isDark ? Color.black : Color.white) : secondaryTextColor)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(
+                                    selected
+                                        ? AnyShapeStyle(
+                                            LinearGradient(
+                                                colors: [Color(red: 0.96, green: 0.70, blue: 0.24), Color(red: 0.92, green: 0.56, blue: 0.20)],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            )
+                                        )
+                                        : AnyShapeStyle(Color.clear),
+                                    in: Capsule()
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(2)
+                .background(
+                    Capsule().fill(bentoSectionFillColor)
+                )
+
+                Spacer(minLength: 4)
+                if model.isManuallyResized {
+                    iconActionButton(symbol: "arrow.down.right.and.arrow.up.left", help: "恢复按内容自适应大小") {
+                        model.resetAutoSize()
+                    }
+                }
+                typographyPopoverButton
+                styleSwitcherMenu
+                iconToggleButton(
+                    symbol: model.isPinned ? "pin.fill" : "pin",
+                    active: model.isPinned,
+                    help: model.isPinned ? "取消钉住" : "钉住浮卡"
+                ) { model.isPinned.toggle() }
+                iconActionButton(symbol: "xmark", help: "关闭 Esc") { model.close() }
+            }
+            .background(cardDragBackground)
+
+            translationBodyView(forceBilingual: model.inlineMode == .bilingual, suppressInlineOriginal: false)
+                .frame(maxWidth: .infinity, maxHeight: model.isManuallyResized ? .infinity : nil, alignment: .topLeading)
+
+            HStack(spacing: 6) {
+                languageMenu
+                providerPickerMenu(prominent: false)
+                if model.inlineMode == .overlayOriginal {
+                    Text("已覆盖原选区")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color(red: 0.92, green: 0.60, blue: 0.16))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.orange.opacity(0.13), in: Capsule())
+                }
+                Spacer(minLength: 4)
+                microChipButton(title: "展开大窗", symbol: "arrow.up.left.and.arrow.down.right") {
+                    model.expandToFullWindow()
+                }
+                if model.translatedText != nil {
+                    copyPrimaryButton
+                }
+            }
+            .background(cardDragBackground)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 5)
+        .padding(.bottom, 12)
+        .frame(width: cardWidth, height: cardHeight, alignment: .topLeading)
+        .background {
+            ZStack {
+                QuickTranslateVisualEffectBackground(
+                    cornerRadius: cornerRadius,
+                    isDark: isDark,
+                    material: .popover
+                )
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(
+                        model.isOverlayOriginal
+                            ? bentoOuterSurfaceColor
+                            : (isDark ? Color(red: 0.12, green: 0.13, blue: 0.15).opacity(0.86) : Color.white.opacity(0.90))
+                    )
+                cardDragBackground
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .overlay(alignment: .bottomTrailing) { resizeCornerGrip }
+        .overlay { cardResizeOverlay }
+        .overlay {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.96, green: 0.70, blue: 0.24).opacity(isDark ? 0.52 : 0.48),
+                            Color(red: 0.24, green: 0.70, blue: 0.96).opacity(isDark ? 0.34 : 0.28)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1.05
+                )
+                .allowsHitTesting(false)
+        }
+        .shadow(color: Color.black.opacity(isDark ? 0.30 : 0.10), radius: 14, x: 0, y: 7)
+        .shadow(color: Color.black.opacity(isDark ? 0.20 : 0.05), radius: 3.5, x: 0, y: 1.5)
+    }
+
+    // MARK: - 样式 5：灵动岛气泡卡（加载药丸展开气泡 + 外侧竖排动作豆）
+
+    private var dynamicBubbleCard: some View {
+        let bubbleWidth = max(230, model.activeCardWidth - QuickTranslatePanel.dynamicBubbleBeansReserve)
+        let bubbleHeight = model.activeCardHeight
+        let cornerRadius: CGFloat = 17
+        let mintAccent = Color(red: 0.18, green: 0.78, blue: 0.58)
+        return Group {
+            if model.isLoading {
+                HStack(spacing: 9) {
+                    Circle()
+                        .fill(mintAccent)
+                        .frame(width: 7.5, height: 7.5)
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.70)
+                    Text(model.phase == .recognizing ? "正在识别文字…" : "秒译 → \(model.resolvedTargetLanguageName)…")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white)
+                }
+                .padding(.horizontal, 15)
+                .padding(.vertical, 9)
+                .background {
+                    ZStack {
+                        Capsule().fill(Color(red: 0.08, green: 0.10, blue: 0.12).opacity(0.95))
+                        cardDragBackground
+                    }
+                }
+                .clipShape(Capsule())
+                .overlay(
+                    Capsule()
+                        .strokeBorder(mintAccent.opacity(0.45), lineWidth: 1)
+                        .allowsHitTesting(false)
+                )
+                .shadow(color: Color.black.opacity(0.32), radius: 12, x: 0, y: 6)
+            } else {
+                HStack(alignment: .top, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 7) {
+                        topDragGrabber
+
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(mintAccent)
+                                .frame(width: 6, height: 6)
+                            languageMenu
+                            providerPickerMenu(prominent: false)
+                            Spacer(minLength: 4)
+                            if model.isManuallyResized {
+                                iconActionButton(symbol: "arrow.down.right.and.arrow.up.left", help: "恢复按内容自适应大小") {
+                                    model.resetAutoSize()
+                                }
+                            }
+                            typographyPopoverButton
+                        }
+                        .background(cardDragBackground)
+
+                        translationBodyView(forceBilingual: false, suppressInlineOriginal: false)
+                            .frame(maxWidth: .infinity, maxHeight: model.isManuallyResized ? .infinity : nil, alignment: .topLeading)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 5)
+                    .padding(.bottom, 12)
+                    .frame(width: bubbleWidth, height: bubbleHeight, alignment: .topLeading)
+                    .frame(minHeight: bubbleHeight == nil ? 168 : nil, alignment: .topLeading)
+                    .background {
+                        ZStack {
+                            QuickTranslateVisualEffectBackground(
+                                cornerRadius: cornerRadius,
+                                isDark: isDark,
+                                material: .hudWindow
+                            )
+                            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                                .fill(isDark ? Color(red: 0.09, green: 0.11, blue: 0.13).opacity(0.86) : Color.white.opacity(0.92))
+                            cardDragBackground
+                        }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                    .overlay(alignment: .bottomTrailing) { resizeCornerGrip }
+                    .overlay { cardResizeOverlay }
+                    .overlay {
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [
+                                        mintAccent.opacity(isDark ? 0.46 : 0.38),
+                                        Color(red: 0.22, green: 0.70, blue: 0.94).opacity(isDark ? 0.32 : 0.26)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 1.05
+                            )
+                            .allowsHitTesting(false)
+                    }
+                    .shadow(color: Color.black.opacity(isDark ? 0.30 : 0.10), radius: 14, x: 0, y: 7)
+                    .shadow(color: Color.black.opacity(isDark ? 0.20 : 0.05), radius: 3.5, x: 0, y: 1.5)
+
+                    VStack(spacing: 5) {
+                        if model.translatedText != nil {
+                            beanButton(
+                                symbol: model.copied ? "checkmark" : "doc.on.doc",
+                                tint: model.copied ? model.accentColor : nil,
+                                help: model.copied ? "已复制" : "复制译文"
+                            ) { model.copyTranslation() }
+                        }
+                        if case .translated = model.phase {
+                            beanButton(
+                                symbol: "text.quote",
+                                tint: model.showOriginal ? model.accentColor : nil,
+                                help: model.showOriginal ? "隐藏原文" : "查看原文"
+                            ) { model.showOriginal.toggle() }
+                        }
+                        beanButton(
+                            symbol: model.isPinned ? "pin.fill" : "pin",
+                            tint: model.isPinned ? model.accentColor : nil,
+                            help: model.isPinned ? "取消钉住" : "钉住浮卡"
+                        ) { model.isPinned.toggle() }
+                        beanButton(symbol: "arrow.up.left.and.arrow.down.right", help: "展开翻译大窗") {
+                            model.expandToFullWindow()
+                        }
+                        Menu {
+                            ForEach(QuickTranslateStyle.allCases, id: \.self) { item in
+                                Button {
+                                    model.selectStyle(item)
+                                } label: {
+                                    if item == model.style {
+                                        Label(item.displayName, systemImage: "checkmark")
+                                    } else {
+                                        Text(item.displayName)
+                                    }
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 10.5, weight: .medium))
+                                .foregroundStyle(secondaryTextColor)
+                                .frame(width: 25, height: 25)
+                                .background(beanFillColor, in: Circle())
+                                .overlay(Circle().strokeBorder(hairlineBorderColor, lineWidth: 1))
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .frame(width: 25, height: 25)
+                        .help("切换秒译样式")
+
+                        beanButton(symbol: "xmark", help: "关闭 Esc") { model.close() }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - 共享内容体与小组件
+
+    @ViewBuilder
+    private func translationBodyView(forceBilingual: Bool, suppressInlineOriginal: Bool) -> some View {
+        let typo = model.typography
+        switch model.phase {
+        case .recognizing:
+            loadingSkeletonView(label: "正在识别选区文字…")
+
+        case .translating(let sourceText):
+            VStack(alignment: .leading, spacing: 6) {
+                loadingSkeletonView(label: "正在翻译为\(model.resolvedTargetLanguageName)…")
+                if !suppressInlineOriginal {
+                    Text(sourceText)
+                        .font(.system(size: max(11, typo.sourceFontSize - 1), design: model.fontDesign))
+                        .foregroundStyle(secondaryTextColor)
+                        .lineLimit(2)
+                }
+            }
+
+        case .translated(let sourceText, let translatedText, let dictSummary):
+            let bodyContent = VStack(alignment: .leading, spacing: 8) {
+                if let dictSummary {
+                    HStack(spacing: 6) {
+                        if !suppressInlineOriginal {
+                            Text(sourceText)
+                                .font(.system(size: max(11.5, typo.sourceFontSize), weight: .semibold, design: model.fontDesign))
+                                .foregroundStyle(primaryTextColor)
+                        }
+                        Text(dictSummary)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(model.accentColor)
+                    }
+                }
+
+                if !suppressInlineOriginal && (forceBilingual || model.showOriginal) {
+                    HStack(alignment: .top, spacing: 7) {
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(model.accentColor.opacity(0.55))
+                            .frame(width: 2.5)
+                        Text(sourceText)
+                            .font(.system(size: typo.sourceFontSize, weight: .regular, design: model.fontDesign))
+                            .foregroundStyle(secondaryTextColor)
+                            .lineSpacing(max(2, typo.lineSpacing * 0.65))
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.vertical, 2)
+                }
+
+                Text(translatedText)
+                    .font(.system(size: typo.targetFontSize, weight: .regular, design: model.fontDesign))
+                    .foregroundStyle(primaryTextColor)
+                    .lineSpacing(typo.lineSpacing)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(key: QuickTranslateBodyHeightKey.self, value: proxy.size.height)
+                }
+            )
+
+            Group {
+                if model.isManuallyResized {
+                    ScrollView(.vertical, showsIndicators: true) {
+                        bodyContent
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                } else {
+                    let fittedHeight = min(max(22, ceil(measuredBodyHeight)), model.autoMaxBodyHeight)
+                    let needsScroll = measuredBodyHeight > model.autoMaxBodyHeight + 1
+                    ScrollView(.vertical, showsIndicators: needsScroll) {
+                        bodyContent
+                    }
+                    .frame(height: fittedHeight)
+                }
+            }
+            .onPreferenceChange(QuickTranslateBodyHeightKey.self) { height in
+                if height > 1, abs(height - measuredBodyHeight) > 0.5 {
+                    measuredBodyHeight = height
+                }
+            }
+
+        case .needsDownload(let sourceText):
+            VStack(alignment: .leading, spacing: 8) {
+                Text("需要下载 Apple「\(model.resolvedTargetLanguageName)」离线语言包后才能秒译。")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(primaryTextColor)
+                if !suppressInlineOriginal, !sourceText.isEmpty {
+                    Text(sourceText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(secondaryTextColor)
+                        .lineLimit(2)
+                }
+                HStack(spacing: 8) {
+                    Button("下载语言包并翻译") {
+                        model.translateRecognizedText(allowDownload: true)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(model.accentColor)
+                    .controlSize(.small)
+                    Button("切换翻译引擎") { model.openSettings() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            }
+
+        case .needsConfiguration(let sourceText):
+            VStack(alignment: .leading, spacing: 8) {
+                Text("尚未配置可用的翻译服务。")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(primaryTextColor)
+                if !suppressInlineOriginal, !sourceText.isEmpty {
+                    Text("已识别：\(sourceText)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(secondaryTextColor)
+                        .lineLimit(2)
+                }
+                Button("前往设置配置翻译服务") { model.openSettings() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(model.accentColor)
+                    .controlSize(.small)
+            }
+
+        case .empty:
+            HStack(spacing: 8) {
+                Image(systemName: "text.viewfinder")
+                    .foregroundStyle(secondaryTextColor)
+                Text("选区内未识别到可翻译文字")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(secondaryTextColor)
+            }
+            .padding(.vertical, 4)
+
+        case .failed(let sourceText, let message):
+            VStack(alignment: .leading, spacing: 7) {
+                Text(message)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.red.opacity(0.88))
+                    .fixedSize(horizontal: false, vertical: true)
+                if !suppressInlineOriginal, let sourceText, !sourceText.isEmpty {
+                    Text(sourceText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(secondaryTextColor)
+                        .lineLimit(2)
+                }
+                HStack(spacing: 8) {
+                    Button("重试") {
+                        if sourceText != nil {
+                            model.translateRecognizedText(allowDownload: false)
+                        } else {
+                            model.start()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(model.accentColor)
+                    .controlSize(.small)
+                    Button("翻译设置") { model.openSettings() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private func loadingSkeletonView(label: String) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.70)
+                Text(label)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(secondaryTextColor)
+            }
+            RoundedRectangle(cornerRadius: 4)
+                .fill(secondaryTextColor.opacity(0.14))
+                .frame(height: 10)
+            RoundedRectangle(cornerRadius: 4)
+                .fill(secondaryTextColor.opacity(0.09))
+                .frame(width: 200, height: 10)
+        }
+        .padding(.vertical, 2)
+    }
+
+    // MARK: - 语言菜单、排版弹窗与控件
+
+    private var sourceLanguageMenu: some View {
+        Menu {
+            Button {
+                model.selectSourceLanguage("auto")
+            } label: {
+                if model.sourceLanguage == "auto" {
+                    Label("自动检测", systemImage: "checkmark")
+                } else {
+                    Text("自动检测")
+                }
+            }
+            Divider()
+            ForEach(TranslationServiceSettingsView.supportedLanguages, id: \.code) { lang in
+                Button {
+                    model.selectSourceLanguage(lang.code)
+                } label: {
+                    if lang.code == model.sourceLanguage {
+                        Label(lang.name, systemImage: "checkmark")
+                    } else {
+                        Text(lang.name)
+                    }
+                }
+            }
+        } label: {
+            Text("\(model.sourceLanguageName) ▾")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(primaryTextColor)
+                .frame(maxWidth: .infinity, minHeight: 28)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .help("选择源语言")
+    }
+
+    private var bentoTargetLanguageMenu: some View {
+        Menu {
+            Button {
+                model.selectTargetLanguage("auto")
+            } label: {
+                if model.targetLanguage == "auto" {
+                    Label("自动选择", systemImage: "checkmark")
+                } else {
+                    Text("自动选择")
+                }
+            }
+            Divider()
+            ForEach(TranslationServiceSettingsView.supportedLanguages, id: \.code) { lang in
+                Button {
+                    model.selectTargetLanguage(lang.code)
+                } label: {
+                    if lang.code == model.targetLanguage {
+                        Label(lang.name, systemImage: "checkmark")
+                    } else {
+                        Text(lang.name)
+                    }
+                }
+            }
+        } label: {
+            Text("\(model.targetLanguageName) ▾")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(primaryTextColor)
+                .frame(maxWidth: .infinity, minHeight: 28)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .help("选择目标语言")
+    }
+
+    private func providerPickerMenu(prominent: Bool) -> some View {
+        Menu {
+            if #available(macOS 15, *) {
+                Button {
+                    model.selectAppleTranslation()
+                } label: {
+                    if model.effectiveProvider == .apple {
+                        Label("Apple 离线翻译", systemImage: "checkmark")
+                    } else {
+                        Text("Apple 离线翻译")
+                    }
+                }
+            }
+
+            Divider()
+
+            Section("翻译 API") {
+                ForEach(TranslationAPIProvider.allCases, id: \.self) { api in
+                    Button {
+                        model.selectAPIProvider(api)
+                    } label: {
+                        if model.activeAPIProvider == api {
+                            Label(api.title, systemImage: "checkmark")
+                        } else {
+                            Text(api.title)
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Section("AI 大模型") {
+                ForEach([PrivacyAIProvider.deepSeek, .qwen, .custom], id: \.self) { online in
+                    Button {
+                        model.selectOnlineModel(online)
+                    } label: {
+                        if model.activeOnlineProvider == online {
+                            Label(online.title, systemImage: "checkmark")
+                        } else {
+                            Text(online.title)
+                        }
+                    }
+                }
+                Button {
+                    model.selectLocalModel()
+                } label: {
+                    if model.effectiveProvider == .local {
+                        Label("本机模型", systemImage: "checkmark")
+                    } else {
+                        Text("本机模型")
+                    }
+                }
+            }
+
+            Divider()
+
+            Button("配置翻译服务与密钥…") {
+                model.openSettings()
+            }
+        } label: {
+            if prominent {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles.rectangle.stack")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(model.accentColor)
+                        .frame(width: 18, height: 18)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .fill(isDark ? Color.white.opacity(0.08) : Color.white)
+                        )
+                    Text("\(model.providerBadgeText) ▾")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(primaryTextColor)
+                        .lineLimit(1)
+                }
+                .padding(.vertical, 2)
+                .contentShape(Rectangle())
+            } else {
+                Text("\(model.providerBadgeText) ▾")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .lineLimit(1)
+                    .foregroundStyle(secondaryTextColor)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3.5)
+                    .background(Capsule().fill(bentoSectionFillColor))
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("随时切换翻译服务并立即重译")
+    }
+
+    private var languageMenu: some View {
+        Menu {
+            Button {
+                model.selectTargetLanguage("auto")
+            } label: {
+                if model.targetLanguage == "auto" {
+                    Label("自动选择", systemImage: "checkmark")
+                } else {
+                    Text("自动选择")
+                }
+            }
+            Divider()
+            ForEach(TranslationServiceSettingsView.supportedLanguages, id: \.code) { lang in
+                Button {
+                    model.selectTargetLanguage(lang.code)
+                } label: {
+                    if lang.code == model.targetLanguage {
+                        Label(lang.name, systemImage: "checkmark")
+                    } else {
+                        Text(lang.name)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Text("→ \(model.targetLanguageName)")
+                    .font(.system(size: 11, weight: .medium))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundStyle(primaryTextColor)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3.5)
+            .background(Capsule().fill(bentoSectionFillColor))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("切换目标语言")
+    }
+
+    private var plainTypographyButton: some View {
+        Button {
+            model.isTypographyPopoverOpen.toggle()
+        } label: {
+            Text("Aa")
+                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                .foregroundStyle(model.isTypographyPopoverOpen ? model.accentColor : secondaryTextColor)
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("自定义字体、字号、行距与强调色")
+        .popover(isPresented: $model.isTypographyPopoverOpen, arrowEdge: .bottom) {
+            typographyPopoverContent
+                .environment(\.colorScheme, isDark ? .dark : .light)
+        }
+    }
+
+    private var plainStyleSwitcherMenu: some View {
+        Menu {
+            ForEach(QuickTranslateStyle.allCases, id: \.self) { item in
+                Button {
+                    model.selectStyle(item)
+                } label: {
+                    if item == model.style {
+                        Label(item.displayName, systemImage: "checkmark")
+                    } else {
+                        Text(item.displayName)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(secondaryTextColor)
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: 24, height: 24)
+        .help("切换秒译卡片风格（5 套）")
+    }
+
     private var typographyPopoverButton: some View {
         Button {
             model.isTypographyPopoverOpen.toggle()
         } label: {
-            Image(systemName: "textformat.size")
-                .font(.system(size: 10.5, weight: .medium))
+            Text("Aa")
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
                 .foregroundStyle(model.isTypographyPopoverOpen ? model.accentColor : secondaryTextColor)
                 .frame(width: 22, height: 22)
                 .background(
                     Circle().fill(
                         model.isTypographyPopoverOpen
-                            ? model.accentColor.opacity(0.18)
-                            : (isDark ? Color.white.opacity(0.07) : Color.black.opacity(0.05))
+                            ? model.accentColor.opacity(0.14)
+                            : bentoSectionFillColor
                     )
                 )
         }
@@ -1216,7 +2688,6 @@ private struct QuickTranslatePopoverView: View {
                 }
             }
 
-            // 强调色
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text("强调色")
@@ -1257,7 +2728,6 @@ private struct QuickTranslatePopoverView: View {
 
             Rectangle().fill(theme.token(.border)).frame(height: 1)
 
-            // 字体风格
             VStack(alignment: .leading, spacing: 6) {
                 Text("文字字体")
                     .font(.system(size: 11, weight: .medium))
@@ -1273,7 +2743,6 @@ private struct QuickTranslatePopoverView: View {
                 )
             }
 
-            // 译文字号
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text("译文字号")
@@ -1295,7 +2764,6 @@ private struct QuickTranslatePopoverView: View {
                 )
             }
 
-            // 原文字号
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text("原文字号")
@@ -1317,7 +2785,6 @@ private struct QuickTranslatePopoverView: View {
                 )
             }
 
-            // 段落行距
             VStack(alignment: .leading, spacing: 6) {
                 Text("段落行距")
                     .font(.system(size: 11, weight: .medium))
@@ -1344,710 +2811,6 @@ private struct QuickTranslatePopoverView: View {
         .foregroundStyle(theme.token(.foreground))
     }
 
-    // MARK: 样式 1：液态玻璃语义胶囊
-
-    private var liquidGlassCard: some View {
-        let cardWidth = model.activeCardWidth
-        let cardHeight = model.activeCardHeight.map { max(96, $0 - 7) }
-        let cornerRadius: CGFloat = 16
-        return VStack(spacing: 0) {
-            if !model.placedAbove {
-                caretView(pointingUp: true, fill: glassSurfaceColor, stroke: Color.cyan.opacity(0.40))
-                    .frame(width: cardWidth, height: 7, alignment: .leading)
-                    .padding(.leading, max(18, min(cardWidth - 30, model.arrowOffsetX - 6)))
-                    .offset(y: 1)
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                topDragGrabber
-
-                // 顶栏：胶囊徽标 + 目标语言 + 排版/样式/自适应/钉住/关闭
-                HStack(spacing: 6) {
-                    HStack(spacing: 5) {
-                        Text("译")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 18, height: 18)
-                            .background(
-                                LinearGradient(
-                                    colors: [Color(red: 0.14, green: 0.68, blue: 0.98), Color(red: 0.44, green: 0.38, blue: 0.98)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                in: Circle()
-                            )
-                        languageMenu
-                    }
-
-                    Text("· \(model.providerBadgeText)")
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(secondaryTextColor)
-                        .lineLimit(1)
-
-                    Spacer(minLength: 4)
-
-                    if model.isManuallyResized {
-                        iconActionButton(symbol: "arrow.down.right.and.arrow.up.left", help: "恢复按内容自适应大小") {
-                            model.resetAutoSize()
-                        }
-                    }
-                    typographyPopoverButton
-                    styleSwitcherMenu
-                    iconToggleButton(
-                        symbol: model.isPinned ? "pin.fill" : "pin",
-                        active: model.isPinned,
-                        help: model.isPinned ? "取消钉住" : "钉住浮卡（点外部不关闭）"
-                    ) { model.isPinned.toggle() }
-                    iconActionButton(symbol: "xmark", help: "关闭 Esc") { model.close() }
-                }
-                .background(cardDragBackground)
-
-                // 主内容区
-                translationBodyView(forceBilingual: false)
-                    .frame(maxWidth: .infinity, maxHeight: model.isManuallyResized ? .infinity : nil, alignment: .topLeading)
-
-                // 底栏操作
-                HStack(spacing: 6) {
-                    if case .translated = model.phase {
-                        microChipButton(
-                            title: model.showOriginal ? "隐藏原文" : "原文",
-                            symbol: "text.quote",
-                            active: model.showOriginal
-                        ) { model.showOriginal.toggle() }
-                    }
-                    microChipButton(title: "重选", symbol: "crop") { model.recapture() }
-                    microChipButton(title: "展开大窗", symbol: "arrow.up.left.and.arrow.down.right") {
-                        model.expandToFullWindow()
-                    }
-                    Spacer(minLength: 4)
-                    if model.translatedText != nil {
-                        copyPrimaryButton
-                    }
-                }
-                .background(cardDragBackground)
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 5)
-            .padding(.bottom, 12)
-            .frame(width: cardWidth, height: cardHeight, alignment: .topLeading)
-            .background {
-                ZStack {
-                    QuickTranslateVisualEffectBackground(
-                        cornerRadius: cornerRadius,
-                        isDark: isDark,
-                        material: .hudWindow
-                    )
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(glassTintColor)
-                    cardDragBackground
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .overlay(alignment: .bottomTrailing) { resizeCornerGrip }
-            .overlay { cardResizeOverlay }
-            .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                Color.cyan.opacity(isDark ? 0.44 : 0.36),
-                                Color.indigo.opacity(isDark ? 0.32 : 0.24),
-                                Color.white.opacity(isDark ? 0.16 : 0.52)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1.0
-                    )
-                    .allowsHitTesting(false)
-            }
-            .shadow(color: Color.black.opacity(isDark ? 0.30 : 0.10), radius: 14, x: 0, y: 7)
-            .shadow(color: Color.black.opacity(isDark ? 0.20 : 0.05), radius: 3.5, x: 0, y: 1.5)
-
-            if model.placedAbove {
-                caretView(pointingUp: false, fill: glassSurfaceColor, stroke: Color.indigo.opacity(0.32))
-                    .frame(width: cardWidth, height: 7, alignment: .leading)
-                    .padding(.leading, max(18, min(cardWidth - 30, model.arrowOffsetX - 6)))
-                    .offset(y: -1)
-            }
-        }
-    }
-
-    // MARK: 样式 2：聚光取词取景器（无顶栏，第 1 行即译文）
-
-    private var editorialCard: some View {
-        let cardWidth = model.activeCardWidth
-        let cardHeight = model.activeCardHeight
-        let cornerRadius: CGFloat = 14
-        return HStack(spacing: 0) {
-            // 左侧 3.5pt 渐变语义色条（随强调色联动）
-            LinearGradient(
-                colors: [model.accentColor, Color(red: 0.39, green: 0.40, blue: 0.95)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(width: 3.5)
-
-            VStack(alignment: .leading, spacing: 7) {
-                topDragGrabber
-
-                translationBodyView(forceBilingual: false)
-                    .frame(maxWidth: .infinity, maxHeight: model.isManuallyResized ? .infinity : nil, alignment: .topLeading)
-
-                HStack(spacing: 5) {
-                    languageMenu
-                    if case .translated = model.phase {
-                        microTextButton(model.showOriginal ? "收起原文" : "原文") {
-                            model.showOriginal.toggle()
-                        }
-                    }
-                    Spacer(minLength: 4)
-                    if model.isManuallyResized {
-                        iconActionButton(symbol: "arrow.down.right.and.arrow.up.left", help: "恢复按内容自适应大小") {
-                            model.resetAutoSize()
-                        }
-                    }
-                    typographyPopoverButton
-                    styleSwitcherMenu
-                    iconActionButton(symbol: "arrow.up.left.and.arrow.down.right", help: "展开翻译大窗") {
-                        model.expandToFullWindow()
-                    }
-                    iconToggleButton(
-                        symbol: model.isPinned ? "pin.fill" : "pin",
-                        active: model.isPinned,
-                        help: model.isPinned ? "取消钉住" : "钉住浮卡"
-                    ) { model.isPinned.toggle() }
-                    if model.translatedText != nil {
-                        copyPrimaryButton
-                    }
-                }
-                .background(cardDragBackground)
-            }
-            .padding(.horizontal, 13)
-            .padding(.top, 4)
-            .padding(.bottom, 11)
-        }
-        .frame(width: cardWidth, height: cardHeight, alignment: .topLeading)
-        .background {
-            ZStack {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(isDark ? Color(red: 0.09, green: 0.10, blue: 0.14).opacity(0.95) : Color.white.opacity(0.97))
-                cardDragBackground
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .overlay(alignment: .bottomTrailing) { resizeCornerGrip }
-        .overlay { cardResizeOverlay }
-        .overlay {
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(
-                    isDark ? Color.white.opacity(0.13) : Color.black.opacity(0.09),
-                    lineWidth: 1
-                )
-                .allowsHitTesting(false)
-        }
-        .shadow(color: Color.black.opacity(isDark ? 0.30 : 0.10), radius: 14, x: 0, y: 7)
-        .shadow(color: Color.black.opacity(isDark ? 0.20 : 0.05), radius: 3.5, x: 0, y: 1.5)
-    }
-
-    // MARK: 样式 3：原地双语高亮卡（支持 仅译文 / 双语对照 / 覆盖原文）
-
-    private var inlineBilingualCard: some View {
-        let cardWidth = model.activeCardWidth
-        let cardHeight = model.activeCardHeight
-        let cornerRadius: CGFloat = 15
-        return VStack(alignment: .leading, spacing: 8) {
-            topDragGrabber
-
-            HStack(spacing: 5) {
-                // 三态切换胶囊
-                HStack(spacing: 2) {
-                    ForEach(QuickTranslateViewModel.InlineDisplayMode.allCases, id: \.self) { mode in
-                        let selected = model.inlineMode == mode
-                        Button {
-                            model.selectInlineMode(mode)
-                        } label: {
-                            Text(mode.title)
-                                .font(.system(size: 10.5, weight: selected ? .semibold : .medium))
-                                .foregroundStyle(
-                                    selected
-                                        ? (isDark ? Color.black : Color.white)
-                                        : secondaryTextColor
-                                )
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(
-                                    selected
-                                        ? AnyShapeStyle(
-                                            LinearGradient(
-                                                colors: [Color(red: 0.98, green: 0.72, blue: 0.22), Color(red: 0.96, green: 0.56, blue: 0.18)],
-                                                startPoint: .topLeading,
-                                                endPoint: .bottomTrailing
-                                            )
-                                        )
-                                        : AnyShapeStyle(Color.clear),
-                                    in: Capsule()
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(2)
-                .background(
-                    Capsule().fill(isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.06))
-                )
-
-                Spacer(minLength: 4)
-                if model.isManuallyResized {
-                    iconActionButton(symbol: "arrow.down.right.and.arrow.up.left", help: "恢复按内容自适应大小") {
-                        model.resetAutoSize()
-                    }
-                }
-                typographyPopoverButton
-                styleSwitcherMenu
-                iconToggleButton(
-                    symbol: model.isPinned ? "pin.fill" : "pin",
-                    active: model.isPinned,
-                    help: model.isPinned ? "取消钉住" : "钉住浮卡"
-                ) { model.isPinned.toggle() }
-                iconActionButton(symbol: "xmark", help: "关闭 Esc") { model.close() }
-            }
-            .background(cardDragBackground)
-
-            translationBodyView(forceBilingual: model.inlineMode == .bilingual)
-                .frame(maxWidth: .infinity, maxHeight: model.isManuallyResized ? .infinity : nil, alignment: .topLeading)
-
-            HStack(spacing: 6) {
-                languageMenu
-                if model.inlineMode == .overlayOriginal {
-                    Text("已覆盖原选区")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Color(red: 0.96, green: 0.66, blue: 0.20))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.orange.opacity(0.14), in: Capsule())
-                }
-                Spacer(minLength: 4)
-                microChipButton(title: "展开大窗", symbol: "arrow.up.left.and.arrow.down.right") {
-                    model.expandToFullWindow()
-                }
-                if model.translatedText != nil {
-                    copyPrimaryButton
-                }
-            }
-            .background(cardDragBackground)
-        }
-        .padding(.horizontal, 14)
-        .padding(.top, 5)
-        .padding(.bottom, 12)
-        .frame(width: cardWidth, height: cardHeight, alignment: .topLeading)
-        .background {
-            ZStack {
-                QuickTranslateVisualEffectBackground(
-                    cornerRadius: cornerRadius,
-                    isDark: isDark,
-                    material: .popover
-                )
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(
-                        model.isOverlayOriginal
-                            ? (isDark ? Color(red: 0.09, green: 0.10, blue: 0.13).opacity(0.94) : Color.white.opacity(0.96))
-                            : (isDark ? Color(red: 0.11, green: 0.11, blue: 0.14).opacity(0.76) : Color.white.opacity(0.84))
-                    )
-                cardDragBackground
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .overlay(alignment: .bottomTrailing) { resizeCornerGrip }
-        .overlay { cardResizeOverlay }
-        .overlay {
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.98, green: 0.72, blue: 0.24).opacity(0.62),
-                            Color(red: 0.22, green: 0.74, blue: 0.97).opacity(0.40)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1.1
-                )
-                .allowsHitTesting(false)
-        }
-        .shadow(color: Color.black.opacity(isDark ? 0.30 : 0.10), radius: 14, x: 0, y: 7)
-        .shadow(color: Color.black.opacity(isDark ? 0.20 : 0.05), radius: 3.5, x: 0, y: 1.5)
-    }
-
-    // MARK: 样式 4：灵动岛气泡卡（加载态胶囊 → 译文气泡 + 外侧竖排豆子按钮）
-
-    private var dynamicBubbleCard: some View {
-        let bubbleWidth = max(230, model.activeCardWidth - QuickTranslatePanel.dynamicBubbleBeansReserve)
-        let bubbleHeight = model.activeCardHeight
-        let cornerRadius: CGFloat = 18
-        return Group {
-            if model.isLoading {
-                HStack(spacing: 9) {
-                    Circle()
-                        .fill(Color(red: 0.20, green: 0.83, blue: 0.60))
-                        .frame(width: 8, height: 8)
-                        .shadow(color: Color(red: 0.20, green: 0.83, blue: 0.60).opacity(0.7), radius: 4)
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.72)
-                    Text(model.phase == .recognizing ? "正在识别文字…" : "秒译 → \(model.targetLanguageName)…")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background {
-                    ZStack {
-                        Capsule()
-                            .fill(Color(red: 0.06, green: 0.09, blue: 0.11).opacity(0.94))
-                        cardDragBackground
-                    }
-                }
-                .clipShape(Capsule())
-                .overlay(
-                    Capsule()
-                        .strokeBorder(Color(red: 0.20, green: 0.83, blue: 0.60).opacity(0.55), lineWidth: 1)
-                        .allowsHitTesting(false)
-                )
-                .shadow(color: Color.black.opacity(0.32), radius: 12, x: 0, y: 6)
-            } else {
-                HStack(alignment: .top, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 7) {
-                        topDragGrabber
-
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(Color(red: 0.20, green: 0.83, blue: 0.60))
-                                .frame(width: 6, height: 6)
-                            languageMenu
-                            Spacer(minLength: 4)
-                            if model.isManuallyResized {
-                                iconActionButton(symbol: "arrow.down.right.and.arrow.up.left", help: "恢复按内容自适应大小") {
-                                    model.resetAutoSize()
-                                }
-                            }
-                            typographyPopoverButton
-                            Text(model.providerBadgeText)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(secondaryTextColor)
-                        }
-                        .background(cardDragBackground)
-
-                        translationBodyView(forceBilingual: false)
-                            .frame(maxWidth: .infinity, maxHeight: model.isManuallyResized ? .infinity : nil, alignment: .topLeading)
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.top, 5)
-                    .padding(.bottom, 12)
-                    .frame(width: bubbleWidth, height: bubbleHeight, alignment: .topLeading)
-                    .frame(minHeight: bubbleHeight == nil ? 168 : nil, alignment: .topLeading)
-                    .background {
-                        ZStack {
-                            QuickTranslateVisualEffectBackground(
-                                cornerRadius: cornerRadius,
-                                isDark: isDark,
-                                material: .hudWindow
-                            )
-                            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                                .fill(isDark ? Color(red: 0.07, green: 0.10, blue: 0.12).opacity(0.82) : Color.white.opacity(0.88))
-                            cardDragBackground
-                        }
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-                    .overlay(alignment: .bottomTrailing) { resizeCornerGrip }
-                    .overlay { cardResizeOverlay }
-                    .overlay {
-                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .strokeBorder(
-                                LinearGradient(
-                                    colors: [
-                                        Color(red: 0.20, green: 0.83, blue: 0.60).opacity(0.54),
-                                        Color(red: 0.22, green: 0.74, blue: 0.97).opacity(0.38)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 1.1
-                            )
-                            .allowsHitTesting(false)
-                    }
-                    .shadow(color: Color.black.opacity(isDark ? 0.30 : 0.10), radius: 14, x: 0, y: 7)
-                    .shadow(color: Color.black.opacity(isDark ? 0.20 : 0.05), radius: 3.5, x: 0, y: 1.5)
-
-                    // 外侧竖排动作豆子
-                    VStack(spacing: 5) {
-                        if model.translatedText != nil {
-                            beanButton(
-                                symbol: model.copied ? "checkmark" : "doc.on.doc",
-                                tint: model.copied ? Color(red: 0.18, green: 0.80, blue: 0.52) : nil,
-                                help: model.copied ? "已复制" : "复制译文"
-                            ) { model.copyTranslation() }
-                        }
-                        if case .translated = model.phase {
-                            beanButton(
-                                symbol: "text.quote",
-                                tint: model.showOriginal ? Color(red: 0.20, green: 0.83, blue: 0.60) : nil,
-                                help: model.showOriginal ? "隐藏原文" : "查看原文"
-                            ) { model.showOriginal.toggle() }
-                        }
-                        beanButton(
-                            symbol: model.isPinned ? "pin.fill" : "pin",
-                            tint: model.isPinned ? Color(red: 0.20, green: 0.83, blue: 0.60) : nil,
-                            help: model.isPinned ? "取消钉住" : "钉住浮卡"
-                        ) { model.isPinned.toggle() }
-                        beanButton(symbol: "arrow.up.left.and.arrow.down.right", help: "展开翻译大窗") {
-                            model.expandToFullWindow()
-                        }
-                        Menu {
-                            ForEach(QuickTranslateStyle.allCases, id: \.self) { item in
-                                Button {
-                                    model.selectStyle(item)
-                                } label: {
-                                    if item == model.style {
-                                        Label(item.displayName, systemImage: "checkmark")
-                                    } else {
-                                        Text(item.displayName)
-                                    }
-                                }
-                            }
-                        } label: {
-                            Image(systemName: "sparkles")
-                                .font(.system(size: 10.5, weight: .semibold))
-                                .foregroundStyle(primaryTextColor)
-                                .frame(width: 25, height: 25)
-                                .background(beanFillColor, in: Circle())
-                                .overlay(Circle().strokeBorder(beanStrokeColor, lineWidth: 1))
-                        }
-                        .menuStyle(.borderlessButton)
-                        .menuIndicator(.hidden)
-                        .frame(width: 25, height: 25)
-                        .help("切换秒译样式")
-
-                        beanButton(symbol: "xmark", help: "关闭 Esc") { model.close() }
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - 共享内容体与小组件
-
-    @ViewBuilder
-    private func translationBodyView(forceBilingual: Bool) -> some View {
-        let typo = model.typography
-        switch model.phase {
-        case .recognizing:
-            loadingSkeletonView(label: "正在识别选区文字…")
-
-        case .translating(let sourceText):
-            VStack(alignment: .leading, spacing: 6) {
-                loadingSkeletonView(label: "正在翻译为\(model.targetLanguageName)…")
-                Text(sourceText)
-                    .font(.system(size: max(11, typo.sourceFontSize - 1), design: model.fontDesign))
-                    .foregroundStyle(secondaryTextColor)
-                    .lineLimit(2)
-            }
-
-        case .translated(let sourceText, let translatedText, let dictSummary):
-            let bodyContent = VStack(alignment: .leading, spacing: 8) {
-                if let dictSummary {
-                    HStack(spacing: 6) {
-                        Text(sourceText)
-                            .font(.system(size: max(11.5, typo.sourceFontSize), weight: .semibold, design: model.fontDesign))
-                            .foregroundStyle(primaryTextColor)
-                        Text(dictSummary)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(model.accentColor)
-                    }
-                }
-
-                if forceBilingual || model.showOriginal {
-                    HStack(alignment: .top, spacing: 7) {
-                        RoundedRectangle(cornerRadius: 1.5)
-                            .fill(model.accentColor.opacity(0.60))
-                            .frame(width: 2.5)
-                        Text(sourceText)
-                            .font(.system(size: typo.sourceFontSize, weight: .regular, design: model.fontDesign))
-                            .foregroundStyle(secondaryTextColor)
-                            .lineSpacing(max(2, typo.lineSpacing * 0.65))
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(.vertical, 2)
-                }
-
-                Text(translatedText)
-                    .font(.system(size: typo.targetFontSize, weight: .medium, design: model.fontDesign))
-                    .foregroundStyle(primaryTextColor)
-                    .lineSpacing(typo.lineSpacing)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .background(
-                GeometryReader { proxy in
-                    Color.clear.preference(key: QuickTranslateBodyHeightKey.self, value: proxy.size.height)
-                }
-            )
-
-            Group {
-                if model.isManuallyResized {
-                    ScrollView(.vertical, showsIndicators: true) {
-                        bodyContent
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                } else {
-                    let fittedHeight = min(max(22, ceil(measuredBodyHeight)), model.autoMaxBodyHeight)
-                    let needsScroll = measuredBodyHeight > model.autoMaxBodyHeight + 1
-                    ScrollView(.vertical, showsIndicators: needsScroll) {
-                        bodyContent
-                    }
-                    .frame(height: fittedHeight)
-                }
-            }
-            .onPreferenceChange(QuickTranslateBodyHeightKey.self) { height in
-                if height > 1, abs(height - measuredBodyHeight) > 0.5 {
-                    measuredBodyHeight = height
-                }
-            }
-
-        case .needsDownload(let sourceText):
-            VStack(alignment: .leading, spacing: 8) {
-                Text("需要下载 Apple「\(model.targetLanguageName)」离线语言包后才能秒译。")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(primaryTextColor)
-                if !sourceText.isEmpty {
-                    Text(sourceText)
-                        .font(.system(size: 11))
-                        .foregroundStyle(secondaryTextColor)
-                        .lineLimit(2)
-                }
-                HStack(spacing: 8) {
-                    Button("下载语言包并翻译") {
-                        model.translateRecognizedText(allowDownload: true)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    Button("切换翻译引擎") { model.openSettings() }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                }
-            }
-
-        case .needsConfiguration(let sourceText):
-            VStack(alignment: .leading, spacing: 8) {
-                Text("尚未配置可用的翻译服务。")
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(primaryTextColor)
-                if !sourceText.isEmpty {
-                    Text("已识别：\(sourceText)")
-                        .font(.system(size: 11))
-                        .foregroundStyle(secondaryTextColor)
-                        .lineLimit(2)
-                }
-                Button("前往设置配置翻译服务") { model.openSettings() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-            }
-
-        case .empty:
-            HStack(spacing: 8) {
-                Image(systemName: "text.viewfinder")
-                    .foregroundStyle(secondaryTextColor)
-                Text("选区内未识别到可翻译文字")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(secondaryTextColor)
-            }
-            .padding(.vertical, 4)
-
-        case .failed(let sourceText, let message):
-            VStack(alignment: .leading, spacing: 7) {
-                Text(message)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Color.red.opacity(0.92))
-                    .fixedSize(horizontal: false, vertical: true)
-                if let sourceText, !sourceText.isEmpty {
-                    Text(sourceText)
-                        .font(.system(size: 11))
-                        .foregroundStyle(secondaryTextColor)
-                        .lineLimit(2)
-                }
-                HStack(spacing: 8) {
-                    Button("重试") {
-                        if sourceText != nil {
-                            model.translateRecognizedText(allowDownload: false)
-                        } else {
-                            model.start()
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    Button("翻译设置") { model.openSettings() }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                }
-            }
-        }
-    }
-
-    private func loadingSkeletonView(label: String) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 6) {
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(0.72)
-                Text(label)
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(secondaryTextColor)
-            }
-            RoundedRectangle(cornerRadius: 4)
-                .fill(secondaryTextColor.opacity(0.16))
-                .frame(height: 11)
-            RoundedRectangle(cornerRadius: 4)
-                .fill(secondaryTextColor.opacity(0.11))
-                .frame(width: 220, height: 11)
-        }
-        .padding(.vertical, 2)
-    }
-
-    private var languageMenu: some View {
-        Menu {
-            ForEach(TranslationServiceSettingsView.supportedLanguages, id: \.code) { lang in
-                Button {
-                    model.selectTargetLanguage(lang.code)
-                } label: {
-                    if lang.code == model.targetLanguage {
-                        Label(lang.name, systemImage: "checkmark")
-                    } else {
-                        Text(lang.name)
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 3) {
-                Text("→ \(model.targetLanguageName)")
-                    .font(.system(size: 11, weight: .semibold))
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-            }
-            .foregroundStyle(primaryTextColor)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(
-                Capsule().fill(isDark ? Color.white.opacity(0.10) : Color.black.opacity(0.06))
-            )
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("切换目标语言")
-    }
-
     private var styleSwitcherMenu: some View {
         Menu {
             ForEach(QuickTranslateStyle.allCases, id: \.self) { item in
@@ -2062,18 +2825,16 @@ private struct QuickTranslatePopoverView: View {
                 }
             }
         } label: {
-            Image(systemName: "sparkles")
-                .font(.system(size: 11, weight: .medium))
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 10.5, weight: .medium))
                 .foregroundStyle(secondaryTextColor)
                 .frame(width: 22, height: 22)
-                .background(
-                    Circle().fill(isDark ? Color.white.opacity(0.07) : Color.black.opacity(0.05))
-                )
+                .background(Circle().fill(bentoSectionFillColor))
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .frame(width: 22, height: 22)
-        .help("切换秒译样式（4 套风格）")
+        .help("切换秒译样式（5 套）")
     }
 
     private var copyPrimaryButton: some View {
@@ -2082,27 +2843,45 @@ private struct QuickTranslatePopoverView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: model.copied ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 10.5, weight: .semibold))
+                    .font(.system(size: 10.5, weight: .medium))
                 Text(model.copied ? "已复制" : "复制译文")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 11, weight: .medium))
             }
-            .foregroundStyle(.white)
+            .foregroundStyle(model.copied ? .white : (isDark ? Color.black : Color.white))
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .background(
                 model.copied
-                    ? AnyShapeStyle(Color(red: 0.16, green: 0.74, blue: 0.48))
-                    : AnyShapeStyle(
-                        LinearGradient(
-                            colors: [Color(red: 0.14, green: 0.62, blue: 0.96), Color(red: 0.36, green: 0.42, blue: 0.96)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    ),
+                    ? model.accentColor
+                    : (isDark ? Color(red: 0.92, green: 0.93, blue: 0.96) : Color(red: 0.13, green: 0.15, blue: 0.19)),
                 in: Capsule()
             )
         }
         .buttonStyle(.plain)
+    }
+
+    private func plainToolbarIcon(symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(secondaryTextColor)
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    private func microMonoIcon(symbol: String, active: Bool, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(active ? model.accentColor : secondaryTextColor)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     private func microChipButton(title: String, symbol: String, active: Bool = false, action: @escaping () -> Void) -> some View {
@@ -2113,15 +2892,11 @@ private struct QuickTranslatePopoverView: View {
                 Text(title)
                     .font(.system(size: 10.5, weight: .medium))
             }
-            .foregroundStyle(active ? Color(red: 0.22, green: 0.74, blue: 0.97) : secondaryTextColor)
+            .foregroundStyle(active ? model.accentColor : secondaryTextColor)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(
-                Capsule().fill(
-                    active
-                        ? Color(red: 0.22, green: 0.74, blue: 0.97).opacity(0.16)
-                        : (isDark ? Color.white.opacity(0.07) : Color.black.opacity(0.05))
-                )
+                Capsule().fill(active ? model.accentColor.opacity(0.12) : bentoSectionFillColor)
             )
         }
         .buttonStyle(.plain)
@@ -2144,9 +2919,7 @@ private struct QuickTranslatePopoverView: View {
                 .font(.system(size: 10.5, weight: .medium))
                 .foregroundStyle(secondaryTextColor)
                 .frame(width: 22, height: 22)
-                .background(
-                    Circle().fill(isDark ? Color.white.opacity(0.07) : Color.black.opacity(0.05))
-                )
+                .background(Circle().fill(bentoSectionFillColor))
         }
         .buttonStyle(.plain)
         .help(help)
@@ -2156,14 +2929,10 @@ private struct QuickTranslatePopoverView: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(active ? Color(red: 0.22, green: 0.74, blue: 0.97) : secondaryTextColor)
+                .foregroundStyle(active ? model.accentColor : secondaryTextColor)
                 .frame(width: 22, height: 22)
                 .background(
-                    Circle().fill(
-                        active
-                            ? Color(red: 0.22, green: 0.74, blue: 0.97).opacity(0.18)
-                            : (isDark ? Color.white.opacity(0.07) : Color.black.opacity(0.05))
-                    )
+                    Circle().fill(active ? model.accentColor.opacity(0.14) : bentoSectionFillColor)
                 )
         }
         .buttonStyle(.plain)
@@ -2173,12 +2942,12 @@ private struct QuickTranslatePopoverView: View {
     private func beanButton(symbol: String, tint: Color? = nil, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(tint ?? primaryTextColor)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(tint ?? secondaryTextColor)
                 .frame(width: 25, height: 25)
                 .background(beanFillColor, in: Circle())
-                .overlay(Circle().strokeBorder(tint?.opacity(0.65) ?? beanStrokeColor, lineWidth: 1))
-                .shadow(color: Color.black.opacity(isDark ? 0.32 : 0.14), radius: 6, x: 0, y: 3)
+                .overlay(Circle().strokeBorder(tint?.opacity(0.55) ?? hairlineBorderColor, lineWidth: 1))
+                .shadow(color: Color.black.opacity(isDark ? 0.28 : 0.10), radius: 5, x: 0, y: 2.5)
         }
         .buttonStyle(.plain)
         .help(help)
@@ -2191,28 +2960,42 @@ private struct QuickTranslatePopoverView: View {
             .frame(width: 12, height: 7)
     }
 
+    // MARK: - 统一克制的 macOS 原生色板
+
     private var primaryTextColor: Color {
-        isDark ? Color.white.opacity(0.95) : Color(red: 0.10, green: 0.12, blue: 0.17)
+        isDark ? Color(red: 0.94, green: 0.95, blue: 0.97) : Color(red: 0.11, green: 0.13, blue: 0.16)
     }
 
     private var secondaryTextColor: Color {
-        isDark ? Color.white.opacity(0.62) : Color(red: 0.36, green: 0.40, blue: 0.48)
+        isDark ? Color(red: 0.62, green: 0.65, blue: 0.71) : Color(red: 0.42, green: 0.45, blue: 0.51)
+    }
+
+    private var bentoOuterSurfaceColor: Color {
+        isDark ? Color(red: 0.118, green: 0.122, blue: 0.141) : Color.white
+    }
+
+    private var bentoSectionFillColor: Color {
+        isDark ? Color(red: 0.157, green: 0.165, blue: 0.192) : Color(red: 0.955, green: 0.958, blue: 0.966)
+    }
+
+    private var bentoChipFillColor: Color {
+        isDark ? Color(red: 0.21, green: 0.22, blue: 0.26) : Color(red: 0.905, green: 0.914, blue: 0.932)
+    }
+
+    private var hairlineBorderColor: Color {
+        isDark ? Color.white.opacity(0.11) : Color.black.opacity(0.11)
     }
 
     private var glassTintColor: Color {
-        isDark ? Color(red: 0.08, green: 0.10, blue: 0.17).opacity(0.72) : Color.white.opacity(0.78)
+        isDark ? Color(red: 0.11, green: 0.12, blue: 0.14).opacity(0.76) : Color.white.opacity(0.84)
     }
 
     private var glassSurfaceColor: Color {
-        isDark ? Color(red: 0.10, green: 0.13, blue: 0.21).opacity(0.92) : Color.white.opacity(0.92)
+        isDark ? Color(red: 0.13, green: 0.14, blue: 0.16).opacity(0.95) : Color.white.opacity(0.96)
     }
 
     private var beanFillColor: Color {
-        isDark ? Color(red: 0.08, green: 0.12, blue: 0.15).opacity(0.92) : Color.white.opacity(0.94)
-    }
-
-    private var beanStrokeColor: Color {
-        isDark ? Color.white.opacity(0.16) : Color.black.opacity(0.10)
+        isDark ? Color(red: 0.14, green: 0.15, blue: 0.18).opacity(0.95) : Color.white.opacity(0.96)
     }
 }
 
@@ -2255,6 +3038,16 @@ private struct QuickTranslateBodyHeightKey: PreferenceKey {
     }
 }
 
+private struct QuickTranslateSourceHeightKey: PreferenceKey {
+    nonisolated(unsafe) static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        let next = nextValue()
+        if next > 0 {
+            value = next
+        }
+    }
+}
+
 /// 卡片右下角极简双斜线缩放提示纹样。
 private struct QuickTranslateResizeGripMark: View {
     let color: Color
@@ -2266,16 +3059,13 @@ private struct QuickTranslateResizeGripMark: View {
             p.addLine(to: CGPoint(x: size.width - 1.5, y: size.height - 7.5))
             p.move(to: CGPoint(x: size.width - 4.0, y: size.height - 1.5))
             p.addLine(to: CGPoint(x: size.width - 1.5, y: size.height - 4.0))
-            ctx.stroke(p, with: .color(color.opacity(0.45)), style: StrokeStyle(lineWidth: 1.15, lineCap: .round))
+            ctx.stroke(p, with: .color(color.opacity(0.42)), style: StrokeStyle(lineWidth: 1.15, lineCap: .round))
         }
         .frame(width: 10, height: 10)
     }
 }
 
 /// 覆盖在浮卡四边与四角的 AppKit 零抖动缩放层。
-///
-/// 仅命中边缘 6pt 与四角 14pt，卡片内部全部透传给文本选择、按钮与背景拖拽移动；
-/// 拖拽时直接读屏幕全局鼠标坐标计算增量，避免左/上边缘移动窗口 origin 导致的 SwiftUI 坐标系抖动。
 private struct QuickTranslateResizeOverlay: NSViewRepresentable {
     let onBegin: () -> Void
     let onDrag: (QuickTranslatePanel.ResizeEdge, CGSize) -> Void
@@ -2381,7 +3171,6 @@ private struct QuickTranslateResizeOverlay: NSViewRepresentable {
             }
         }
 
-        /// AppKit 视图默认 y 向上：minY 为底边，maxY 为顶边。
         private func edge(at p: CGPoint) -> QuickTranslatePanel.ResizeEdge? {
             guard bounds.contains(p) else { return nil }
             let corner: CGFloat = 14
@@ -2437,7 +3226,7 @@ private struct QuickTranslateResizeOverlay: NSViewRepresentable {
     }
 }
 
-/// 真实圆角遮罩的 AppKit 毛玻璃背景，彻底消除无边框浮窗上 SwiftUI Material 可能溢出的方正暗角。
+/// 真实圆角遮罩的 AppKit 毛玻璃背景，彻底消除无边框浮窗上 SwiftUI Material 溢出的方正暗角。
 private struct QuickTranslateVisualEffectBackground: NSViewRepresentable {
     let cornerRadius: CGFloat
     let isDark: Bool
@@ -2488,7 +3277,7 @@ private struct QuickTranslateVisualEffectBackground: NSViewRepresentable {
     }
 }
 
-/// AppKit 直接驱动的窗口拖动背景面：在 `.nonactivatingPanel` 无边框浮窗上也能零延迟 1:1 丝滑拖动。
+/// AppKit 直接驱动的窗口拖动背景面：在 `.nonactivatingPanel` 无边框浮窗上 1:1 丝滑拖动。
 private struct QuickTranslateDragSurface: NSViewRepresentable {
     let onDragStart: () -> Void
 
@@ -2545,10 +3334,16 @@ private struct QuickTranslateAppleJob: View {
 
     var body: some View {
         Color.clear.task {
+            let input = request.source == "auto" ? nil : Locale.Language(identifier: request.source)
             let output = Locale.Language(identifier: request.target)
             do {
                 let availability = LanguageAvailability()
-                let status = try await availability.status(for: request.text, to: output)
+                let status: LanguageAvailability.Status
+                if let input {
+                    status = await availability.status(from: input, to: output)
+                } else {
+                    status = try await availability.status(for: request.text, to: output)
+                }
                 guard !Task.isCancelled else { return }
                 switch status {
                 case .installed: break
@@ -2563,7 +3358,7 @@ private struct QuickTranslateAppleJob: View {
                     )
                     return
                 }
-                configuration = .init(source: nil, target: output)
+                configuration = .init(source: input, target: output)
             } catch {
                 if !Task.isCancelled {
                     model.finishAppleRequest(request.id, result: .failure(error))

@@ -51,13 +51,8 @@ internal sealed class SelectionToolbarSettingsWindow : Window
         {
             Child = new ScrollViewer { Content = rows, VerticalScrollBarVisibility = ScrollBarVisibility.Auto },
             Height = 185, Background = palette.Panel, BorderBrush = palette.Border,
-            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(9)
-        });
-        layout.Children.Add(new TextBlock
-        {
-            Text = "列表从上到下对应工具栏从左到右。收起或放不下的按钮可从「更多」使用。",
-            FontSize = 11, Foreground = palette.Muted, TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 13, 0, 12)
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(9),
+            Margin = new Thickness(0, 0, 0, 12)
         });
 
         var footer = new DockPanel();

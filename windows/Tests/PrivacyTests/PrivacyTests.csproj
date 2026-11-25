@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../TapSnap.Windows/Recognition/PrivacyRules.cs" Link="PrivacyRules.cs" />
+    <Compile Include="../../TapSnap.Windows/Recognition/TranslationModels.cs" Link="TranslationModels.cs" />
     <Compile Include="../../TapSnap.Windows/Recognition/AiTextProtection.cs" Link="AiTextProtection.cs" />
     <Compile Include="../../TapSnap.Windows/Recognition/TesseractCli.cs" Link="TesseractCli.cs" />
     <Compile Include="../../TapSnap.Windows/Recognition/TableGrid.cs" Link="TableGrid.cs" />

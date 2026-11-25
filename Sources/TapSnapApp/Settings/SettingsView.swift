@@ -212,7 +212,7 @@ private struct GeneralSettings: View {
     var body: some View {
         SettingsPage(title: "通用", theme: theme) {
             SnapSettingGroup("外观", theme: theme) {
-                SnapSettingRow("深色界面", subtitle: "跟随设置而非系统外观", theme: theme) {
+                SnapSettingRow("深色界面", theme: theme) {
                     SnapToggle(
                         isOn: Binding(
                             get: { config.settings.appearance.useDarkTheme },
@@ -222,7 +222,7 @@ private struct GeneralSettings: View {
                     )
                 }
                 SnapRowDivider(theme: theme)
-                SnapSettingRow("显示悬浮球", subtitle: "桌面边缘的快捷截图入口", theme: theme) {
+                SnapSettingRow("显示悬浮球", theme: theme) {
                     SnapToggle(
                         isOn: Binding(
                             get: { toolBall.isVisible },
@@ -240,11 +240,7 @@ private struct GeneralSettings: View {
             }
 
             SnapSettingGroup("录屏与演示", theme: theme) {
-                SnapSettingRow(
-                    "演示模式（允许录屏自身窗口）",
-                    subtitle: "开启后允许系统截屏、录屏软件或双开 TapSnap 捕获本应用的选区、贴图与工具栏",
-                    theme: theme
-                ) {
+                SnapSettingRow("演示模式（允许录屏）", theme: theme) {
                     SnapToggle(
                         isOn: Binding(
                             get: { config.settings.capture.allowSelfCapture },
@@ -253,6 +249,7 @@ private struct GeneralSettings: View {
                         theme: theme
                     )
                 }
+                .help("开启后允许系统截屏、录屏软件或双开 TapSnap 捕获本应用的选区、贴图与工具栏")
             }
         }
     }
@@ -274,7 +271,7 @@ private struct CaptureSettings: View {
     var body: some View {
         SettingsPage(title: "截图", theme: theme) {
             SnapSettingGroup(theme: theme) {
-                SnapSettingRow("框选工具栏", subtitle: "选择普通截图时直接显示的按钮", theme: theme) {
+                SnapSettingRow("框选工具栏", theme: theme) {
                     SnapButton("自定义…", theme: theme, variant: .outline, size: .sm) {
                         customizesSelectionToolbar = true
                     }
@@ -514,7 +511,7 @@ private struct PinSettings: View {
                 row("显示阴影", bind(\.pin.showShadow))
                 if config.settings.pin.showShadow {
                     SnapRowDivider(theme: theme)
-                    SnapSettingRow("阴影样式", subtitle: "在桌面贴图上右键也可快速切换", theme: theme) {
+                    SnapSettingRow("阴影样式", theme: theme) {
                         Picker("阴影样式", selection: bind(\.pin.shadowStyle)) {
                             ForEach(PinShadowStyle.allCases, id: \.self) { style in
                                 Text(style.displayName).tag(style)
@@ -524,6 +521,7 @@ private struct PinSettings: View {
                         .pickerStyle(.menu)
                         .frame(width: 156)
                     }
+                    .help("在桌面贴图上右键也可快速切换")
                     PinShadowPreview(appearance: previewAppearance)
                         .frame(height: 122)
                         .clipShape(RoundedRectangle(cornerRadius: theme.metrics.radiusSM))
@@ -569,7 +567,7 @@ private struct PinSettings: View {
                     if abs(config.settings.pin.shadowIntensity - 1.0) > 0.01
                         || abs(config.settings.pin.shadowSpread - 1.0) > 0.01 {
                         SnapRowDivider(theme: theme)
-                        SnapSettingRow("阴影参数", subtitle: "将浓淡与扩散范围恢复为推荐默认值", theme: theme) {
+                        SnapSettingRow("阴影参数", theme: theme) {
                             SnapButton("恢复默认", theme: theme, variant: .outline, size: .sm) {
                                 config.update {
                                     $0.pin.shadowIntensity = 1.0
@@ -793,9 +791,6 @@ private struct ShortcutSettings: View {
 
     var body: some View {
         SettingsPage(title: "快捷键", theme: theme) {
-            Text("点击录制后按下快捷键，松开即保存。Esc 取消，Delete 清除。")
-                .font(.system(size: 11))
-                .foregroundStyle(theme.token(.mutedForeground))
             bindings("全局快捷键", for: ShortcutAction.allCases.map(ShortcutRecorder.Target.global))
             bindings("框选与编辑", for: OperationShortcut.all.map(ShortcutRecorder.Target.operation))
 
@@ -880,10 +875,9 @@ private struct AboutSettings: View {
                         }
                         Spacer()
                     }
-                    Text("截图、标注、贴图与录屏工具。文字识别在本机完成；截图翻译可选择设备端或在线服务。")
+                    Text("截图、标注、贴图与录屏工具")
                         .font(.system(size: 12))
                         .foregroundStyle(theme.token(.mutedForeground))
-                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(14)
             }
@@ -906,7 +900,7 @@ private struct RecordSettings: View {
     var body: some View {
         SettingsPage(title: "录屏", theme: theme) {
             SnapSettingGroup("画面", theme: theme) {
-                SnapSettingRow("帧率", subtitle: "码率固定 8 Mbps，H.264 硬编", theme: theme) {
+                SnapSettingRow("帧率", theme: theme) {
                     SnapSegmented(
                         items: [30, 60],
                         selection: Binding(
@@ -918,8 +912,9 @@ private struct RecordSettings: View {
                         "\(fps) fps"
                     }
                 }
+                .help("码率固定 8 Mbps，H.264 硬编")
                 SnapRowDivider(theme: theme)
-                SnapSettingRow("包含光标", subtitle: "录制时把鼠标指针画进画面", theme: theme) {
+                SnapSettingRow("包含光标", theme: theme) {
                     SnapToggle(
                         isOn: Binding(
                             get: { config.settings.record.includesCursor },
@@ -941,7 +936,7 @@ private struct RecordSettings: View {
                 if config.settings.record.showsMouseClicks || config.settings.record.showsMouseScrolls {
                     if config.settings.record.showsMouseClicks {
                         SnapRowDivider(theme: theme)
-                        SnapSettingRow("点击动效样式", subtitle: "自动区分左键、右键与双击", theme: theme) {
+                        SnapSettingRow("点击动效样式", theme: theme) {
                             Picker("点击动效样式", selection: Binding(
                                 get: { config.settings.record.mouseClickStyle },
                                 set: { value in config.update { $0.record.mouseClickStyle = value } }
@@ -957,7 +952,7 @@ private struct RecordSettings: View {
                     }
                     if config.settings.record.showsMouseScrolls {
                         SnapRowDivider(theme: theme)
-                        SnapSettingRow("滚轮动效样式", subtitle: "随滚动方向与速度动态响应", theme: theme) {
+                        SnapSettingRow("滚轮动效样式", theme: theme) {
                             Picker("滚轮动效样式", selection: Binding(
                                 get: { config.settings.record.mouseScrollStyle },
                                 set: { value in config.update { $0.record.mouseScrollStyle = value } }
@@ -972,7 +967,7 @@ private struct RecordSettings: View {
                         }
                     }
                     SnapRowDivider(theme: theme)
-                    SnapSettingRow("动效配色", subtitle: "左键与右键使用互补配色区分", theme: theme) {
+                    SnapSettingRow("动效配色", theme: theme) {
                         Picker("动效配色", selection: Binding(
                             get: { config.settings.record.mouseEffectPalette },
                             set: { value in config.update { $0.record.mouseEffectPalette = value } }
@@ -1017,14 +1012,13 @@ private struct RecordSettings: View {
                     .frame(height: 124)
                     .clipShape(RoundedRectangle(cornerRadius: theme.metrics.radiusSM))
                     .padding(.horizontal, 14)
-                    .padding(.bottom, 10)
+                    .padding(.bottom, 12)
+                    .help("可在预览区内直接左键、右键、双击或滚轮试看效果")
                 }
-                Text("在预览区内可直接左键、右键、双击或滚轮试看效果；摄像头首次启用时请求权限，快捷键提示不记录输入文字。")
-                    .font(.caption).foregroundStyle(theme.token(.mutedForeground)).padding(12)
             }
 
             SnapSettingGroup("声音", theme: theme) {
-                SnapSettingRow("录制系统声音", subtitle: "录制应用播放的声音", theme: theme) {
+                SnapSettingRow("录制系统声音", theme: theme) {
                     SnapToggle(
                         isOn: Binding(
                             get: { config.settings.record.includesSystemAudio },
@@ -1034,7 +1028,7 @@ private struct RecordSettings: View {
                     )
                 }
                 SnapRowDivider(theme: theme)
-                SnapSettingRow("录制麦克风", subtitle: "首次使用会请求麦克风权限", theme: theme) {
+                SnapSettingRow("录制麦克风", theme: theme) {
                     SnapToggle(
                         isOn: Binding(
                             get: { config.settings.record.includesMicrophone },
@@ -1280,16 +1274,12 @@ private struct LongShotSettings: View {
     var body: some View {
         SettingsPage(title: "长截图", theme: theme) {
             Toggle("选区就绪后自动滚动", isOn: bind(\.longShot.autoScroll))
-            Text("自动识别滚动视口，固定区域保留一次。可随时暂停、手动滚动或指定滚动区域。")
-                .font(.caption).foregroundStyle(theme.token(.mutedForeground))
             Stepper("每次滚动 \(config.settings.longShot.scrollStep) 点", value: bind(\.longShot.scrollStep), in: 20...800, step: 20)
             Stepper("滚动间隔 \(config.settings.longShot.scrollIntervalMs) 毫秒", value: bind(\.longShot.scrollIntervalMs), in: 300...3000, step: 100)
             HStack {
                 Text("保留重叠 \(Int(config.settings.longShot.overlapRatio * 100))%")
                 Slider(value: bind(\.longShot.overlapRatio), in: 0.35...0.85, step: 0.05)
             }
-            Text("每轮分成小步连续滚动，间隔至少 300 毫秒。实际步长会按视口高度保留至少 35% 的重叠；多次对齐失败或画面停止移动时会暂停。")
-                .font(.caption).foregroundStyle(theme.token(.mutedForeground))
         }
     }
     private func bind<T>(_ keyPath: WritableKeyPath<TapSnapConfig.Settings, T>) -> Binding<T> {

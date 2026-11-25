@@ -12,12 +12,11 @@ struct PrivacySettingsView: View {
     var body: some View {
         SettingsPage(title: "隐私打码", theme: theme) {
             SnapSettingGroup(theme: theme) {
-                SnapSettingRow("截图后自动检查",
-                               subtitle: "在本机识别截图和长图，自动规则直接生成可编辑的打码块。",
-                               theme: theme) {
+                SnapSettingRow("截图后自动检查", theme: theme) {
                     SnapToggle(isOn: bind(\.enabled), theme: theme)
                         .accessibilityLabel("截图后自动检查")
                 }
+                .help("在本机识别截图和长图，自动规则直接生成可编辑的打码块")
             }
             SnapSettingGroup("默认打码样式", theme: theme) {
                 PrivacyAppearanceControls(appearance: bind(\.appearance))
@@ -30,12 +29,9 @@ struct PrivacySettingsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("内部域名后缀")
                         .font(.system(size: 12, weight: .medium))
-                    TextField("如 corp.example、internal.example", text: bind(\.internalDomains))
+                    TextField("如 corp.example、internal.example（逗号或空格分隔）", text: bind(\.internalDomains))
                         .textFieldStyle(.roundedBorder)
                         .accessibilityLabel("内部域名后缀")
-                    Text("用逗号或空格分隔，匹配域名及其子域名。")
-                        .font(.system(size: 11))
-                        .foregroundStyle(theme.token(.mutedForeground))
                 }
                 .padding(10)
             }
@@ -84,7 +80,7 @@ struct PrivacySettingsView: View {
                 }
                 SnapRowDivider(theme: theme)
             }
-            SnapSettingRow("按正则匹配", subtitle: "在识别出的每行文字中匹配，例如内部编号或链接参数。", theme: theme) {
+            SnapSettingRow("按正则匹配", theme: theme) {
                 Button("添加规则") { editing = CustomPrivacyRule() }
             }
         }

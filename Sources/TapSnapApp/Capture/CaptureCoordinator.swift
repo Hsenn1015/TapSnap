@@ -53,6 +53,10 @@ final class CaptureCoordinator {
         guard session == nil else { return }
         self.outcome = outcome
         self.forcePrivacy = forcePrivacy
+        if outcome == .quickTranslate || outcome == .translate {
+            // 框选期间并发预热翻译服务 DNS + TLS 连接，消除松手后的冷连接等待。
+            TranslationModelClient.prewarm(config: environment.config)
+        }
         let pendingSession = ScreenshotSession(mode: mode, outputOptions: outputOptions)
         let pointerScreenID = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }?
             .deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber

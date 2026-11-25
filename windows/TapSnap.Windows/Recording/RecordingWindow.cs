@@ -59,7 +59,9 @@ internal sealed class RecordingWindow : Window
         var palette = SnapPalette.For(settings.DarkTheme);
         status.Foreground = palette.Foreground;
         timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1d / rate) };
-        input = new RecordingInputOverlay(settings.RecordCursor, settings.RecordShowKeys, settings.RecordShowClicks);
+        input = new RecordingInputOverlay(settings.RecordCursor, settings.RecordShowKeys, settings.RecordShowClicks,
+            settings.RecordShowScrolls, settings.RecordClickStyle, settings.RecordScrollStyle,
+            settings.RecordEffectPalette, settings.RecordEffectScale);
         Title = "TapSnap 录屏";
         Width = 244;
         Height = 58;
@@ -153,6 +155,7 @@ internal sealed class RecordingWindow : Window
         {
             closed = true;
             timer.Stop();
+            input.Dispose();
             nativeCapture?.Dispose();
             outline?.Close();
             frames.Stop();

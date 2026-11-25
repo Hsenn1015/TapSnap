@@ -216,14 +216,47 @@ public enum ThirdPartyTranslation {
     private static let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
         config.httpShouldSetCookies = false
-        config.timeoutIntervalForRequest = 18
-        config.timeoutIntervalForResource = 25
+        config.waitsForConnectivity = false
+        config.httpMaximumConnectionsPerHost = 6
+        config.timeoutIntervalForRequest = 12
+        config.timeoutIntervalForResource = 20
         return URLSession(configuration: config, delegate: NoRedirectDelegate(), delegateQueue: nil)
     }()
 
+    /// 在用户拖选截图期间提前建立 DNS + TCP/TLS 连接池，消除首次翻译握手冷启动延迟。
+    public static func prewarm(configuration: TranslationAPIConfiguration) {
+        let targetURL: URL?
+        if let custom = configuration.validatedCustomEndpoint {
+            targetURL = custom
+        } else {
+            switch configuration.provider {
+            case .google:
+                targetURL = URL(string: "https://translate.googleapis.com/generate_204")
+            case .deepl:
+                targetURL = URL(string: "https://api-free.deepl.com")
+            case .azure:
+                targetURL = URL(string: "https://api.cognitive.microsofttranslator.com")
+            case .baidu:
+                targetURL = URL(string: "https://fanyi-api.baidu.com")
+            case .tencent:
+                targetURL = URL(string: "https://tmt.tencentcloudapi.com")
+            case .youdao:
+                targetURL = URL(string: "https://openapi.youdao.com")
+            }
+        }
+        guard let url = targetURL else { return }
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 6)
+        req.httpMethod = "HEAD"
+        req.assumesHTTP3Capable = false
+        session.dataTask(with: req) { _, _, _ in }.resume()
+    }
+
     public static func defaultTransport(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         do {
-            let (data, response) = try await session.data(for: request)
+            // 禁用 HTTP/3 QUIC 探测，避免代理环境下 UDP 443 被丢弃导致的 2~5 秒首次静默卡顿。
+            var tuned = request
+            tuned.assumesHTTP3Capable = false
+            let (data, response) = try await session.data(for: tuned)
             guard let http = response as? HTTPURLResponse else {
                 throw TranslationAPIError.invalidResponse("翻译服务返回了非 HTTP 响应。")
             }

@@ -10,7 +10,7 @@ final class QuickTranslateTests: XCTestCase {
 
     func testQuickTranslateStylePersistsAndDefaultsCleanly() throws {
         var settings = ScreenshotTranslationSettings()
-        XCTAssertEqual(settings.quickTranslateStyle, .liquidGlass)
+        XCTAssertEqual(settings.quickTranslateStyle, .cleanCard)
 
         for style in QuickTranslateStyle.allCases {
             settings.quickTranslateStyle = style
@@ -20,14 +20,25 @@ final class QuickTranslateTests: XCTestCase {
         }
     }
 
-    func testLegacyTranslationJSONWithoutQuickTranslateStyleDecodesToLiquidGlass() throws {
+    func testLegacyTranslationJSONWithoutQuickTranslateStyleDecodesToCleanCard() throws {
         let legacyJSON = #"{"targetLanguage":"en","autoTranslateOnOpen":true}"#
         let decoded = try JSONDecoder().decode(
             ScreenshotTranslationSettings.self,
             from: Data(legacyJSON.utf8)
         )
         XCTAssertEqual(decoded.targetLanguage, "en")
-        XCTAssertEqual(decoded.quickTranslateStyle, .liquidGlass)
+        XCTAssertEqual(decoded.quickTranslateStyle, .cleanCard)
+    }
+
+    func testLocalLanguageDetectionIdentifiesChineseAndEnglish() {
+        XCTAssertEqual(
+            QuickTranslateViewModel.detectLanguageCode(for: "OCR 功能和翻译功能是相互独立的两个模块。"),
+            "zh-Hans"
+        )
+        XCTAssertEqual(
+            QuickTranslateViewModel.detectLanguageCode(for: "The OCR function and the translation function are independent modules."),
+            "en"
+        )
     }
 
     // MARK: - Popover Geometry

@@ -602,6 +602,8 @@ final class SelectionOverlayView: NSView {
 
     static func quickTranslateBorderConfiguration(for style: QuickTranslateStyle) -> SelectionBorderConfiguration {
         switch style {
+        case .cleanCard:
+            return SelectionBorderConfiguration(style: .liquidGlass, motion: .diagonalGlint, palette: .glacier)
         case .liquidGlass:
             return SelectionBorderConfiguration(style: .liquidGlass, motion: .diagonalGlint, palette: .titaniumIce)
         case .editorial:
@@ -621,17 +623,20 @@ final class SelectionOverlayView: NSView {
         let outline = SelectionBorderView.outlineRect(for: selection, in: bounds)
         let scale = selectionScale ?? screenImage.map { CGFloat($0.width) / max(1, bounds.width) } ?? 1
         let dimsText = "\(Int((selection.width * scale).rounded()))×\(Int((selection.height * scale).rounded()))"
+        let calmBlue = NSColor(srgbRed: 0.14, green: 0.54, blue: 1.0, alpha: 1)
+        let graphiteFill = NSColor(srgbRed: 0.11, green: 0.12, blue: 0.15, alpha: 0.88)
+        let subtleRim = NSColor.white.withAlphaComponent(0.22)
 
         switch style {
-        case .liquidGlass:
+        case .cleanCard:
             let topText = "译  截图秒译 · → \(quickTranslateTargetLanguage)"
             drawQuickTranslatePill(
                 text: topText,
                 preferredOrigin: CGPoint(x: outline.minX, y: outline.maxY + 8),
                 fallbackOrigin: CGPoint(x: outline.minX + 8, y: outline.maxY - 30),
-                fill: NSColor(srgbRed: 0.08, green: 0.11, blue: 0.20, alpha: 0.84),
-                stroke: NSColor(srgbRed: 0.36, green: 0.78, blue: 0.99, alpha: 0.78),
-                dotColor: NSColor(srgbRed: 0.22, green: 0.74, blue: 0.97, alpha: 1),
+                fill: graphiteFill,
+                stroke: subtleRim,
+                dotColor: calmBlue,
                 textColor: .white,
                 fontSize: 11.5,
                 context: context
@@ -642,10 +647,37 @@ final class SelectionOverlayView: NSView {
                 text: bottomText,
                 preferredOrigin: CGPoint(x: outline.maxX - bottomSize.width, y: outline.minY - bottomSize.height - 8),
                 fallbackOrigin: CGPoint(x: outline.maxX - bottomSize.width - 8, y: outline.minY + 8),
-                fill: NSColor(srgbRed: 0.08, green: 0.11, blue: 0.20, alpha: 0.76),
-                stroke: NSColor.white.withAlphaComponent(0.24),
+                fill: NSColor(srgbRed: 0.11, green: 0.12, blue: 0.15, alpha: 0.78),
+                stroke: NSColor.white.withAlphaComponent(0.18),
                 dotColor: nil,
-                textColor: NSColor(srgbRed: 0.88, green: 0.93, blue: 1.0, alpha: 0.95),
+                textColor: NSColor.white.withAlphaComponent(0.90),
+                fontSize: 10.5,
+                context: context
+            )
+
+        case .liquidGlass:
+            let topText = "译  截图秒译 · → \(quickTranslateTargetLanguage)"
+            drawQuickTranslatePill(
+                text: topText,
+                preferredOrigin: CGPoint(x: outline.minX, y: outline.maxY + 8),
+                fallbackOrigin: CGPoint(x: outline.minX + 8, y: outline.maxY - 30),
+                fill: NSColor(srgbRed: 0.09, green: 0.12, blue: 0.21, alpha: 0.86),
+                stroke: NSColor(srgbRed: 0.34, green: 0.72, blue: 0.98, alpha: 0.65),
+                dotColor: NSColor(srgbRed: 0.24, green: 0.72, blue: 0.98, alpha: 1),
+                textColor: .white,
+                fontSize: 11.5,
+                context: context
+            )
+            let bottomText = "松手即译 · \(dimsText)"
+            let bottomSize = measureQuickTranslatePill(text: bottomText, fontSize: 10.5, hasDot: false)
+            drawQuickTranslatePill(
+                text: bottomText,
+                preferredOrigin: CGPoint(x: outline.maxX - bottomSize.width, y: outline.minY - bottomSize.height - 8),
+                fallbackOrigin: CGPoint(x: outline.maxX - bottomSize.width - 8, y: outline.minY + 8),
+                fill: NSColor(srgbRed: 0.09, green: 0.12, blue: 0.21, alpha: 0.76),
+                stroke: NSColor.white.withAlphaComponent(0.22),
+                dotColor: nil,
+                textColor: NSColor(srgbRed: 0.88, green: 0.93, blue: 1.0, alpha: 0.94),
                 fontSize: 10.5,
                 context: context
             )
@@ -658,8 +690,8 @@ final class SelectionOverlayView: NSView {
                 text: ribbonText,
                 preferredOrigin: CGPoint(x: outline.midX - ribbonSize.width / 2, y: outline.maxY + 10),
                 fallbackOrigin: CGPoint(x: outline.midX - ribbonSize.width / 2, y: outline.maxY - ribbonSize.height - 8),
-                fill: NSColor(srgbRed: 0.07, green: 0.09, blue: 0.14, alpha: 0.90),
-                stroke: NSColor(srgbRed: 0.49, green: 0.54, blue: 0.98, alpha: 0.65),
+                fill: NSColor(srgbRed: 0.08, green: 0.10, blue: 0.15, alpha: 0.90),
+                stroke: NSColor(srgbRed: 0.45, green: 0.56, blue: 0.96, alpha: 0.58),
                 dotColor: nil,
                 textColor: .white,
                 fontSize: 11,
@@ -672,9 +704,9 @@ final class SelectionOverlayView: NSView {
                 text: topText,
                 preferredOrigin: CGPoint(x: outline.minX, y: outline.maxY + 8),
                 fallbackOrigin: CGPoint(x: outline.minX + 8, y: outline.maxY - 30),
-                fill: NSColor(srgbRed: 0.14, green: 0.11, blue: 0.08, alpha: 0.86),
-                stroke: NSColor(srgbRed: 0.96, green: 0.68, blue: 0.26, alpha: 0.85),
-                dotColor: NSColor(srgbRed: 0.98, green: 0.75, blue: 0.28, alpha: 1),
+                fill: NSColor(srgbRed: 0.14, green: 0.12, blue: 0.09, alpha: 0.86),
+                stroke: NSColor(srgbRed: 0.94, green: 0.68, blue: 0.28, alpha: 0.72),
+                dotColor: NSColor(srgbRed: 0.96, green: 0.72, blue: 0.28, alpha: 1),
                 textColor: .white,
                 fontSize: 11.5,
                 context: context
@@ -685,10 +717,10 @@ final class SelectionOverlayView: NSView {
                 text: hintText,
                 preferredOrigin: CGPoint(x: outline.minX, y: outline.minY - hintSize.height - 8),
                 fallbackOrigin: CGPoint(x: outline.minX + 8, y: outline.minY + 8),
-                fill: NSColor(srgbRed: 0.08, green: 0.11, blue: 0.16, alpha: 0.80),
-                stroke: NSColor(srgbRed: 0.22, green: 0.74, blue: 0.97, alpha: 0.55),
+                fill: NSColor(srgbRed: 0.10, green: 0.12, blue: 0.16, alpha: 0.80),
+                stroke: NSColor.white.withAlphaComponent(0.22),
                 dotColor: nil,
-                textColor: NSColor(srgbRed: 0.92, green: 0.95, blue: 1.0, alpha: 0.94),
+                textColor: NSColor.white.withAlphaComponent(0.92),
                 fontSize: 10.5,
                 context: context
             )
@@ -700,14 +732,13 @@ final class SelectionOverlayView: NSView {
                 text: topText,
                 preferredOrigin: CGPoint(x: outline.midX - topSize.width / 2, y: outline.maxY + 10),
                 fallbackOrigin: CGPoint(x: outline.midX - topSize.width / 2, y: outline.maxY - topSize.height - 8),
-                fill: NSColor(srgbRed: 0.06, green: 0.10, blue: 0.12, alpha: 0.90),
-                stroke: NSColor(srgbRed: 0.20, green: 0.83, blue: 0.60, alpha: 0.75),
-                dotColor: NSColor(srgbRed: 0.20, green: 0.83, blue: 0.60, alpha: 1),
+                fill: NSColor(srgbRed: 0.07, green: 0.11, blue: 0.13, alpha: 0.90),
+                stroke: NSColor(srgbRed: 0.22, green: 0.78, blue: 0.58, alpha: 0.65),
+                dotColor: NSColor(srgbRed: 0.22, green: 0.80, blue: 0.60, alpha: 1),
                 textColor: .white,
                 fontSize: 11,
                 context: context
             )
-            // 右下角灵动「译」圆章，强化当前是秒译态。
             drawDynamicBubbleOrb(near: CGPoint(x: outline.maxX + 10, y: outline.minY - 10), in: context)
         }
     }
@@ -717,34 +748,39 @@ final class SelectionOverlayView: NSView {
         at point: CGPoint,
         in context: CGContext
     ) {
+        let calmBlue = NSColor(srgbRed: 0.14, green: 0.54, blue: 1.0, alpha: 1)
+        let graphiteFill = NSColor(srgbRed: 0.11, green: 0.12, blue: 0.15, alpha: 0.88)
+        let subtleRim = NSColor.white.withAlphaComponent(0.22)
         let (text, fill, stroke, dot): (String, NSColor, NSColor, NSColor?) = switch style {
+        case .cleanCard:
+            ("译 截图秒译 · → \(quickTranslateTargetLanguage) · Tab", graphiteFill, subtleRim, calmBlue)
         case .liquidGlass:
             (
                 "译 截图秒译 · → \(quickTranslateTargetLanguage) · Tab",
-                NSColor(srgbRed: 0.08, green: 0.11, blue: 0.20, alpha: 0.86),
-                NSColor(srgbRed: 0.36, green: 0.78, blue: 0.99, alpha: 0.78),
-                NSColor(srgbRed: 0.22, green: 0.74, blue: 0.97, alpha: 1)
+                NSColor(srgbRed: 0.09, green: 0.12, blue: 0.21, alpha: 0.86),
+                NSColor(srgbRed: 0.34, green: 0.72, blue: 0.98, alpha: 0.65),
+                NSColor(srgbRed: 0.24, green: 0.72, blue: 0.98, alpha: 1)
             )
         case .editorial:
             (
                 "译 拖选文字即译 · → \(quickTranslateTargetLanguage)",
-                NSColor(srgbRed: 0.07, green: 0.09, blue: 0.14, alpha: 0.88),
-                NSColor(srgbRed: 0.49, green: 0.54, blue: 0.98, alpha: 0.70),
+                NSColor(srgbRed: 0.08, green: 0.10, blue: 0.15, alpha: 0.88),
+                NSColor(srgbRed: 0.45, green: 0.56, blue: 0.96, alpha: 0.60),
                 nil
             )
         case .inlineBilingual:
             (
                 "译 双语秒译 · → \(quickTranslateTargetLanguage) · Tab",
-                NSColor(srgbRed: 0.14, green: 0.11, blue: 0.08, alpha: 0.86),
-                NSColor(srgbRed: 0.96, green: 0.68, blue: 0.26, alpha: 0.82),
-                NSColor(srgbRed: 0.98, green: 0.75, blue: 0.28, alpha: 1)
+                NSColor(srgbRed: 0.14, green: 0.12, blue: 0.09, alpha: 0.86),
+                NSColor(srgbRed: 0.94, green: 0.68, blue: 0.28, alpha: 0.72),
+                NSColor(srgbRed: 0.96, green: 0.72, blue: 0.28, alpha: 1)
             )
         case .dynamicBubble:
             (
                 "秒译 · → \(quickTranslateTargetLanguage) · Tab",
-                NSColor(srgbRed: 0.06, green: 0.10, blue: 0.12, alpha: 0.90),
-                NSColor(srgbRed: 0.20, green: 0.83, blue: 0.60, alpha: 0.78),
-                NSColor(srgbRed: 0.20, green: 0.83, blue: 0.60, alpha: 1)
+                NSColor(srgbRed: 0.07, green: 0.11, blue: 0.13, alpha: 0.90),
+                NSColor(srgbRed: 0.22, green: 0.78, blue: 0.58, alpha: 0.65),
+                NSColor(srgbRed: 0.22, green: 0.80, blue: 0.60, alpha: 1)
             )
         }
         let pillSize = measureQuickTranslatePill(text: text, fontSize: 11, hasDot: dot != nil)
@@ -825,8 +861,8 @@ final class SelectionOverlayView: NSView {
         let inset: CGFloat = -4
         let r = outline.insetBy(dx: inset, dy: inset)
         context.saveGState()
-        context.setStrokeColor(NSColor(srgbRed: 0.38, green: 0.72, blue: 0.99, alpha: 0.95).cgColor)
-        context.setLineWidth(2.4)
+        context.setStrokeColor(NSColor.white.withAlphaComponent(0.92).cgColor)
+        context.setLineWidth(2.2)
         context.setLineCap(.round)
         context.setLineJoin(.round)
 
@@ -851,12 +887,12 @@ final class SelectionOverlayView: NSView {
         let cy = min(max(diameter / 2 + 8, center.y), bounds.maxY - diameter / 2 - 8)
         let orbRect = CGRect(x: cx - diameter / 2, y: cy - diameter / 2, width: diameter, height: diameter)
         context.saveGState()
-        context.setShadow(offset: CGSize(width: 0, height: -2), blur: 8, color: NSColor(srgbRed: 0.12, green: 0.72, blue: 0.58, alpha: 0.45).cgColor)
-        context.setFillColor(NSColor(srgbRed: 0.07, green: 0.14, blue: 0.16, alpha: 0.92).cgColor)
+        context.setShadow(offset: CGSize(width: 0, height: -2), blur: 8, color: NSColor.black.withAlphaComponent(0.30).cgColor)
+        context.setFillColor(NSColor(srgbRed: 0.11, green: 0.12, blue: 0.15, alpha: 0.92).cgColor)
         context.fillEllipse(in: orbRect)
         context.setShadow(offset: .zero, blur: 0, color: nil)
-        context.setStrokeColor(NSColor(srgbRed: 0.20, green: 0.83, blue: 0.60, alpha: 0.90).cgColor)
-        context.setLineWidth(1.4)
+        context.setStrokeColor(NSColor.white.withAlphaComponent(0.28).cgColor)
+        context.setLineWidth(1.2)
         context.strokeEllipse(in: orbRect.insetBy(dx: 0.7, dy: 0.7))
         let glyph = "译"
         let m = measure(glyph, fontSize: 11.5, color: .white)
@@ -864,7 +900,7 @@ final class SelectionOverlayView: NSView {
             glyph,
             at: CGPoint(x: orbRect.midX - m.width / 2, y: orbRect.midY - m.height / 2),
             fontSize: 11.5,
-            color: NSColor(srgbRed: 0.85, green: 1.0, blue: 0.93, alpha: 1),
+            color: .white,
             context: context
         )
         context.restoreGState()

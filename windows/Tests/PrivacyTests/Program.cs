@@ -164,3 +164,29 @@ Require(new[] { TableGrid.Detect(GridPixels(255, 0), 120, 90), TableGrid.Detect(
         grid.Row(45) == 1 && grid.Row(84) == -1) &&
     TableGrid.Detect(GridPixels(255, 255), 120, 90) is null,
     "表格识别按网格定位深浅两种主题的单元格，拒绝没有线框的图片");
+
+Require(TranslationCatalog.DetectLanguageCode("你好世界") == "zh-Hans" &&
+    TranslationCatalog.DetectLanguageCode("Hello world") == "en" &&
+    TranslationCatalog.DetectLanguageCode("こんにちは世界") == "ja" &&
+    TranslationCatalog.DetectLanguageCode("안녕하세요") == "ko",
+    "翻译语种检测准确识别中英日韩");
+
+Require(TranslationCatalog.ResolveTargetLanguage("auto", "你好世界") == "en" &&
+    TranslationCatalog.ResolveTargetLanguage("auto", "Hello world") == "zh-Hans" &&
+    TranslationCatalog.ResolveTargetLanguage("ja", "Hello world") == "ja",
+    "自动目标语言在中英之间智能互译，显式目标语言保持不变");
+
+Require(TranslationProtocol.BaiduSignature("2015063000000001", "apple", "1435660288", "12345678") ==
+    "f89f9594663708c1605f3d736d01d2d4",
+    "百度翻译 MD5 签名与官方测试向量一致");
+
+Require(TranslationProtocol.YoudaoTruncateInput("short") == "short" &&
+    TranslationProtocol.YoudaoTruncateInput("1234567890ABCDEFGHIJ12345") == "123456789025FGHIJ12345" &&
+    TranslationProtocol.YoudaoSignature("app", "hello", "salt", "1700000000", "secret").Length == 64,
+    "有道翻译 v3 截断规则与 SHA-256 签名正确");
+
+Require(TranslationProtocol.DeepLEndpoint(new TranslationApiProfile(), "abc:fx").Host == "api-free.deepl.com" &&
+    TranslationProtocol.DeepLEndpoint(new TranslationApiProfile(), "abc-pro").Host == "api.deepl.com" &&
+    TranslationProtocol.TencentAuthorization("id", "key", System.Text.Encoding.UTF8.GetBytes("{}"), 1700000000)
+        .StartsWith("TC3-HMAC-SHA256 Credential=id/2023-11-14/tmt/tc3_request, SignedHeaders=content-type;host, Signature="),
+    "DeepL Free/Pro 端点与腾讯云 TC3-HMAC-SHA256 鉴权头格式正确");

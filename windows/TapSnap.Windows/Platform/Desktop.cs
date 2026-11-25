@@ -160,8 +160,21 @@ internal static class Desktop
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(Point point, uint flags);
     [DllImport("shcore.dll")] private static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint x, out uint y);
 
+    public static bool AllowSelfCapture { get; set; }
+
     public static bool Exclude(Window window)
-        => SetWindowDisplayAffinity(new WindowInteropHelper(window).EnsureHandle(), 0x11);
+        => SetWindowDisplayAffinity(new WindowInteropHelper(window).EnsureHandle(), AllowSelfCapture ? 0u : 0x11u);
+
+    public static void ApplyCaptureVisibility(Window window) => _ = Exclude(window);
+
+    public static void RefreshCaptureVisibility(Application app)
+    {
+        foreach (Window window in app.Windows)
+        {
+            if (window.IsLoaded && window.WindowStyle == WindowStyle.None)
+                _ = Exclude(window);
+        }
+    }
 
     public static void RemoveFromCapture(Window window)
         => SetWindowDisplayAffinity(new WindowInteropHelper(window).EnsureHandle(), 0);

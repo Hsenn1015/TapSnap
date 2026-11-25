@@ -83,23 +83,80 @@ internal sealed class RecordingCamera : IAsyncDisposable
     }
 }
 
-internal sealed class RecordingInputOverlay(bool cursor, bool keys, bool clicks)
+internal sealed class RecordingInputOverlay : IDisposable
 {
+    private readonly record struct ActiveClick(Point Point, TimeSpan Time, bool IsRight, int ClickCount);
+    private readonly bool cursor;
+    private readonly bool keys;
+    private readonly bool clicks;
+    private readonly bool scrolls;
+    private readonly string clickStyle;
+    private readonly string scrollStyle;
+    private readonly string palette;
+    private readonly double effectScale;
+    private readonly MouseWheelHook? wheelHook;
+
     private string? keyCaption;
     private TimeSpan keyTime;
-    private Point clickPoint;
-    private TimeSpan clickTime;
+    private readonly List<ActiveClick> activeClicks = [];
     private readonly HashSet<int> pressed = [];
-    private bool clicked;
+    private bool leftDown;
+    private bool rightDown;
+    private TimeSpan lastLeftClick = TimeSpan.FromSeconds(-10);
+    private int pendingWheelDelta;
+    private Point scrollPoint;
+    private double scrollDirection = 1;
+    private double scrollAccumulated;
+    private TimeSpan scrollTime = TimeSpan.FromSeconds(-10);
+
+    public RecordingInputOverlay(bool cursor, bool keys, bool clicks, bool scrolls = false,
+        string? clickStyle = null, string? scrollStyle = null, string? palette = null, double effectScale = 1.0)
+    {
+        this.cursor = cursor;
+        this.keys = keys;
+        this.clicks = clicks;
+        this.scrolls = scrolls;
+        this.clickStyle = RecordingMouseEffectCatalog.ResolveClickStyle(clickStyle);
+        this.scrollStyle = RecordingMouseEffectCatalog.ResolveScrollStyle(scrollStyle);
+        this.palette = RecordingMouseEffectCatalog.ResolvePalette(palette);
+        this.effectScale = Math.Clamp(effectScale, 0.75, 1.45);
+        if (scrolls)
+        {
+            wheelHook = new MouseWheelHook();
+            wheelHook.Scrolled += delta => Interlocked.Add(ref pendingWheelDelta, delta);
+        }
+    }
+
+    public void Dispose() => wheelHook?.Dispose();
 
     public BitmapSource Render(BitmapSource frame, System.Drawing.Rectangle screen, TimeSpan time, BitmapSource? camera)
     {
         Point pointer = new(Desktop.Cursor.X - screen.X, Desktop.Cursor.Y - screen.Y);
         if (clicks)
         {
-            bool down = IsDown(1) || IsDown(2);
-            if (down && !clicked && screen.Contains(Desktop.Cursor)) { clickPoint = pointer; clickTime = time; }
-            clicked = down;
+            bool lDown = IsDown(1);
+            bool rDown = IsDown(2);
+            if (lDown && !leftDown && screen.Contains(Desktop.Cursor))
+            {
+                bool dbl = (time - lastLeftClick).TotalMilliseconds < 300;
+                lastLeftClick = time;
+                activeClicks.Add(new(pointer, time, false, dbl ? 2 : 1));
+            }
+            if (rDown && !rightDown && screen.Contains(Desktop.Cursor))
+                activeClicks.Add(new(pointer, time, true, 1));
+            leftDown = lDown;
+            rightDown = rDown;
+        }
+        if (scrolls)
+        {
+            int delta = Interlocked.Exchange(ref pendingWheelDelta, 0);
+            if (delta != 0 && screen.Contains(Desktop.Cursor))
+            {
+                scrollPoint = pointer;
+                scrollDirection = delta < 0 ? 1 : -1;
+                scrollAccumulated += scrollDirection * Math.Abs(delta) / 5.0;
+                scrollTime = time;
+            }
         }
         if (keys)
         {
@@ -118,10 +175,13 @@ internal sealed class RecordingInputOverlay(bool cursor, bool keys, bool clicks)
             }
         }
 
-        bool drawClick = clicks && clickTime != TimeSpan.Zero && time - clickTime < TimeSpan.FromMilliseconds(430);
+        activeClicks.RemoveAll(c => (time - c.Time).TotalSeconds > 0.65);
+        bool drawClick = clicks && activeClicks.Count > 0;
+        double scrollAge = (time - scrollTime).TotalSeconds;
+        bool drawScroll = scrolls && scrollAge >= 0 && scrollAge < 0.55;
         bool drawKey = keys && keyCaption != null && time - keyTime < TimeSpan.FromMilliseconds(1350);
         bool drawCursor = cursor && screen.Contains(Desktop.Cursor);
-        if (camera == null && !drawClick && !drawKey && !drawCursor) return frame;
+        if (camera == null && !drawClick && !drawScroll && !drawKey && !drawCursor) return frame;
         var visual = new DrawingVisual();
         using (var dc = visual.RenderOpen())
         {
@@ -142,8 +202,17 @@ internal sealed class RecordingInputOverlay(bool cursor, bool keys, bool clicks)
             }
             if (drawClick)
             {
-                double radius = 9 + (time - clickTime).TotalMilliseconds / 22;
-                dc.DrawEllipse(null, new Pen(Brushes.Orange, 3), clickPoint, radius, radius);
+                foreach (var item in activeClicks)
+                {
+                    RecordingMouseEffectsArtwork.DrawClick(dc, clickStyle, item.Point,
+                        (time - item.Time).TotalSeconds / 0.62, item.IsRight, item.ClickCount, palette, effectScale);
+                }
+            }
+            if (drawScroll)
+            {
+                double alpha = scrollAge < 0.24 ? 1.0 : Math.Max(0, 1 - (scrollAge - 0.24) / 0.30);
+                RecordingMouseEffectsArtwork.DrawScroll(dc, scrollStyle, scrollPoint, alpha,
+                    scrollDirection, scrollAccumulated, time.TotalSeconds, palette, effectScale);
             }
             if (drawCursor && TryCursor(out var image, out var hotspot))
                 dc.DrawImage(image, new Rect(pointer.X - hotspot.X, pointer.Y - hotspot.Y, image.PixelWidth, image.PixelHeight));

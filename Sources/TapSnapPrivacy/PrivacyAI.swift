@@ -96,6 +96,8 @@ public enum PrivacyAI {
     private static func makeSession(usesLoopback: Bool) -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpShouldSetCookies = false
+        configuration.waitsForConnectivity = false
+        configuration.httpMaximumConnectionsPerHost = 6
         configuration.timeoutIntervalForResource = 45
         if usesLoopback {
             configuration.connectionProxyDictionary = ["HTTPEnable": 0, "HTTPSEnable": 0, "SOCKSEnable": 0]
@@ -105,6 +107,19 @@ public enum PrivacyAI {
 
     private static let session = makeSession(usesLoopback: false)
     private static let loopbackSession = makeSession(usesLoopback: true)
+
+    static func prewarm(_ configuration: PrivacyAIConfiguration) {
+        guard configuration.isConfigured, let endpoint = configuration.endpoint,
+              var parts = URLComponents(url: endpoint, resolvingAgainstBaseURL: false) else { return }
+        parts.path = "/"
+        parts.query = nil
+        guard let root = parts.url else { return }
+        var req = URLRequest(url: root, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 6)
+        req.httpMethod = "HEAD"
+        req.assumesHTTP3Capable = false
+        let transport = configuration.usesLoopback ? loopbackSession : session
+        transport.dataTask(with: req) { _, _, _ in }.resume()
+    }
 
     static func withDeadline<T: Sendable>(_ duration: Duration, operation: @escaping @Sendable () async throws -> T) async throws -> T {
         try await withThrowingTaskGroup(of: T.self) { group in
@@ -352,11 +367,12 @@ public enum PrivacyAI {
     }
 
     static func completionRequest(_ configuration: PrivacyAIConfiguration, key: String?, instruction: String,
-                                  content: Any, maxTokens: Int, temperature: Double? = nil, requestsJSON: Bool = true) throws -> URLRequest {
+                                  content: Any, maxTokens: Int, temperature: Double? = nil, requestsJSON: Bool = true,
+                                  stream: Bool = false) throws -> URLRequest {
         guard configuration.isConfigured, let endpoint = configuration.endpoint else { throw PrivacyAIError.configuration }
         var body: [String: Any] = [
             "model": configuration.model.trimmingCharacters(in: .whitespacesAndNewlines),
-            "stream": false,
+            "stream": stream,
             "max_tokens": maxTokens,
             "messages": [["role": "system", "content": instruction],
                          ["role": "user", "content": content]]
@@ -373,7 +389,11 @@ public enum PrivacyAI {
         let timeout: TimeInterval = configuration.usesLoopback ? 45 : 28
         var request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         request.httpMethod = "POST"
+        request.assumesHTTP3Capable = false
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if stream {
+            request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        }
         if let key { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
@@ -412,18 +432,16 @@ public enum PrivacyAI {
 
     static func response(for request: URLRequest, usesLoopback: Bool, sendsImage: Bool = false) async throws -> Data {
         do {
+            var tuned = request
+            tuned.assumesHTTP3Capable = false
             let transport = usesLoopback ? loopbackSession : session
-            let (bytes, response) = try await transport.bytes(for: request)
+            let (data, response) = try await transport.data(for: tuned)
             guard let http = response as? HTTPURLResponse else { throw PrivacyAIError.response }
             if http.statusCode == 401 || http.statusCode == 403 { throw PrivacyAIError.authorization }
             if http.statusCode == 429 { throw PrivacyAIError.rateLimited }
             if sendsImage && [400, 413, 415, 422].contains(http.statusCode) { throw PrivacyAIError.imageRejected }
             guard http.statusCode == 200 else { throw PrivacyAIError.response }
-            var data = Data()
-            for try await byte in bytes {
-                guard data.count < 128_000 else { throw PrivacyAIError.response }
-                data.append(byte)
-            }
+            guard data.count < 256_000 else { throw PrivacyAIError.response }
             return data
         } catch let error as PrivacyAIError {
             throw error
@@ -432,5 +450,80 @@ public enum PrivacyAI {
             if (error as? URLError)?.code == .timedOut { throw PrivacyAIError.timeout }
             throw PrivacyAIError.network
         }
+    }
+
+    /// 流式读取 OpenAI 兼容 SSE 响应；若服务端忽略 stream 参数返回普通 JSON，也自动兼容解析。
+    static func streamDeltas(for request: URLRequest, usesLoopback: Bool) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    var tuned = request
+                    tuned.assumesHTTP3Capable = false
+                    let transport = usesLoopback ? loopbackSession : session
+                    let (bytes, response) = try await transport.bytes(for: tuned)
+                    guard let http = response as? HTTPURLResponse else { throw PrivacyAIError.response }
+                    if http.statusCode == 401 || http.statusCode == 403 { throw PrivacyAIError.authorization }
+                    if http.statusCode == 429 { throw PrivacyAIError.rateLimited }
+                    guard http.statusCode == 200 else { throw PrivacyAIError.response }
+
+                    let contentType = (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
+                    var rawBuffer = ""
+                    var yieldedAny = false
+
+                    for try await line in bytes.lines {
+                        try Task.checkCancellation()
+                        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { continue }
+                        if trimmed.hasPrefix("data:") {
+                            let payload = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                            if payload == "[DONE]" { break }
+                            if let delta = extractSSEDelta(from: payload), !delta.isEmpty {
+                                yieldedAny = true
+                                continuation.yield(delta)
+                            }
+                        } else if !contentType.contains("event-stream") {
+                            rawBuffer.append(trimmed)
+                        }
+                    }
+
+                    if !yieldedAny, !rawBuffer.isEmpty, let data = rawBuffer.data(using: .utf8) {
+                        let fallback = try responseText(data, requiresComplete: false)
+                        if !fallback.isEmpty {
+                            yieldedAny = true
+                            continuation.yield(fallback)
+                        }
+                    }
+                    guard yieldedAny else { throw PrivacyAIError.response }
+                    continuation.finish()
+                } catch let error as PrivacyAIError {
+                    continuation.finish(throwing: error)
+                } catch is CancellationError {
+                    continuation.finish(throwing: CancellationError())
+                } catch {
+                    if (error as? URLError)?.code == .timedOut {
+                        continuation.finish(throwing: PrivacyAIError.timeout)
+                    } else {
+                        continuation.finish(throwing: PrivacyAIError.network)
+                    }
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    private static func extractSSEDelta(from jsonString: String) -> String? {
+        guard let data = jsonString.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = obj["choices"] as? [[String: Any]],
+              let first = choices.first else { return nil }
+        if let delta = first["delta"] as? [String: Any],
+           let content = delta["content"] as? String {
+            return content
+        }
+        if let message = first["message"] as? [String: Any],
+           let content = message["content"] as? String {
+            return content
+        }
+        return nil
     }
 }

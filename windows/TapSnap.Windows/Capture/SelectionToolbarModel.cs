@@ -4,7 +4,7 @@ using System.Linq;
 
 namespace TapSnap.Windows;
 
-internal enum CaptureAction { Edit, Copy, Save, Pin, LongShot, Record, Privacy, Text, Barcode, Table, Translation, Formula, Print }
+internal enum CaptureAction { Edit, Copy, Save, Pin, LongShot, Record, Privacy, Text, Barcode, Table, Translation, QuickTranslate, Formula, Print }
 internal enum AnnotationTool
 {
     Arrow, Rectangle, Ellipse, Line, Pen, Text, Mosaic, Highlight, Number, Polygon,

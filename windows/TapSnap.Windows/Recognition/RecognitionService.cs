@@ -31,6 +31,7 @@ public static class RecognitionService
     private static RecognitionSettings? cachedSettings;
     private static RecognitionSettingsWindow? settingsWindow;
     private static TextRecognitionWindow? textWindow;
+    private static QuickTranslateWindow? quickTranslateWindow;
     private static readonly ConditionalWeakTable<BitmapSource, CachedText> CachedOcr = new();
     private sealed record CachedText(string Language, IReadOnlyList<RecognizedLine> Lines);
 
@@ -205,6 +206,16 @@ public static class RecognitionService
         else new RecognitionResultWindow(image, mode).Show();
     }
 
+    public static void OpenQuickTranslate(BitmapSource image, System.Drawing.Rectangle region)
+    {
+        image = RecognitionEngine.Freeze(image);
+        quickTranslateWindow?.Close();
+        var window = new QuickTranslateWindow(image, region);
+        quickTranslateWindow = window;
+        window.Closed += (_, _) => { if (quickTranslateWindow == window) quickTranslateWindow = null; };
+        window.Show();
+    }
+
     public static async Task<string> FormulaAsync(BitmapSource source, CancellationToken cancellationToken = default)
     {
         string interpreter = Settings.FormulaPython;
@@ -267,11 +278,20 @@ internal sealed class RecognitionResultWindow : Window
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(10), FontSize = 14
     };
     private readonly TextBlock status = new() { Text = "识别中…", TextWrapping = TextWrapping.Wrap };
-    private static readonly string[] Languages = ["简体中文", "繁體中文", "English", "日本語", "한국어", "Français", "Deutsch", "Español"];
-    private readonly ComboBox source = new() { ItemsSource = new[] { "自动识别" }.Concat(Languages), SelectedIndex = 0, Width = 105 };
-    private readonly ComboBox target = new() { ItemsSource = Languages, SelectedIndex = 0, Width = 105 };
+    private readonly ComboBox source = new()
+    {
+        ItemsSource = TranslationCatalog.SourceLanguages, DisplayMemberPath = nameof(TranslationLanguageOption.DisplayName),
+        SelectedIndex = 0, Width = 104
+    };
+    private readonly ComboBox target = new()
+    {
+        ItemsSource = TranslationCatalog.TargetLanguages, DisplayMemberPath = nameof(TranslationLanguageOption.DisplayName),
+        SelectedIndex = 1, Width = 104
+    };
+    private readonly Button engineSwitch = new() { Padding = new Thickness(8, 5, 8, 5), Margin = new Thickness(0, 0, 6, 4) };
     private readonly CancellationTokenSource lifetime = new();
     private readonly CancellationTokenSource recognition = new();
+    private CancellationTokenSource? translateCts;
     private WebView2? formulaView;
     private Button? copyFormula;
     private Button? cancelFormula;
@@ -318,10 +338,17 @@ internal sealed class RecognitionResultWindow : Window
         actions.Children.Add(copy);
         if (mode == RecognitionMode.Translation)
         {
-            actions.Children.Add(new TextBlock { Text = "原文语言", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 4, 0) });
+            string savedTarget = RecognitionService.Settings.Translation.TargetLanguage;
+            int targetIndex = Array.FindIndex(TranslationCatalog.TargetLanguages,
+                item => item.Code.Equals(savedTarget, StringComparison.OrdinalIgnoreCase));
+            target.SelectedIndex = targetIndex >= 0 ? targetIndex : 1;
+
             actions.Children.Add(source);
-            actions.Children.Add(new TextBlock { Text = "目标语言", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 4, 0) });
+            actions.Children.Add(new TextBlock { Text = "→", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 4, 0) });
             actions.Children.Add(target);
+            RefreshEngineLabel();
+            engineSwitch.Click += (_, _) => OpenEngineMenu();
+            actions.Children.Add(engineSwitch);
             translate = Button("翻译");
             translate.Click += async (_, _) => await TranslateAsync();
             actions.Children.Add(translate);
@@ -339,7 +366,7 @@ internal sealed class RecognitionResultWindow : Window
             cancelFormula.Click += (_, _) => recognition.Cancel();
             actions.Children.Add(cancelFormula);
         }
-        Button settings = Button(mode == RecognitionMode.Translation ? "本机翻译设置" : "识别设置");
+        Button settings = Button(mode == RecognitionMode.Translation ? "翻译设置" : "识别设置");
         settings.Click += (_, _) =>
         {
             if (mode == RecognitionMode.Translation) RecognitionService.OpenTranslationSettings();
@@ -400,6 +427,8 @@ internal sealed class RecognitionResultWindow : Window
         {
             lifetime.Cancel();
             recognition.Cancel();
+            translateCts?.Cancel();
+            translateCts?.Dispose();
             formulaBrowser = null;
             formulaView?.Dispose();
         };
@@ -437,6 +466,8 @@ internal sealed class RecognitionResultWindow : Window
             if (string.IsNullOrWhiteSpace(result.Text)) status.Text = "未识别到内容";
             else if (mode == RecognitionMode.Table) Copy(result.Text);
             else if (mode == RecognitionMode.Formula) status.Text = "识别完成，修改 LaTeX 后预览会同步更新。";
+            else if (mode == RecognitionMode.Translation && config.Translation.AutoTranslateOnOpen)
+                await TranslateAsync();
             else status.Text = "可在下方编辑识别结果";
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -445,21 +476,81 @@ internal sealed class RecognitionResultWindow : Window
         finally { if (cancelFormula is not null) cancelFormula.Visibility = Visibility.Collapsed; }
     }
 
+    private void RefreshEngineLabel() =>
+        engineSwitch.Content = $"{RecognitionService.Settings.Translation.ActiveDisplayName()} ▾";
+
+    private void OpenEngineMenu()
+    {
+        var menu = new ContextMenu { PlacementTarget = engineSwitch };
+        var ts = RecognitionService.Settings.Translation;
+        void AddEngine(string label, bool selected, Action apply)
+        {
+            var item = new MenuItem { Header = label, IsChecked = selected };
+            item.Click += async (_, _) =>
+            {
+                apply();
+                RecognitionService.SaveSettings(RecognitionService.Settings);
+                RefreshEngineLabel();
+                if (!string.IsNullOrWhiteSpace(result.Text)) await TranslateAsync();
+            };
+            menu.Items.Add(item);
+        }
+        foreach (TranslationApiProvider api in Enum.GetValues<TranslationApiProvider>())
+        {
+            var p = api;
+            AddEngine(TranslationCatalog.ApiTitle(p),
+                ts.Provider == TranslationProviderKind.Api && ts.ApiProvider == p,
+                () => { ts.Provider = TranslationProviderKind.Api; ts.ApiProvider = p; });
+        }
+        menu.Items.Add(new Separator());
+        AddEngine("本机模型", ts.Provider == TranslationProviderKind.Local,
+            () => ts.Provider = TranslationProviderKind.Local);
+        AddEngine("在线模型（DeepSeek）",
+            ts.Provider == TranslationProviderKind.Online && ts.OnlinePreset == OnlineModelPreset.DeepSeek,
+            () => { ts.Provider = TranslationProviderKind.Online; ts.OnlinePreset = OnlineModelPreset.DeepSeek; });
+        AddEngine("在线模型（通义千问）",
+            ts.Provider == TranslationProviderKind.Online && ts.OnlinePreset == OnlineModelPreset.Qwen,
+            () => { ts.Provider = TranslationProviderKind.Online; ts.OnlinePreset = OnlineModelPreset.Qwen; });
+        AddEngine("在线模型（自定义）",
+            ts.Provider == TranslationProviderKind.Online && ts.OnlinePreset == OnlineModelPreset.Custom,
+            () => { ts.Provider = TranslationProviderKind.Online; ts.OnlinePreset = OnlineModelPreset.Custom; });
+        menu.Items.Add(new Separator());
+        var openSettings = new MenuItem { Header = "配置翻译服务…" };
+        openSettings.Click += (_, _) => RecognitionService.OpenTranslationSettings();
+        menu.Items.Add(openSettings);
+        engineSwitch.ContextMenu = menu;
+        menu.IsOpen = true;
+    }
+
     private async Task TranslateAsync()
     {
-        if (translate is null || !translate.IsEnabled || string.IsNullOrWhiteSpace(result.Text)) return;
+        if (translate is null || string.IsNullOrWhiteSpace(result.Text)) return;
+        translateCts?.Cancel();
+        translateCts?.Dispose();
+        translateCts = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+        var ct = translateCts.Token;
         translate.IsEnabled = false;
-        source.IsEnabled = target.IsEnabled = result.IsEnabled = false;
-        status.Text = "翻译中…";
+        source.IsEnabled = target.IsEnabled = false;
+        RefreshEngineLabel();
+        string sourceCode = (source.SelectedItem as TranslationLanguageOption)?.Code ?? "auto";
+        string targetCode = (target.SelectedItem as TranslationLanguageOption)?.Code ?? "zh-Hans";
+        status.Text = $"正在使用 {RecognitionService.Settings.Translation.ActiveDisplayName()} 翻译…";
+        translation.Text = "";
         try
         {
-            translation.Text = await RecognitionAi.TranslateAsync(result.Text, source.SelectedItem as string ?? "自动识别",
-                target.SelectedItem as string ?? "简体中文", RecognitionService.Settings, lifetime.Token);
-            status.Text = "设备端翻译完成";
+            string final = await TranslationEngine.TranslateAsync(
+                result.Text, sourceCode, targetCode, RecognitionService.Settings,
+                partial => Dispatcher.BeginInvoke(() => { if (!ct.IsCancellationRequested) translation.Text = partial; }),
+                ct);
+            if (!ct.IsCancellationRequested)
+            {
+                translation.Text = final;
+                status.Text = $"{RecognitionService.Settings.Translation.ActiveDisplayName()} 翻译完成";
+            }
         }
-        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception error) { status.Text = error.Message; }
-        finally { translate.IsEnabled = source.IsEnabled = target.IsEnabled = result.IsEnabled = true; }
+        finally { translate.IsEnabled = source.IsEnabled = target.IsEnabled = true; }
     }
 
     private void Copy(string value)

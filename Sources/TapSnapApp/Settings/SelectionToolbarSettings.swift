@@ -84,11 +84,6 @@ struct SelectionToolbarSettings: View {
             .frame(height: 185)
             .senCardStyle(theme: theme)
 
-            Text("列表从上到下对应工具栏从左到右。收起或放不下的按钮可从「更多」使用。")
-                .font(.system(size: 11))
-                .foregroundStyle(theme.token(.mutedForeground))
-                .fixedSize(horizontal: false, vertical: true)
-
             HStack {
                 Button("恢复默认布局") { pinned = nil }
                     .disabled(pinned == nil)

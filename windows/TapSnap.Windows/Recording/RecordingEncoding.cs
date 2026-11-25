@@ -15,7 +15,8 @@ namespace TapSnap.Windows;
 
 internal sealed partial class RecordingPreview
 {
-    private void SaveGif(string path, double from, double to, int fps, int longestEdge, CancellationToken cancellation, RecordingOverlay[] overlays)
+    private void SaveGif(string path, double from, double to, int fps, int longestEdge, CancellationToken cancellation,
+        RecordingOverlay[] overlays, double speed = 1.0)
     {
         string temporary = path + ".tapsnap-" + Guid.NewGuid().ToString("N");
         try
@@ -27,7 +28,7 @@ internal sealed partial class RecordingPreview
                 RecordingGifWriter? animation = null;
                 byte[]? pixels = null, annotated = null;
                 int previousIndex = -1, stride = 0;
-                foreach (var sample in RecordingOverlay.GifSamples(from, to, fps, overlays))
+                foreach (var sample in RecordingOverlay.GifSamples(from, to, fps, overlays, speed))
                 {
                     cancellation.ThrowIfCancellationRequested();
                     int frameIndex = frames.IndexAt(sample.Time);
