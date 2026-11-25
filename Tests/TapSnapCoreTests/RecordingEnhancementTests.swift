@@ -3,6 +3,7 @@ import CoreGraphics
 import CoreVideo
 import ImageIO
 import XCTest
+import TapSnapConfig
 @testable import TapSnapMedia
 @testable import TapSnapScreen
 @testable import TapSnapSystem
@@ -178,6 +179,77 @@ final class RecordingEnhancementTests: XCTestCase {
         XCTAssertTrue(RecordingCompositor.compose(screen, overlay: .init()) === screen)
     }
 
+    func testAllFourteenClickAndFiveScrollEffectsComposeVisiblyAndPersistSettings() throws {
+        let screen = image(color: CGColor(gray: 0, alpha: 1), width: 640, height: 360)
+        for style in RecordingMouseClickStyle.allCases {
+            for button in [RecordingClickEffect.Button.left, .right] {
+                let composed = RecordingCompositor.compose(
+                    screen,
+                    overlay: .init(
+                        clickEffects: [.init(point: CGPoint(x: 0.5, y: 0.5), progress: 0.22, button: button, clickCount: 1, style: style)],
+                        mouseEffectPalette: .glassBlue,
+                        mouseEffectScale: 1.0
+                    )
+                )
+                XCTAssertEqual(composed.width, 640)
+                XCTAssertEqual(composed.height, 360)
+                // 确认点击区域周边确实绘制了可见像素，远端保持纯黑。
+                var lit = false
+                for dy in stride(from: -30, through: 30, by: 6) {
+                    for dx in stride(from: -30, through: 44, by: 6) {
+                        let px = pixel(composed, x: 320 + dx, y: 180 + dy)
+                        if px.red + px.green + px.blue > 0.12 { lit = true; break }
+                    }
+                    if lit { break }
+                }
+                XCTAssertTrue(lit, "点击样式 \(style.displayName) 应合成可见像素")
+                let far = pixel(composed, x: 16, y: 16)
+                XCTAssertLessThan(far.red + far.green + far.blue, 0.02)
+            }
+        }
+
+        for style in RecordingMouseScrollStyle.allCases {
+            for dir in [-1.0, 1.0] {
+                let composed = RecordingCompositor.compose(
+                    screen,
+                    overlay: .init(
+                        scrollEffect: .init(point: CGPoint(x: 0.5, y: 0.5), alpha: 1.0, direction: dir,
+                                            accumulated: 36, time: 0.45, style: style),
+                        mouseEffectPalette: .leicaCoral,
+                        mouseEffectScale: 1.1
+                    )
+                )
+                var lit = false
+                for dy in stride(from: -32, through: 32, by: 5) {
+                    for dx in stride(from: -20, through: 46, by: 5) {
+                        let px = pixel(composed, x: 320 + dx, y: 180 + dy)
+                        if px.red + px.green + px.blue > 0.12 { lit = true; break }
+                    }
+                    if lit { break }
+                }
+                XCTAssertTrue(lit, "滚轮样式 \(style.displayName) 应合成可见像素")
+            }
+        }
+
+        let settingsFile = directory.appendingPathComponent("settings.json")
+        let store = ConfigStore(fileURL: settingsFile)
+        store.update {
+            $0.record.showsMouseClicks = true
+            $0.record.showsMouseScrolls = true
+            $0.record.mouseClickStyle = .miniMouse
+            $0.record.mouseScrollStyle = .wheelTicks
+            $0.record.mouseEffectPalette = .mintTeal
+            $0.record.mouseEffectScale = 1.25
+        }
+        let reloaded = ConfigStore(fileURL: settingsFile).settings.record
+        XCTAssertTrue(reloaded.showsMouseClicks)
+        XCTAssertTrue(reloaded.showsMouseScrolls)
+        XCTAssertEqual(reloaded.mouseClickStyle, .miniMouse)
+        XCTAssertEqual(reloaded.mouseScrollStyle, .wheelTicks)
+        XCTAssertEqual(reloaded.mouseEffectPalette, .mintTeal)
+        XCTAssertEqual(reloaded.mouseEffectScale, 1.25, accuracy: 0.001)
+    }
+
     func testShortcutOverlaySkipsOrdinaryTypedText() {
         XCTAssertNil(RecordingCompositor.shortcutLabel(keyCode: 0, flags: 0))
         XCTAssertNil(RecordingCompositor.shortcutLabel(keyCode: 0, flags: CGEventFlags.maskShift.rawValue))
@@ -327,5 +399,47 @@ final class RecordingOverlaySessionTests: XCTestCase {
         XCTAssertFalse(input.isRunning)
         XCTAssertNil(input.onEvent)
         XCTAssertTrue(encoder.images.isEmpty)
+    }
+
+    func testScrollWheelEffectAppearsOnStaticDesktopWhenEnabled() async throws {
+        let input = OverlayTestInput(), encoder = OverlayTestEncoder()
+        let bounds = CGRect(x: -1000, y: 200, width: 640, height: 360)
+        let screen = ScreenDescriptor(id: 123, frame: bounds, visibleFrame: bounds,
+                                      scale: 1, isMain: false, localizedName: "External")
+        let session = RecordSession(
+            configuration: .init(
+                screen: screen,
+                showsMouseScrolls: true,
+                mouseScrollStyle: .glassPill,
+                outputURL: URL(fileURLWithPath: "/tmp/tapsnap-scroll-overlay-test.mp4")
+            ),
+            makeStream: { OverlayTestStream() },
+            makeEncoder: { _ in encoder },
+            now: { ProcessInfo.processInfo.systemUptime },
+            startupTimeout: 1,
+            makeInputMonitor: { input }
+        )
+        try await session.start()
+        XCTAssertTrue(input.isRunning)
+        let rendered = expectation(description: "static desktop receives scroll overlay")
+        var fulfilled = false
+        encoder.onAppend = {
+            guard !fulfilled, let frame = encoder.images.last else { return }
+            for dy in stride(from: -18, through: 24, by: 6) {
+                for dx in stride(from: 10, through: 34, by: 6) {
+                    let px = pixel(frame, x: 320 + dx, y: 180 + dy)
+                    if px.red + px.green + px.blue > 0.15 {
+                        fulfilled = true
+                        rendered.fulfill()
+                        return
+                    }
+                }
+            }
+        }
+        input.onEvent?(.init(kind: .scroll, location: CGPoint(x: -680, y: 380), keyCode: nil,
+                             modifierFlags: 0, timestamp: CFAbsoluteTimeGetCurrent(), scrollDeltaY: -18))
+        await fulfillment(of: [rendered], timeout: 2)
+        session.cancel()
+        XCTAssertFalse(input.isRunning)
     }
 }

@@ -41,6 +41,7 @@ final class AppEnvironment {
     lazy var desktopBar = DesktopBarController(config: config)
     lazy var tutorial = TutorialWindowController(theme: { [unowned self] in self.theme }, config: config)
     @MainActor lazy var translationPanel = TranslationPanel()
+    @MainActor lazy var quickTranslatePanel = QuickTranslatePanel()
     lazy var formulaPanel = FormulaPanel(theme: { [weak self] in self?.theme ?? .dark })
     lazy var tableRecognizer = TableRecognizer(environment: self)
     lazy var pinTransfer = PinTransfer(environment: self)

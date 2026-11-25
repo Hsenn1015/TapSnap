@@ -47,6 +47,7 @@ public enum GifExporter {
 
     /// 顺序抽帧并写入 GIF，不在内存中收集整段视频的原始帧。
     /// `maximumPixelDimension` 为最长边像素上限，nil 保留视频尺寸。
+    /// `playbackSpeed` 为 GIF 播放倍速（0.25...4.0，默认 1.0）；2.0 表示 2 倍速加快，0.5 表示半速慢放。
     /// `progress` 在导出执行线程报告 0...1；只有文件完成后才报告 1。
     /// 调用方可取消所在 Task；取消会终止待处理的抽帧并清理临时文件。
     public static func export(
@@ -55,11 +56,15 @@ public enum GifExporter {
         sampleInterval: Double = 1.0 / 15.0,
         maximumPixelDimension: Int? = 1280,
         loopCount: Int = 0,
+        playbackSpeed: Double = 1.0,
         timeRange: RecordingTimeRange? = nil,
         annotations: [RecordingAnnotation] = [],
         progress: (@Sendable (Double) -> Void)? = nil
     ) async throws {
         try validate(interval: sampleInterval, loopCount: loopCount)
+        guard playbackSpeed.isFinite, playbackSpeed >= 0.25, playbackSpeed <= 4.0 else {
+            throw GIFExportError.invalidParameters
+        }
         if let maximumPixelDimension, !(1...65535).contains(maximumPixelDimension) {
             throw GIFExportError.invalidParameters
         }
@@ -75,9 +80,10 @@ public enum GifExporter {
         let duration = timeRange?.duration ?? assetDuration
         let startTime = timeRange?.start ?? 0
         let endTime = timeRange?.end ?? assetDuration
-        let count = ceil(duration / sampleInterval)
+        let sourceInterval = sampleInterval * playbackSpeed
+        let count = ceil(duration / sourceInterval)
         guard count.isFinite, count > 0, count < Double(Int.max) else { throw GIFExportError.invalidParameters }
-        let samples = sampleTimes(start: startTime, end: endTime, interval: sampleInterval, count: Int(count),
+        let samples = sampleTimes(start: startTime, end: endTime, interval: sourceInterval, count: Int(count),
                                   annotations: annotations)
 
         let generator = AVAssetImageGenerator(asset: asset)
@@ -106,7 +112,9 @@ public enum GifExporter {
                     let active = annotations.filter { RecordingAnnotationRenderer.isActive($0, at: seconds) }
                     let rendered = try RecordingAnnotationRenderer.render(active, over: image)
                     let next = index + 1 < samples.count ? samples[index + 1] : endTime
-                    writer.append(rendered, start: seconds - startTime, end: next - startTime)
+                    writer.append(rendered,
+                                  start: (seconds - startTime) / playbackSpeed,
+                                  end: (next - startTime) / playbackSpeed)
                 }
                 progress?(Double(index + 1) / Double(samples.count + 1))
             }

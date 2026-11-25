@@ -3,6 +3,7 @@ import TapSnapActionsBar
 import TapSnapConfig
 import TapSnapCore
 import TapSnapIcons
+import TapSnapMedia
 import TapSnapSystem
 import TapSnapTheme
 import TapSnapUI
@@ -929,11 +930,96 @@ private struct RecordSettings: View {
                 }
             }
 
-            SnapSettingGroup("演示", theme: theme) {
+            SnapSettingGroup("演示与鼠标动效", theme: theme) {
                 recordingToggle("摄像头画中画", keyPath: \.record.includesCamera)
+                SnapRowDivider(theme: theme)
                 recordingToggle("显示快捷键", keyPath: \.record.showsKeyPresses)
+                SnapRowDivider(theme: theme)
                 recordingToggle("显示鼠标点击", keyPath: \.record.showsMouseClicks)
-                Text("摄像头首次启用时请求权限；快捷键提示只显示组合键，不记录输入文字。")
+                SnapRowDivider(theme: theme)
+                recordingToggle("显示滚轮滑动", keyPath: \.record.showsMouseScrolls)
+                if config.settings.record.showsMouseClicks || config.settings.record.showsMouseScrolls {
+                    if config.settings.record.showsMouseClicks {
+                        SnapRowDivider(theme: theme)
+                        SnapSettingRow("点击动效样式", subtitle: "自动区分左键、右键与双击", theme: theme) {
+                            Picker("点击动效样式", selection: Binding(
+                                get: { config.settings.record.mouseClickStyle },
+                                set: { value in config.update { $0.record.mouseClickStyle = value } }
+                            )) {
+                                ForEach(RecordingMouseClickStyle.allCases, id: \.self) { style in
+                                    Text(style.displayName).tag(style)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .frame(width: 152)
+                        }
+                    }
+                    if config.settings.record.showsMouseScrolls {
+                        SnapRowDivider(theme: theme)
+                        SnapSettingRow("滚轮动效样式", subtitle: "随滚动方向与速度动态响应", theme: theme) {
+                            Picker("滚轮动效样式", selection: Binding(
+                                get: { config.settings.record.mouseScrollStyle },
+                                set: { value in config.update { $0.record.mouseScrollStyle = value } }
+                            )) {
+                                ForEach(RecordingMouseScrollStyle.allCases, id: \.self) { style in
+                                    Text(style.displayName).tag(style)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .frame(width: 152)
+                        }
+                    }
+                    SnapRowDivider(theme: theme)
+                    SnapSettingRow("动效配色", subtitle: "左键与右键使用互补配色区分", theme: theme) {
+                        Picker("动效配色", selection: Binding(
+                            get: { config.settings.record.mouseEffectPalette },
+                            set: { value in config.update { $0.record.mouseEffectPalette = value } }
+                        )) {
+                            ForEach(RecordingMouseEffectPalette.allCases, id: \.self) { palette in
+                                Text(palette.displayName).tag(palette)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(width: 152)
+                    }
+                    mousePaletteSwatchStrip
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 8)
+                    SnapRowDivider(theme: theme)
+                    SnapSettingRow("动效尺寸", theme: theme) {
+                        HStack(spacing: 8) {
+                            SnapSlider(
+                                value: Binding(
+                                    get: { config.settings.record.mouseEffectScale },
+                                    set: { value in config.update { $0.record.mouseEffectScale = value } }
+                                ),
+                                in: 0.75...1.45,
+                                theme: theme,
+                                width: 132
+                            )
+                            Text(String(format: "%.1fx", config.settings.record.mouseEffectScale))
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(theme.token(.mutedForeground))
+                                .frame(width: 34, alignment: .trailing)
+                        }
+                    }
+                    RecordingMouseEffectsPreview(
+                        showsClicks: config.settings.record.showsMouseClicks,
+                        showsScrolls: config.settings.record.showsMouseScrolls,
+                        clickStyle: config.settings.record.mouseClickStyle,
+                        scrollStyle: config.settings.record.mouseScrollStyle,
+                        palette: config.settings.record.mouseEffectPalette,
+                        scale: config.settings.record.mouseEffectScale
+                    )
+                    .frame(height: 124)
+                    .clipShape(RoundedRectangle(cornerRadius: theme.metrics.radiusSM))
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
+                }
+                Text("在预览区内可直接左键、右键、双击或滚轮试看效果；摄像头首次启用时请求权限，快捷键提示不记录输入文字。")
                     .font(.caption).foregroundStyle(theme.token(.mutedForeground)).padding(12)
             }
 
@@ -960,6 +1046,52 @@ private struct RecordSettings: View {
             }
         }
     }
+    private var mousePaletteSwatchStrip: some View {
+        let selected = config.settings.record.mouseEffectPalette
+        let columns = [GridItem(.adaptive(minimum: 84), spacing: 6)]
+        return LazyVGrid(columns: columns, alignment: .leading, spacing: 6) {
+            ForEach(RecordingMouseEffectPalette.allCases, id: \.self) { palette in
+                let colors = RecordingMouseEffectsArtwork.paletteColors(for: palette)
+                let isSelected = palette == selected
+                Button {
+                    config.update { $0.record.mouseEffectPalette = palette }
+                } label: {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color(red: colors.left.red, green: colors.left.green, blue: colors.left.blue),
+                                        Color(red: colors.right.red, green: colors.right.green, blue: colors.right.blue),
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 10, height: 10)
+                            .overlay(Circle().stroke(Color.black.opacity(0.22), lineWidth: 0.6))
+                        Text(palette.displayName)
+                            .font(.system(size: 11, weight: isSelected ? .medium : .regular))
+                            .foregroundStyle(isSelected ? theme.token(.foreground) : theme.token(.mutedForeground))
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(isSelected ? theme.token(.secondary) : theme.token(.background).opacity(0.6))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(isSelected ? theme.token(.primary) : theme.token(.border), lineWidth: isSelected ? 1.2 : 0.8)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
     private func recordingToggle(_ title: String, keyPath: WritableKeyPath<TapSnapConfig.Settings, Bool>) -> some View {
         SnapSettingRow(title, theme: theme) {
             SnapToggle(isOn: Binding(get: { config.settings[keyPath: keyPath] },
@@ -967,6 +1099,177 @@ private struct RecordSettings: View {
         }
     }
 
+}
+
+private struct RecordingMouseEffectsPreview: NSViewRepresentable {
+    var showsClicks: Bool
+    var showsScrolls: Bool
+    var clickStyle: RecordingMouseClickStyle
+    var scrollStyle: RecordingMouseScrollStyle
+    var palette: RecordingMouseEffectPalette
+    var scale: Double
+
+    func makeNSView(context: Context) -> PreviewView { PreviewView(frame: .zero) }
+
+    func updateNSView(_ view: PreviewView, context: Context) {
+        view.showsClicks = showsClicks
+        view.showsScrolls = showsScrolls
+        view.clickStyle = clickStyle
+        view.scrollStyle = scrollStyle
+        view.palette = palette
+        view.effectScale = scale
+    }
+
+    final class PreviewView: NSView {
+        var showsClicks = true
+        var showsScrolls = true
+        var clickStyle: RecordingMouseClickStyle = .liquidRipple
+        var scrollStyle: RecordingMouseScrollStyle = .glassPill
+        var palette: RecordingMouseEffectPalette = .glassBlue
+        var effectScale: Double = 1.0
+
+        private struct LiveClick {
+            var point: CGPoint
+            var born: TimeInterval
+            var button: RecordingClickEffect.Button
+            var clickCount: Int
+        }
+
+        private var timer: Timer?
+        private var startTime = ProcessInfo.processInfo.systemUptime
+        private var liveClicks: [LiveClick] = []
+        private var liveScroll: (point: CGPoint, direction: Double, accumulated: Double, lastTime: TimeInterval)?
+        private var lastLeftTap: TimeInterval = -10
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            timer?.invalidate()
+            timer = nil
+            guard window != nil else { return }
+            let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+                self?.needsDisplay = true
+            }
+            RunLoop.main.add(t, forMode: .common)
+            timer = t
+        }
+
+        deinit { timer?.invalidate() }
+
+        override func mouseDown(with event: NSEvent) {
+            guard showsClicks else { return }
+            let pt = convert(event.locationInWindow, from: nil)
+            let now = ProcessInfo.processInfo.systemUptime
+            let isDouble = now - lastLeftTap < 0.30
+            lastLeftTap = now
+            liveClicks.append(.init(point: pt, born: now, button: .left, clickCount: isDouble ? 2 : 1))
+            needsDisplay = true
+        }
+
+        override func rightMouseDown(with event: NSEvent) {
+            guard showsClicks else { return }
+            let pt = convert(event.locationInWindow, from: nil)
+            let now = ProcessInfo.processInfo.systemUptime
+            liveClicks.append(.init(point: pt, born: now, button: .right, clickCount: 1))
+            needsDisplay = true
+        }
+
+        override func scrollWheel(with event: NSEvent) {
+            guard showsScrolls else { super.scrollWheel(with: event); return }
+            let delta = abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX) ? event.scrollingDeltaY : event.scrollingDeltaX
+            guard abs(delta) > 0.01 else { return }
+            let pt = convert(event.locationInWindow, from: nil)
+            let now = ProcessInfo.processInfo.systemUptime
+            let dir: Double = delta < 0 ? 1 : -1
+            let prev = liveScroll?.accumulated ?? 0
+            liveScroll = (pt, dir, prev - delta, now)
+            needsDisplay = true
+        }
+
+        override func draw(_ dirtyRect: NSRect) {
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+            let left = CGRect(x: bounds.minX, y: bounds.minY, width: bounds.width / 2, height: bounds.height)
+            ctx.setFillColor(RGBAColor(rgb: 0xf5f7fa).cgColor)
+            ctx.fill(left)
+            ctx.setFillColor(RGBAColor(rgb: 0x161c25).cgColor)
+            ctx.fill(bounds.offsetBy(dx: left.width, dy: 0))
+
+            let now = ProcessInfo.processInfo.systemUptime
+            let elapsed = now - startTime
+            let unit = CGFloat(effectScale)
+
+            // 清理已结束的手动点击，并绘制手动触发的动效；无手动交互时自动轮播演示。
+            liveClicks.removeAll { now - $0.born > 0.65 }
+            let hasManualClick = !liveClicks.isEmpty
+            let hasManualScroll = liveScroll.map { now - $0.lastTime < 0.55 } ?? false
+
+            if showsClicks {
+                if hasManualClick {
+                    for item in liveClicks {
+                        RecordingMouseEffectsArtwork.drawClick(
+                            style: clickStyle,
+                            at: item.point,
+                            progress: (now - item.born) / 0.62,
+                            button: item.button,
+                            clickCount: item.clickCount,
+                            palette: palette,
+                            unit: unit,
+                            in: ctx
+                        )
+                    }
+                } else {
+                    let period = 1.45
+                    let cycle = elapsed.truncatingRemainder(dividingBy: period * 2)
+                    let isRight = cycle >= period
+                    let u = cycle.truncatingRemainder(dividingBy: period) / 0.68
+                    let pt = CGPoint(x: bounds.width * (isRight ? 0.68 : 0.28), y: bounds.midY)
+                    if u <= 1 {
+                        RecordingMouseEffectsArtwork.drawClick(
+                            style: clickStyle,
+                            at: pt,
+                            progress: u,
+                            button: isRight ? .right : .left,
+                            clickCount: 1,
+                            palette: palette,
+                            unit: unit,
+                            in: ctx
+                        )
+                    }
+                }
+            }
+
+            if showsScrolls {
+                if let scroll = liveScroll, hasManualScroll {
+                    let age = now - scroll.lastTime
+                    let alpha = age < 0.24 ? 1.0 : max(0, 1 - (age - 0.24) / 0.30)
+                    RecordingMouseEffectsArtwork.drawScroll(
+                        style: scrollStyle,
+                        at: scroll.point,
+                        alpha: alpha,
+                        direction: scroll.direction,
+                        accumulated: scroll.accumulated,
+                        time: elapsed,
+                        palette: palette,
+                        unit: unit,
+                        in: ctx
+                    )
+                } else {
+                    let dir: Double = elapsed.truncatingRemainder(dividingBy: 3.6) < 1.8 ? 1 : -1
+                    let pt = CGPoint(x: bounds.width * (showsClicks ? 0.46 : 0.50), y: bounds.midY)
+                    RecordingMouseEffectsArtwork.drawScroll(
+                        style: scrollStyle,
+                        at: pt,
+                        alpha: 0.96,
+                        direction: dir,
+                        accumulated: elapsed * 38 * dir,
+                        time: elapsed,
+                        palette: palette,
+                        unit: unit,
+                        in: ctx
+                    )
+                }
+            }
+        }
+    }
 }
 
 private struct LongShotSettings: View {

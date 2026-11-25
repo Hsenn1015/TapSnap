@@ -251,6 +251,8 @@ final class ShortcutCenter: ObservableObject {
             environment.ocrCoordinator.captureAndRecognize()
         case .ocrFullScreen:
             environment.ocrCoordinator.recognizeFullScreen()
+        case .quickTranslate:
+            environment.captureCoordinator.start(.quickTranslate)
         case .showToolBall:
             ToolBallController.shared.toggle()
         case .showHistory:

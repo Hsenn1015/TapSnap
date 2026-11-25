@@ -11,6 +11,7 @@ public enum ShortcutAction: String, Codable, CaseIterable, Sendable {
     case recordScreen
     case ocrRegion
     case ocrFullScreen
+    case quickTranslate
     case showToolBall
     case showHistory
 
@@ -23,6 +24,7 @@ public enum ShortcutAction: String, Codable, CaseIterable, Sendable {
         case .recordScreen: return "屏幕录制"
         case .ocrRegion: return "区域文字识别"
         case .ocrFullScreen: return "全屏文字识别"
+        case .quickTranslate: return "截图秒译"
         case .showToolBall: return "显示/隐藏悬浮球"
         case .showHistory: return "剪贴板历史"
         }

@@ -1,14 +1,44 @@
 import CoreGraphics
 import CoreText
 import Foundation
+import TapSnapConfig
 import TapSnapSystem
 
 /// 瞬时显示状态，不存储用户输入文本。
 struct RecordingOverlayFrame: @unchecked Sendable {
     var camera: CGImage?
-    /// 原点左上的 0...1 坐标，相对于实际录制区域。
-    var clicks: [CGPoint] = []
+    /// 鼠标点击动效列表（支持左右键、双击、进度与 14 款样式）。
+    var clickEffects: [RecordingClickEffect] = []
+    /// 鼠标滚轮滑动动效（5 款样式）。
+    var scrollEffect: RecordingScrollEffect?
+    var mouseEffectPalette: RecordingMouseEffectPalette = .glassBlue
+    var mouseEffectScale: Double = 1.0
     var shortcut: String?
+
+    init(
+        camera: CGImage? = nil,
+        clickEffects: [RecordingClickEffect] = [],
+        scrollEffect: RecordingScrollEffect? = nil,
+        mouseEffectPalette: RecordingMouseEffectPalette = .glassBlue,
+        mouseEffectScale: Double = 1.0,
+        shortcut: String? = nil
+    ) {
+        self.camera = camera
+        self.clickEffects = clickEffects
+        self.scrollEffect = scrollEffect
+        self.mouseEffectPalette = mouseEffectPalette
+        self.mouseEffectScale = mouseEffectScale
+        self.shortcut = shortcut
+    }
+
+    /// 兼容既有测试构造签名。
+    init(camera: CGImage? = nil, clicks: [CGPoint], shortcut: String? = nil) {
+        self.init(
+            camera: camera,
+            clickEffects: clicks.map { RecordingClickEffect(point: $0) },
+            shortcut: shortcut
+        )
+    }
 }
 
 enum RecordingCompositor {
@@ -28,7 +58,12 @@ enum RecordingCompositor {
     }
 
     static func compose(_ image: CGImage, overlay: RecordingOverlayFrame) -> CGImage {
-        guard overlay.camera != nil || !overlay.clicks.isEmpty || overlay.shortcut != nil else { return image }
+        guard overlay.camera != nil
+                || !overlay.clickEffects.isEmpty
+                || (overlay.scrollEffect?.alpha ?? 0) > 0.01
+                || overlay.shortcut != nil else {
+            return image
+        }
         let size = CGSize(width: image.width, height: image.height)
         guard let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
                                       bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
@@ -54,20 +89,42 @@ enum RecordingCompositor {
             context.addPath(CGPath(roundedRect: rect, cornerWidth: 12 * unit, cornerHeight: 12 * unit, transform: nil))
             context.strokePath()
         }
-        for click in overlay.clicks {
-            let point = CGPoint(x: click.x * size.width, y: (1 - click.y) * size.height)
-            let rect = CGRect(x: point.x - 16 * unit, y: point.y - 16 * unit, width: 32 * unit, height: 32 * unit)
-            context.setFillColor(CGColor(red: 1, green: 0.66, blue: 0.12, alpha: 0.28))
-            context.fillEllipse(in: rect)
-            context.setStrokeColor(CGColor(red: 1, green: 0.7, blue: 0.14, alpha: 0.95))
-            context.setLineWidth(3 * unit)
-            context.strokeEllipse(in: rect)
+
+        let effectUnit = unit * CGFloat(overlay.mouseEffectScale)
+        for click in overlay.clickEffects {
+            let point = CGPoint(x: click.point.x * size.width, y: (1 - click.point.y) * size.height)
+            RecordingMouseEffectsArtwork.drawClick(
+                style: click.style,
+                at: point,
+                progress: click.progress,
+                button: click.button,
+                clickCount: click.clickCount,
+                palette: overlay.mouseEffectPalette,
+                unit: effectUnit,
+                in: context
+            )
         }
+
+        if let scroll = overlay.scrollEffect, scroll.alpha > 0.01 {
+            let point = CGPoint(x: scroll.point.x * size.width, y: (1 - scroll.point.y) * size.height)
+            RecordingMouseEffectsArtwork.drawScroll(
+                style: scroll.style,
+                at: point,
+                alpha: scroll.alpha,
+                direction: scroll.direction,
+                accumulated: scroll.accumulated,
+                time: scroll.time,
+                palette: overlay.mouseEffectPalette,
+                unit: effectUnit,
+                in: context
+            )
+        }
+
         if let label = overlay.shortcut {
             let font = CTFontCreateWithName("Helvetica-Bold" as CFString, 18 * unit, nil)
             let line = CTLineCreateWithAttributedString(NSAttributedString(string: label, attributes: [
                 NSAttributedString.Key(kCTFontAttributeName as String): font,
-                NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(gray: 1, alpha: 1)
+                NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(gray: 1, alpha: 1),
             ]))
             let bounds = CTLineGetBoundsWithOptions(line, [])
             let rect = CGRect(x: 12 * unit, y: 12 * unit, width: min(size.width - 24 * unit, bounds.width + 24 * unit), height: 38 * unit)

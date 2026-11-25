@@ -2,6 +2,7 @@ import AVFoundation
 import CoreMedia
 import CoreGraphics
 import Foundation
+import TapSnapConfig
 import TapSnapCore
 import TapSnapScreen
 import TapSnapSystem
@@ -97,6 +98,11 @@ public final class RecordSession {
         public var includesCamera: Bool
         public var showsKeyPresses: Bool
         public var showsMouseClicks: Bool
+        public var showsMouseScrolls: Bool
+        public var mouseClickStyle: RecordingMouseClickStyle
+        public var mouseScrollStyle: RecordingMouseScrollStyle
+        public var mouseEffectPalette: RecordingMouseEffectPalette
+        public var mouseEffectScale: Double
         public var outputURL: URL
 
         public init(
@@ -109,6 +115,11 @@ public final class RecordSession {
             includesCamera: Bool = false,
             showsKeyPresses: Bool = false,
             showsMouseClicks: Bool = false,
+            showsMouseScrolls: Bool = false,
+            mouseClickStyle: RecordingMouseClickStyle = .liquidRipple,
+            mouseScrollStyle: RecordingMouseScrollStyle = .glassPill,
+            mouseEffectPalette: RecordingMouseEffectPalette = .glassBlue,
+            mouseEffectScale: Double = 1.0,
             outputURL: URL
         ) {
             self.screen = screen
@@ -120,6 +131,11 @@ public final class RecordSession {
             self.includesCamera = includesCamera
             self.showsKeyPresses = showsKeyPresses
             self.showsMouseClicks = showsMouseClicks
+            self.showsMouseScrolls = showsMouseScrolls
+            self.mouseClickStyle = mouseClickStyle
+            self.mouseScrollStyle = mouseScrollStyle
+            self.mouseEffectPalette = mouseEffectPalette
+            self.mouseEffectScale = mouseEffectScale
             self.outputURL = outputURL
         }
     }
@@ -148,7 +164,23 @@ public final class RecordSession {
     private var overlayTimer: Timer?
     private var lastScreenImage: CGImage?
     private var lastQueuedFrameAt: TimeInterval?
-    private var clicks: [(point: CGPoint, time: TimeInterval)] = []
+    private struct ClickSample {
+        var point: CGPoint
+        var time: TimeInterval
+        var button: RecordingClickEffect.Button
+        var clickCount: Int
+    }
+
+    private struct ScrollSample {
+        var point: CGPoint
+        var direction: Double
+        var accumulated: Double
+        var lastTime: TimeInterval
+    }
+
+    private var clicks: [ClickSample] = []
+    private var lastLeftClick: (point: CGPoint, time: TimeInterval)?
+    private var scrollState: ScrollSample?
     private var shortcut: (label: String, time: TimeInterval)?
     private var writer: RecordWriter?
     private var startedAt: TimeInterval?
@@ -232,7 +264,7 @@ public final class RecordSession {
                 guard generation == token else { throw CancellationError() }
             }
             try Task.checkCancellation()
-            if configuration.showsKeyPresses || configuration.showsMouseClicks {
+            if configuration.showsKeyPresses || configuration.showsMouseClicks || configuration.showsMouseScrolls {
                 let monitor = makeInputMonitor()
                 monitor.observesKeyboard = configuration.showsKeyPresses
                 monitor.onEvent = { [weak self] event in
@@ -380,7 +412,8 @@ public final class RecordSession {
             }
         }
         guard case .recording = state else { return }
-        if configuration.includesCamera || configuration.showsKeyPresses || configuration.showsMouseClicks {
+        if configuration.includesCamera || configuration.showsKeyPresses
+            || configuration.showsMouseClicks || configuration.showsMouseScrolls {
             lastScreenImage = image
             if overlayTimer == nil {
                 let timer = Timer(timeInterval: 1 / Double(max(1, configuration.frameRate)), repeats: true) { [weak self] _ in
@@ -429,17 +462,48 @@ public final class RecordSession {
         }
     }
 
+    private func normalizedRegionPoint(for location: CGPoint) -> CGPoint? {
+        let local = configuration.rect ?? CGRect(origin: .zero, size: configuration.screen.frame.size)
+        let region = local.offsetBy(dx: configuration.screen.frame.minX, dy: configuration.screen.frame.minY)
+        guard region.width > 0, region.height > 0, region.contains(location) else { return nil }
+        return CGPoint(
+            x: (location.x - region.minX) / region.width,
+            y: (location.y - region.minY) / region.height
+        )
+    }
+
     private func handleInput(_ event: KeyMouseMonitor.Event, token: UUID) {
         guard generation == token, case .recording = state else { return }
         switch event.kind {
         case .leftMouseDown, .rightMouseDown:
-            guard configuration.showsMouseClicks else { return }
-            let local = configuration.rect ?? CGRect(origin: .zero, size: configuration.screen.frame.size)
-            let region = local.offsetBy(dx: configuration.screen.frame.minX, dy: configuration.screen.frame.minY)
-            guard region.contains(event.location) else { return }
-            let point = CGPoint(x: (event.location.x - region.minX) / region.width,
-                                y: (event.location.y - region.minY) / region.height)
-            clicks.append((point, now()))
+            guard configuration.showsMouseClicks,
+                  let point = normalizedRegionPoint(for: event.location) else { return }
+            let timestamp = now()
+            let button: RecordingClickEffect.Button = event.kind == .rightMouseDown ? .right : .left
+            var clickCount = 1
+            if button == .left {
+                if let previous = lastLeftClick,
+                   timestamp - previous.time <= 0.30,
+                   hypot(point.x - previous.point.x, point.y - previous.point.y) <= 0.04 {
+                    clickCount = 2
+                }
+                lastLeftClick = (point, timestamp)
+            }
+            clicks.append(ClickSample(point: point, time: timestamp, button: button, clickCount: clickCount))
+        case .scroll:
+            guard configuration.showsMouseScrolls,
+                  let point = normalizedRegionPoint(for: event.location) else { return }
+            let delta = abs(event.scrollDeltaY) >= abs(event.scrollDeltaX) ? event.scrollDeltaY : event.scrollDeltaX
+            guard abs(delta) > 0.01 else { return }
+            let direction: Double = delta < 0 ? 1 : -1
+            let timestamp = now()
+            let previousAccum = scrollState?.accumulated ?? 0
+            scrollState = ScrollSample(
+                point: point,
+                direction: direction,
+                accumulated: previousAccum - delta,
+                lastTime: timestamp
+            )
         case .keyDown where configuration.showsKeyPresses:
             if let keyCode = event.keyCode,
                let label = RecordingCompositor.shortcutLabel(keyCode: keyCode, flags: event.modifierFlags) {
@@ -451,10 +515,46 @@ public final class RecordSession {
 
     private func overlayFrame() -> RecordingOverlayFrame {
         let timestamp = now()
-        clicks.removeAll { timestamp - $0.time > 0.65 }
+        let clickDuration = 0.62
+        clicks.removeAll { timestamp - $0.time > clickDuration }
         if let shortcut, timestamp - shortcut.time > 1.2 { self.shortcut = nil }
-        return RecordingOverlayFrame(camera: camera?.latestFrame,
-                                     clicks: clicks.map(\.point), shortcut: shortcut?.label)
+
+        let clickEffects = clicks.map { sample in
+            RecordingClickEffect(
+                point: sample.point,
+                progress: (timestamp - sample.time) / clickDuration,
+                button: sample.button,
+                clickCount: sample.clickCount,
+                style: configuration.mouseClickStyle
+            )
+        }
+
+        var scrollEffect: RecordingScrollEffect?
+        if let scroll = scrollState {
+            let age = timestamp - scroll.lastTime
+            if age > 0.54 {
+                scrollState = nil
+            } else {
+                let alpha = age < 0.24 ? 1.0 : max(0, 1 - (age - 0.24) / 0.30)
+                scrollEffect = RecordingScrollEffect(
+                    point: scroll.point,
+                    alpha: alpha,
+                    direction: scroll.direction,
+                    accumulated: scroll.accumulated,
+                    time: timestamp,
+                    style: configuration.mouseScrollStyle
+                )
+            }
+        }
+
+        return RecordingOverlayFrame(
+            camera: camera?.latestFrame,
+            clickEffects: clickEffects,
+            scrollEffect: scrollEffect,
+            mouseEffectPalette: configuration.mouseEffectPalette,
+            mouseEffectScale: configuration.mouseEffectScale,
+            shortcut: shortcut?.label
+        )
     }
 
     /// 音轨：暂停期间的样本直接丢掉，恢复后由编码器按累计暂停时长把时间轴压回来。
@@ -486,6 +586,8 @@ public final class RecordSession {
         lastScreenImage = nil
         lastQueuedFrameAt = nil
         clicks.removeAll()
+        lastLeftClick = nil
+        scrollState = nil
         shortcut = nil
     }
 

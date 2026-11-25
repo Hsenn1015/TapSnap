@@ -43,7 +43,6 @@ final class RecordingPreviewTests: XCTestCase {
         window.setContentSize(window.contentMinSize)
         content.layoutSubtreeIfNeeded()
         XCTAssertTrue(content.bounds.contains(copy.convert(copy.bounds, to: content)))
-        XCTAssertLessThan(content.bounds.maxX - copy.convert(copy.bounds, to: content).maxX, 24)
         XCTAssertTrue(content.bounds.contains(timeline.convert(timeline.bounds, to: content)))
         try drag(in: timeline, from: 7, to: timeline.bounds.width / 3)
         try drag(in: timeline, from: timeline.bounds.width - 7, to: timeline.bounds.width * 2 / 3)
@@ -68,17 +67,20 @@ final class RecordingPreviewTests: XCTestCase {
         try await waitUntil { player.timeControlStatus == .paused }
         XCTAssertEqual(player.currentTime().seconds, range.end, accuracy: 0.06)
 
-        let copyGIF = try XCTUnwrap(views.compactMap { $0 as? NSButton }.first { $0.title == "复制 GIF" })
-        XCTAssertTrue(content.bounds.contains(copyGIF.convert(copyGIF.bounds, to: content)))
-        XCTAssertTrue(copyGIF.isEnabled)
-        copyGIF.performClick(nil)
+        panel.selectExportFormat(.gif)
+        panel.setGIFSpeed(2.0)
+        content.layoutSubtreeIfNeeded()
+        XCTAssertTrue(copy.title.hasPrefix("复制 GIF"))
+        XCTAssertTrue(content.bounds.contains(copy.convert(copy.bounds, to: content)))
+        XCTAssertTrue(copy.isEnabled)
+        copy.performClick(nil)
         let gifType = NSPasteboard.PasteboardType(UTType.gif.identifier)
         try await waitUntil { pasteboard.data(forType: gifType) != nil }
         let data = try XCTUnwrap(pasteboard.data(forType: gifType))
         let gif = try XCTUnwrap(CGImageSourceCreateWithData(data as CFData, nil))
         let frameCount = CGImageSourceGetCount(gif)
         XCTAssertGreaterThan(frameCount, 1)
-        XCTAssertLessThan(frameCount, 30, "GIF 应来自裁剪片段，而不是整段 3 秒录屏")
+        XCTAssertLessThan(frameCount, 20, "2 倍速裁剪片段的 GIF 帧数应明显少于整段 3 秒录屏")
         XCTAssertEqual(fileURL(on: pasteboard)?.pathExtension, "gif")
 
         panel.close()
@@ -111,7 +113,6 @@ final class RecordingPreviewTests: XCTestCase {
         let nextFrame = try XCTUnwrap(buttons.first { $0.accessibilityLabel() == "下一帧" })
         let singleFrame = try XCTUnwrap(buttons.first { $0.title == "仅此帧" })
         let copy = try XCTUnwrap(buttons.first { $0.title.hasPrefix("复制视频") })
-        let copyGIF = try XCTUnwrap(buttons.first { $0.title == "复制 GIF" })
         try await waitUntil { canvas.videoSize.width > 0 && canvas.isInteractionEnabled && nextFrame.isEnabled }
         XCTAssertNotNil(nextFrame.image)
         let initialFrame = try await RecordingAnnotationRenderer.frameRange(at: 0, in: AVURLAsset(url: source))
@@ -169,8 +170,9 @@ final class RecordingPreviewTests: XCTestCase {
         XCTAssertTrue(try isDarkAtMaskCenter(masked))
         XCTAssertFalse(try isDarkAtMaskCenter(before))
 
-        try await waitUntil { copyGIF.isEnabled }
-        copyGIF.performClick(nil)
+        panel.selectExportFormat(.gif)
+        try await waitUntil { copy.isEnabled }
+        copy.performClick(nil)
         let gifType = NSPasteboard.PasteboardType(UTType.gif.identifier)
         try await waitUntil { pasteboard.data(forType: gifType) != nil }
         let data = try XCTUnwrap(pasteboard.data(forType: gifType))

@@ -20,6 +20,28 @@ public final class KeyMouseMonitor {
         public var keyCode: UInt16?
         public var modifierFlags: UInt64
         public var timestamp: CFAbsoluteTime
+        /// 垂直滚轮增量（macOS 自然滚动或传统滚动像素/行差值，非 0 表示有滚动）。
+        public var scrollDeltaY: Double
+        /// 水平滚轮增量。
+        public var scrollDeltaX: Double
+
+        public init(
+            kind: Kind,
+            location: CGPoint,
+            keyCode: UInt16?,
+            modifierFlags: UInt64,
+            timestamp: CFAbsoluteTime,
+            scrollDeltaY: Double = 0,
+            scrollDeltaX: Double = 0
+        ) {
+            self.kind = kind
+            self.location = location
+            self.keyCode = keyCode
+            self.modifierFlags = modifierFlags
+            self.timestamp = timestamp
+            self.scrollDeltaY = scrollDeltaY
+            self.scrollDeltaX = scrollDeltaX
+        }
     }
 
     public private(set) var isRunning = false
@@ -84,9 +106,18 @@ public final class KeyMouseMonitor {
         case .keyDown: kind = .keyDown
         default: return Unmanaged.passUnretained(event)
         }
+        var scrollDeltaY = 0.0
+        var scrollDeltaX = 0.0
+        if type == .scrollWheel {
+            let ptY = event.getDoubleValueField(.scrollWheelEventPointDeltaAxis1)
+            let ptX = event.getDoubleValueField(.scrollWheelEventPointDeltaAxis2)
+            scrollDeltaY = abs(ptY) > 0.001 ? ptY : Double(event.getIntegerValueField(.scrollWheelEventDeltaAxis1)) * 10
+            scrollDeltaX = abs(ptX) > 0.001 ? ptX : Double(event.getIntegerValueField(.scrollWheelEventDeltaAxis2)) * 10
+        }
         let input = Event(kind: kind, location: event.location,
                           keyCode: type == .keyDown ? UInt16(event.getIntegerValueField(.keyboardEventKeycode)) : nil,
-                          modifierFlags: event.flags.rawValue, timestamp: CFAbsoluteTimeGetCurrent())
+                          modifierFlags: event.flags.rawValue, timestamp: CFAbsoluteTimeGetCurrent(),
+                          scrollDeltaY: scrollDeltaY, scrollDeltaX: scrollDeltaX)
         monitor.onEvent?(input)
         return monitor.shouldConsume?(input) == true ? nil : Unmanaged.passUnretained(event)
     }

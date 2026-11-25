@@ -329,4 +329,92 @@ final class MixedPaneStitchingTests: XCTestCase {
         }.count
         XCTAssertEqual(differences, 0, "每个复选框和正文都必须保留，周期相同不能作为抹白依据")
     }
+
+    func testAutoDetectsFixedLeftSidebarWithoutExplicitScrollingRect() throws {
+        let fixture = MixedPaneFixture(side: .left, sidebarWidth: 280)
+        let stitcher = FrameStitcher()
+        for (index, frame) in fixture.frames.enumerated() {
+            let result = try stitcher.append(frame)
+            XCTAssertEqual(result.width, fixture.width)
+            XCTAssertEqual(result.height, fixture.height + fixture.offsets[index])
+        }
+        XCTAssertTrue(stitcher.hasFixedRegions, "无需手动指定滚动区也应自动识别固定左侧栏")
+        let result = try stitcher.finish()
+        XCTAssertEqual(result.height, fixture.expected.height)
+        let actual = MixedPaneFixture.pixels(result), expected = MixedPaneFixture.pixels(fixture.expected)
+        var bodyDiffs = 0
+        for y in 0..<result.height {
+            for x in Int(fixture.bodyRect.minX)..<Int(fixture.bodyRect.maxX) {
+                let offset = (y * result.width + x) * 4
+                if (0..<4).contains(where: { abs(Int(actual[offset + $0]) - Int(expected[offset + $0])) > 1 }) {
+                    bodyDiffs += 1
+                }
+            }
+        }
+        XCTAssertEqual(bodyDiffs, 0, "自动隔离左侧栏后滚动正文应逐像素完整")
+        // 固定侧栏下方应保持干净留白，不能把侧栏重复拼进长图。
+        var repeatedSidebarPixels = 0
+        for y in fixture.height..<result.height {
+            for x in 0..<(280 - 8) {
+                let offset = (y * result.width + x) * 4
+                if (0..<3).contains(where: { actual[offset + $0] < 250 }) {
+                    repeatedSidebarPixels += 1
+                }
+            }
+        }
+        XCTAssertEqual(repeatedSidebarPixels, 0, "固定左侧栏不应在后续帧中被重复拼接")
+    }
+
+    func testAutoDetectsFixedRightSidebarWithoutExplicitScrollingRect() throws {
+        let fixture = MixedPaneFixture(side: .right, sidebarWidth: 260)
+        let stitcher = FrameStitcher()
+        for (index, frame) in fixture.frames.enumerated() {
+            let result = try stitcher.append(frame)
+            XCTAssertEqual(result.height, fixture.height + fixture.offsets[index])
+        }
+        XCTAssertTrue(stitcher.hasFixedRegions)
+        let result = try stitcher.finish()
+        let actual = MixedPaneFixture.pixels(result), expected = MixedPaneFixture.pixels(fixture.expected)
+        var bodyDiffs = 0
+        for y in 0..<result.height {
+            for x in 0..<Int(fixture.bodyRect.maxX) {
+                let offset = (y * result.width + x) * 4
+                if (0..<4).contains(where: { abs(Int(actual[offset + $0]) - Int(expected[offset + $0])) > 1 }) {
+                    bodyDiffs += 1
+                }
+            }
+        }
+        XCTAssertEqual(bodyDiffs, 0)
+    }
+
+    func testAutoDetectsLargeSidebarAndFullFrameWebViewWithoutManualSelection() throws {
+        let fixture = MixedPaneFixture(side: .left, sidebarWidth: 560, headerHeight: 42, footerHeight: 34)
+        // 模拟 Chrome / Electron 仅暴露整屏外层 AXScrollArea 的情况
+        let stitcher = FrameStitcher(scrollingRect: CGRect(x: 0, y: 0, width: fixture.width, height: fixture.height))
+        for (index, frame) in fixture.frames.enumerated() {
+            let result = try stitcher.append(frame)
+            XCTAssertEqual(result.height, fixture.height + fixture.offsets[index])
+        }
+        XCTAssertTrue(stitcher.hasFixedRegions, "外层整屏 WebView 视口内仍应自动识别 CSS 固定侧栏")
+    }
+
+    func testFixedBottomComposerWithBlinkingCursorStitchesCleanly() throws {
+        let fixture = MixedPaneFixture(side: nil, headerHeight: 44, footerHeight: 64)
+        let stitcher = FrameStitcher()
+        for (index, base) in fixture.frames.enumerated() {
+            let ctx = CGContext(data: nil, width: fixture.width, height: fixture.height, bitsPerComponent: 8,
+                                bytesPerRow: fixture.width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            ctx.draw(base, in: CGRect(x: 0, y: 0, width: fixture.width, height: fixture.height))
+            // 模拟底部输入框里逐帧闪烁的 2×18 光标
+            if index % 2 == 0 {
+                ctx.setFillColor(CGColor(gray: 0.1, alpha: 1))
+                ctx.fill(CGRect(x: 180, y: 20, width: 2, height: 18))
+            }
+            let result = try stitcher.append(ctx.makeImage()!)
+            XCTAssertEqual(result.height, fixture.height + fixture.offsets[index])
+        }
+        let result = try stitcher.finish()
+        XCTAssertEqual(result.height, fixture.expected.height)
+    }
 }

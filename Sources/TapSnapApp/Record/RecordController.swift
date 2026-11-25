@@ -89,7 +89,13 @@ final class RecordController {
                     includesCursor: settings.includesCursor, includesMicrophone: settings.includesMicrophone,
                     includesSystemAudio: settings.includesSystemAudio,
                     includesCamera: settings.includesCamera, showsKeyPresses: settings.showsKeyPresses,
-                    showsMouseClicks: settings.showsMouseClicks, outputURL: output)
+                    showsMouseClicks: settings.showsMouseClicks,
+                    showsMouseScrolls: settings.showsMouseScrolls,
+                    mouseClickStyle: settings.mouseClickStyle,
+                    mouseScrollStyle: settings.mouseScrollStyle,
+                    mouseEffectPalette: settings.mouseEffectPalette,
+                    mouseEffectScale: settings.mouseEffectScale,
+                    outputURL: output)
                 configuration.outputURL = output
                 let recording = makeSession(configuration)
                 session = recording

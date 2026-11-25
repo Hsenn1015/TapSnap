@@ -34,8 +34,8 @@ public enum StitchingError: Error {
 
 /// 位移估计器。
 ///
-/// 在相邻原始帧的重叠区做 NCC 平移匹配，并检查独立次峰。
-/// 只压缩横向采样，纵向保留原始像素行，避免 Retina 上反复四舍五入丢行。
+/// 在相邻原始帧的真正滚动区域内做 NCC 平移匹配，自动屏蔽固定侧栏、吸顶栏/底栏（含局部时钟或闪烁光标）
+/// 并检查独立次峰。只压缩横向采样，纵向保留原始像素行，避免 Retina 上反复四舍五入丢行。
 /// 参考：OpenCV Template Matching；Szeliski, Image Alignment and Stitching。
 public final class DisplacementEstimator {
     /// 最小重叠高度（原图像素，最多使用帧高的四分之一）。
@@ -57,9 +57,11 @@ public final class DisplacementEstimator {
         var displacement: Displacement
         /// 当前帧从这一行开始替换累计图的重叠尾部，单位为原图像素。
         var seam: Int
+        /// 自动检测到的可信固定侧栏排除后的滚动视口（原图像素）；无固定侧栏时为 nil。
+        var detectedScrollingRect: CGRect? = nil
     }
 
-    fileprivate func match(previous: CGImage, next: CGImage) throws -> Match {
+    fileprivate func match(previous: CGImage, next: CGImage, detectSidebars: Bool = false) throws -> Match {
         guard previous.width > 16, previous.height > 32,
               next.width > 16, next.height > 32
         else { throw StitchingError.frameTooSmall }
@@ -74,42 +76,143 @@ public final class DisplacementEstimator {
             return Match(displacement: Displacement(dy: 0), seam: 0)
         }
 
-        // 连续不动的头尾（吸顶栏/底栏）不参与位移估计。只检测边缘，
-        // 不把正文中偶然相同的空白行当作固定界面删除。
-        func sameRow(_ y: Int) -> Bool {
-            let start = y * a.width
-            var difference = 0
-            for x in 0..<a.width {
-                difference += abs(Int(a.bytes[start + x]) - Int(b.bytes[start + x]))
-            }
-            return Double(difference) / Double(a.width) < 0.5
-        }
-        var top = 0
-        while top < a.height, sameRow(top) { top += 1 }
-        var bottom = a.height
-        while bottom > top, sameRow(bottom - 1) { bottom -= 1 }
+        // 1. 先按列统计帧间运动，识别出真正发生滚动的水平范围 [activeLeft, activeRight)，
+        //    避免固定左右侧栏（微信聊天列表、Notion/GitHub/IDE 侧栏等）在 shift=0 制造假峰并拉低真实位移置信度。
+        let activeColumns = activeHorizontalBand(a, b)
+        let activeWidth = activeColumns.upperBound - activeColumns.lowerBound
+
+        // 2. 在水平活动列内裁剪连续静止的头尾（吸顶栏/底栏），同时容忍头尾内的局部微小变化（时钟、闪烁光标）。
+        let verticalBand = activeVerticalBand(a, b, columns: activeColumns)
+        let top = verticalBand.lowerBound
+        let bottom = verticalBand.upperBound
         let height = bottom - top
         guard height > 32 else { throw StitchingError.ambiguousDisplacement }
+
         let minimumOverlap = max(24, min(max(24, searchBand), height / 4))
         let maximumShift = height - minimumOverlap
         var scores = [Double](repeating: -2, count: maximumShift * 2 + 1)
         var best = (shift: 0, score: -2.0)
 
+        // 仅在紧贴外框边缘的一侧留 scrollbar inset；已被侧栏裁剪出的内边界直接用满活动宽度。
+        let edgeInset = max(1, a.width / 32)
+        let corrLeft = activeColumns.lowerBound == 0 ? min(edgeInset, activeWidth / 4) : activeColumns.lowerBound
+        let corrRight = activeColumns.upperBound == a.width
+            ? max(corrLeft + 1, a.width - min(edgeInset, activeWidth / 4))
+            : activeColumns.upperBound
+        let corrColumns = corrLeft..<corrRight
+
         a.bytes.withUnsafeBufferPointer { lhs in
             b.bytes.withUnsafeBufferPointer { rhs in
-                for shift in -maximumShift...maximumShift {
-                    let startA = top + max(0, shift)
-                    let startB = top + max(0, -shift)
-                    let overlap = height - abs(shift)
-                    let score = correlation(lhs, rhs, width: a.width,
-                                            startA: startA, startB: startB,
-                                            height: overlap, rowStep: max(1, overlap / 80))
-                    scores[shift + maximumShift] = score
-                    if score > best.score { best = (shift, score) }
+                if maximumShift <= 48 {
+                    for shift in -maximumShift...maximumShift {
+                        let startA = top + max(0, shift)
+                        let startB = top + max(0, -shift)
+                        let overlap = height - abs(shift)
+                        let score = correlation(lhs, rhs, width: a.width, columns: corrColumns,
+                                                startA: startA, startB: startB,
+                                                height: overlap, rowStep: max(1, overlap / 80))
+                        scores[shift + maximumShift] = score
+                        if score > best.score { best = (shift, score) }
+                    }
+                } else {
+                    // 真 4× 纵向盒式滤波金字塔粗搜：即使 1px 纯白噪声在 4 行均值层也能形成宽峰，不会漏峰！
+                    let factor = 4
+                    let pyrCols = corrColumns.lowerBound..<corrColumns.upperBound
+                    let pyrColW = max(1, pyrCols.upperBound - pyrCols.lowerBound)
+                    let pyrXStep = max(1, pyrColW / 48)
+                    let pyrW = (pyrColW + pyrXStep - 1) / pyrXStep
+                    let pyrH = height / factor
+                    let pyrMaxShift = max(1, maximumShift / factor)
+
+                    var pyrA = [UInt8](repeating: 0, count: pyrW * pyrH)
+                    var pyrB = [UInt8](repeating: 0, count: pyrW * pyrH)
+                    for py in 0..<pyrH {
+                        let baseRow = top + py * factor
+                        let dstRow = py * pyrW
+                        var px = 0
+                        for x in stride(from: pyrCols.lowerBound, to: pyrCols.upperBound, by: pyrXStep) {
+                            var sa = 0, sb = 0
+                            for dy in 0..<factor {
+                                let idx = (baseRow + dy) * a.width + x
+                                sa += Int(lhs[idx])
+                                sb += Int(rhs[idx])
+                            }
+                            pyrA[dstRow + px] = UInt8(sa / factor)
+                            pyrB[dstRow + px] = UInt8(sb / factor)
+                            px += 1
+                        }
+                    }
+
+                    var coarsePeaks: [(shift: Int, score: Double)] = []
+                    coarsePeaks.reserveCapacity(12)
+                    pyrA.withUnsafeBufferPointer { pLhs in
+                        pyrB.withUnsafeBufferPointer { pRhs in
+                            for pShift in -pyrMaxShift...pyrMaxShift {
+                                let sA = max(0, pShift)
+                                let sB = max(0, -pShift)
+                                let ov = pyrH - abs(pShift)
+                                guard ov >= 6 else { continue }
+                                let pScore = correlation(pLhs, pRhs, width: pyrW, columns: 0..<pyrW,
+                                                         startA: sA, startB: sB,
+                                                         height: ov, rowStep: max(1, ov / 48), maxCols: pyrW)
+                                let fullShift = min(maximumShift, max(-maximumShift, pShift * factor))
+                                scores[fullShift + maximumShift] = max(scores[fullShift + maximumShift], pScore)
+                                if pScore > -1 {
+                                    if coarsePeaks.count < 10 {
+                                        coarsePeaks.append((fullShift, pScore))
+                                    } else if let minIdx = coarsePeaks.indices.min(by: { coarsePeaks[$0].score < coarsePeaks[$1].score }),
+                                              pScore > coarsePeaks[minIdx].score {
+                                        coarsePeaks[minIdx] = (fullShift, pScore)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    var refineCenters = Set(coarsePeaks.map(\.shift))
+                    refineCenters.insert(0)
+                    refineCenters.insert(maximumShift)
+                    refineCenters.insert(-maximumShift)
+
+                    var refined = [Bool](repeating: false, count: maximumShift * 2 + 1)
+                    for center in refineCenters {
+                        let lo = max(-maximumShift, center - factor)
+                        let hi = min(maximumShift, center + factor)
+                        for shift in lo...hi {
+                            let idx = shift + maximumShift
+                            guard !refined[idx] else { continue }
+                            refined[idx] = true
+                            let startA = top + max(0, shift)
+                            let startB = top + max(0, -shift)
+                            let overlap = height - abs(shift)
+                            let score = correlation(lhs, rhs, width: a.width, columns: corrColumns,
+                                                    startA: startA, startB: startB,
+                                                    height: overlap, rowStep: max(1, overlap / 80))
+                            scores[idx] = score
+                            if score > best.score { best = (shift, score) }
+                        }
+                    }
+
+                    // 极端低信噪比回退：若金字塔精搜最高分仍偏低，补扫剩余偏移确保绝不漏解。
+                    if best.score < 0.85 {
+                        for shift in -maximumShift...maximumShift {
+                            let idx = shift + maximumShift
+                            guard !refined[idx] else { continue }
+                            let startA = top + max(0, shift)
+                            let startB = top + max(0, -shift)
+                            let overlap = height - abs(shift)
+                            let score = correlation(lhs, rhs, width: a.width, columns: corrColumns,
+                                                    startA: startA, startB: startB,
+                                                    height: overlap, rowStep: max(1, overlap / 80))
+                            scores[idx] = score
+                            if score > best.score { best = (shift, score) }
+                        }
+                    }
                 }
             }
         }
         guard best.score > -1 else { throw StitchingError.ambiguousDisplacement }
+
         // 找到全局主峰后再排除其邻域；逐项更新次峰会把主峰旁边的点误作歧义。
         var second = -2.0
         for shift in -maximumShift...maximumShift where abs(shift - best.shift) > 2 {
@@ -117,25 +220,381 @@ public final class DisplacementEstimator {
         }
         let verified = a.bytes.withUnsafeBufferPointer { lhs in
             b.bytes.withUnsafeBufferPointer { rhs in
-                correlation(lhs, rhs, width: a.width, startA: top + max(0, best.shift),
-                            startB: top + max(0, -best.shift), height: height - abs(best.shift), rowStep: 1)
+                correlation(lhs, rhs, width: a.width, columns: corrColumns,
+                            startA: top + max(0, best.shift),
+                            startB: top + max(0, -best.shift),
+                            height: height - abs(best.shift), rowStep: 1)
             }
         }
         var confidence = max(0, min(1, min(best.score, verified)))
         if best.score - second < 0.02 { confidence *= 0.5 }
+
+        let seam = best.shift > 0
+            ? seamRow(a, b, top: top, bottom: bottom, columns: 1..<(a.width - 1), shift: best.shift)
+            : 0
+        var detectedRect: CGRect?
+        if detectSidebars, best.shift >= 12, confidence >= 0.85,
+           (activeColumns.lowerBound > 0 || activeColumns.upperBound < a.width) {
+            detectedRect = detectFixedSidebarViewport(
+                a, b,
+                originalWidth: previous.width,
+                originalHeight: previous.height,
+                activeColumns: activeColumns,
+                top: top,
+                bottom: bottom,
+                shift: best.shift
+            )
+        }
         return Match(displacement: Displacement(dy: CGFloat(best.shift), confidence: confidence),
-                     seam: best.shift > 0 ? seamRow(a, b, top: top, bottom: bottom, shift: best.shift) : 0)
+                     seam: seam,
+                     detectedScrollingRect: detectedRect)
+    }
+
+    /// 统计每一列的帧间变化与静态纹理比例，收缩掉左右两侧完全静止（或仅极局部徽标变动）的侧栏/空白列。
+    private func activeHorizontalBand(_ a: GrayFrame, _ b: GrayFrame) -> Range<Int> {
+        let w = a.width, h = a.height
+        guard w >= 32, h >= 32 else { return 0..<w }
+        let yStep = max(1, h / 200)
+        var sampledRows = 0
+        var changed = [Int](repeating: 0, count: w)
+        var textured = [Int](repeating: 0, count: w)
+        var staticTextured = [Int](repeating: 0, count: w)
+
+        for y in stride(from: 1, to: h - 1, by: yStep) {
+            sampledRows += 1
+            let rowOffset = y * w
+            for x in 1..<(w - 1) {
+                let idx = rowOffset + x
+                let av = Int(a.bytes[idx])
+                let bv = Int(b.bytes[idx])
+                let diff = abs(av - bv)
+                if diff > 2 { changed[x] += 1 }
+                let grad = max(
+                    abs(av - Int(a.bytes[idx - 1])),
+                    abs(av - Int(a.bytes[idx + 1])),
+                    abs(av - Int(a.bytes[idx - w])),
+                    abs(av - Int(a.bytes[idx + w]))
+                )
+                if grad > 4 {
+                    textured[x] += 1
+                    if diff <= 2 { staticTextured[x] += 1 }
+                }
+            }
+        }
+        guard sampledRows > 0 else { return 0..<w }
+
+        func isInactiveColumn(_ x: Int) -> Bool {
+            if x == 0 || x == w - 1 { return true }
+            let changeRatio = Double(changed[x]) / Double(sampledRows)
+            if changed[x] <= 1 && changeRatio < 0.015 { return true }
+            // 侧栏里偶有单个 hover 项或未读红点变动时，其绝大多数静态纹理仍保持不动。
+            if textured[x] >= 6,
+               Double(staticTextured[x]) / Double(textured[x]) >= 0.86,
+               changeRatio <= 0.10 {
+                return true
+            }
+            return false
+        }
+
+        var left = 0
+        while left < w, isInactiveColumn(left) { left += 1 }
+        var right = w
+        while right > left, isInactiveColumn(right - 1) { right -= 1 }
+
+        // 防止误缩成极窄噪点（例如仅有细滚动条在动）；活动列太窄时回退整幅宽度。
+        let minActiveWidth = max(16, w / 6)
+        guard right - left >= minActiveWidth else { return 0..<w }
+        // 若裁剪后几乎就是整宽，则直接返回 0..<w，保持原有精确边缘逻辑。
+        let trimmedLeft = left >= max(8, w / 24) ? left : 0
+        let trimmedRight = (w - right) >= max(8, w / 24) ? right : w
+        return trimmedLeft..<trimmedRight
+    }
+
+    /// 在活动列范围内裁剪顶/底固定栏（如吸顶导航栏、底部聊天输入框），
+    /// 不仅去除 100% 静止行，也能跨越头尾内带时钟/闪烁光标的局部动态行。
+    private func activeVerticalBand(_ a: GrayFrame, _ b: GrayFrame, columns: Range<Int>) -> Range<Int> {
+        let w = a.width, h = a.height
+        let colStart = max(1, columns.lowerBound)
+        let colEnd = min(w - 1, columns.upperBound)
+        let colCount = max(1, colEnd - colStart)
+
+        func isExactStaticRow(_ y: Int) -> Bool {
+            let start = y * w
+            var diffSum = 0
+            for x in colStart..<colEnd {
+                diffSum += abs(Int(a.bytes[start + x]) - Int(b.bytes[start + x]))
+            }
+            return Double(diffSum) / Double(colCount) < 0.5
+        }
+
+        // 某行虽有极小区域变化（时钟、闪烁光标、加载点），但本行大部分像素与静态纹理均未移动。
+        func isMostlyStaticChromeRow(_ y: Int) -> Bool {
+            guard y > 0, y < h - 1 else { return isExactStaticRow(y) }
+            let start = y * w
+            var changed = 0
+            var textured = 0
+            var staticTextured = 0
+            for x in colStart..<colEnd {
+                let idx = start + x
+                let av = Int(a.bytes[idx])
+                let bv = Int(b.bytes[idx])
+                let diff = abs(av - bv)
+                if diff > 2 { changed += 1 }
+                let grad = max(
+                    abs(av - Int(a.bytes[idx - 1])),
+                    abs(av - Int(a.bytes[idx + 1])),
+                    abs(av - Int(a.bytes[idx - w])),
+                    abs(av - Int(a.bytes[idx + w]))
+                )
+                if grad > 4 {
+                    textured += 1
+                    if diff <= 2 { staticTextured += 1 }
+                }
+            }
+            let changedRatio = Double(changed) / Double(colCount)
+            guard changedRatio <= 0.14 else { return false }
+            if textured == 0 { return changedRatio <= 0.03 }
+            return Double(staticTextured) / Double(textured) >= 0.80
+        }
+
+        // 第一阶段：严格静止边缘裁剪
+        var top = 0
+        while top < h, isExactStaticRow(top) { top += 1 }
+        var bottom = h
+        while bottom > top, isExactStaticRow(bottom - 1) { bottom -= 1 }
+
+        // 第二阶段：若紧挨着边缘有一小段带局部动态（时钟/光标）的固定栏，且其后仍有静止底色/分隔线，则一并剔除。
+        let maxEdgeChrome = h / 2
+        if top < maxEdgeChrome {
+            var scan = top
+            var lastStaticAnchor = top
+            while scan < min(bottom, maxEdgeChrome), isMostlyStaticChromeRow(scan) {
+                if isExactStaticRow(scan) { lastStaticAnchor = scan + 1 }
+                scan += 1
+            }
+            // 仅当跨过局部动态后确实重新遇到静止分隔线/底色（证实它属于固定头栏），才推进 top。
+            if lastStaticAnchor > top, bottom - lastStaticAnchor > 32 {
+                top = lastStaticAnchor
+            }
+        }
+        if h - bottom < maxEdgeChrome {
+            var scan = bottom
+            var firstStaticAnchor = bottom
+            while scan > max(top, h - maxEdgeChrome), isMostlyStaticChromeRow(scan - 1) {
+                if isExactStaticRow(scan - 1) { firstStaticAnchor = scan - 1 }
+                scan -= 1
+            }
+            if firstStaticAnchor < bottom, firstStaticAnchor - top > 32 {
+                bottom = firstStaticAnchor
+            }
+        }
+
+        return top..<bottom
+    }
+
+    /// 4 重防误判校验：只有能明确证明边缘列是「多段分布、0 位移静止、且非周期性」的真实固定侧栏时，
+    /// 才返回扣除固定侧栏后的滚动视口；绝不误伤局部悬浮按钮、纯白页边或周期性表格复选框。
+    private func detectFixedSidebarViewport(
+        _ a: GrayFrame,
+        _ b: GrayFrame,
+        originalWidth: Int,
+        originalHeight: Int,
+        activeColumns: Range<Int>,
+        top: Int,
+        bottom: Int,
+        shift: Int
+    ) -> CGRect? {
+        let w = a.width
+        let h = bottom - top
+        guard h > 64, shift > 0, shift < h - 16 else { return nil }
+        let scaleX = Double(originalWidth) / Double(w)
+
+        func provesFixedSidebar(colRange: Range<Int>) -> Bool {
+            let stripW = colRange.upperBound - colRange.lowerBound
+            let origStripW = Double(stripW) * scaleX
+            guard stripW >= 12, origStripW >= 48, origStripW <= Double(originalWidth) * 0.75 else { return false }
+
+            // Gate 2：在 8 个纵向分带中统计静态纹理分布（排除仅在角落出现的 1~2 个小悬浮按钮）
+            let bandCount = 8
+            var staticTexturedBands = 0
+            var interiorStaticBands = 0
+            var movingBands = 0
+            var totalSamples = 0
+            var totalStaticPixels = 0
+            var totalStaticDiff = 0
+            var totalTextured = 0
+            var totalStaticTextured = 0
+            var staticTexturedRows = 0
+
+            let innerLeft = max(1, colRange.lowerBound + 2)
+            let innerRight = min(w - 1, colRange.upperBound - 2)
+            guard innerRight > innerLeft + 4 else { return false }
+
+            for band in 0..<bandCount {
+                let y0 = top + (h * band) / bandCount
+                let y1 = top + (h * (band + 1)) / bandCount
+                var bandStaticTextured = 0
+                var bandTotalTextured = 0
+                var bandMoving = 0
+                var bandSamples = 0
+                for y in max(1, y0)..<min(a.height - 1, y1) {
+                    var rowHasStaticTex = false
+                    let rowBase = y * w
+                    for x in innerLeft..<innerRight {
+                        let idx = rowBase + x
+                        let av = Int(a.bytes[idx])
+                        let bv = Int(b.bytes[idx])
+                        let diff = abs(av - bv)
+                        bandSamples += 1
+                        totalSamples += 1
+                        totalStaticDiff += diff
+                        if diff <= 3 { totalStaticPixels += 1 }
+                        if diff > 4 { bandMoving += 1 }
+                        let grad = max(
+                            abs(av - Int(a.bytes[idx - 1])),
+                            abs(av - Int(a.bytes[idx + 1])),
+                            abs(av - Int(a.bytes[idx - w])),
+                            abs(av - Int(a.bytes[idx + w]))
+                        )
+                        if grad > 6 {
+                            bandTotalTextured += 1
+                            totalTextured += 1
+                            if diff <= 2 {
+                                bandStaticTextured += 1
+                                totalStaticTextured += 1
+                                rowHasStaticTex = true
+                            }
+                        }
+                    }
+                    if rowHasStaticTex { staticTexturedRows += 1 }
+                }
+                if bandStaticTextured >= 12,
+                   bandTotalTextured > 0,
+                   Double(bandStaticTextured) / Double(bandTotalTextured) >= 0.85 {
+                    staticTexturedBands += 1
+                    if band >= 1 && band <= bandCount - 2 { interiorStaticBands += 1 }
+                }
+                if (bandSamples > 0 && Double(bandMoving) / Double(bandSamples) > 0.08)
+                    || (bandTotalTextured >= 12 && Double(bandStaticTextured) / Double(bandTotalTextured) < 0.70) {
+                    movingBands += 1
+                }
+            }
+
+            guard totalSamples > 0, totalTextured >= 36 else { return false }
+            let staticPixelRatio = Double(totalStaticPixels) / Double(totalSamples)
+            let staticTexturedRatio = Double(totalStaticTextured) / Double(totalTextured)
+            let staticMAD = Double(totalStaticDiff) / Double(totalSamples)
+            let texturedRowRatio = Double(staticTexturedRows) / Double(h)
+
+            // 必须分布于至少 3 个纯静态纵带（含中间带）、纹理像素本身静止占比 ≥ 88%、静态纹理行数占比 ≥ 12%。
+            guard staticTexturedBands >= 3,
+                  interiorStaticBands >= 1,
+                  texturedRowRatio >= 0.12,
+                  movingBands <= 1,
+                  staticPixelRatio >= 0.92,
+                  staticTexturedRatio >= 0.88 else {
+                return false
+            }
+
+            // Gate 4：非周期性校验——如果该列在 shift 位移下同样高度匹配（如周期重复复选框列或纯色竖线），绝不判作固定侧栏！
+            let overlapH = h - shift
+            guard overlapH >= 24 else { return false }
+            var shiftedTexturedDiff = 0
+            var shiftedTexturedTotal = 0
+            var shiftedTexturedMatch = 0
+            let yStep = max(1, overlapH / 160)
+            for row in stride(from: 1, to: overlapH - 1, by: yStep) {
+                let yA = top + row + shift
+                let yB = top + row
+                guard yA < a.height - 1, yB < b.height - 1 else { continue }
+                for x in innerLeft..<innerRight {
+                    let idxA = yA * w + x
+                    let idxB = yB * w + x
+                    let av = Int(a.bytes[idxA])
+                    let bv = Int(b.bytes[idxB])
+                    let diff = abs(av - bv)
+                    let grad = max(
+                        abs(av - Int(a.bytes[idxA - 1])),
+                        abs(av - Int(a.bytes[idxA + 1])),
+                        abs(av - Int(a.bytes[idxA - w])),
+                        abs(av - Int(a.bytes[idxA + w]))
+                    )
+                    if grad > 6 {
+                        shiftedTexturedTotal += 1
+                        shiftedTexturedDiff += diff
+                        if diff <= 3 { shiftedTexturedMatch += 1 }
+                    }
+                }
+            }
+            guard shiftedTexturedTotal >= 12 else { return false }
+            let shiftedTexturedMAD = Double(shiftedTexturedDiff) / Double(shiftedTexturedTotal)
+            let shiftedTexMatchRatio = Double(shiftedTexturedMatch) / Double(shiftedTexturedTotal)
+            return shiftedTexturedMAD > max(8.0, staticMAD * 4.0) && shiftedTexMatchRatio < 0.72
+        }
+
+        // 收紧侧栏边界到静态纹理外缘（不吞掉正文白边，避免截断后续出现的宽图）
+        func tightSidebarEnd(fromLeft: Bool, limit: Int) -> Int {
+            let yStep = max(1, h / 160)
+            func columnHasStaticContent(_ x: Int) -> Bool {
+                guard x > 0, x < w - 1 else { return false }
+                var tex = 0
+                for y in stride(from: max(1, top), to: min(a.height - 1, bottom), by: yStep) {
+                    let idx = y * w + x
+                    let av = Int(a.bytes[idx])
+                    let bv = Int(b.bytes[idx])
+                    guard abs(av - bv) <= 2 else { continue }
+                    let grad = max(
+                        abs(av - Int(a.bytes[idx - 1])),
+                        abs(av - Int(a.bytes[idx + 1])),
+                        abs(av - Int(a.bytes[idx - w])),
+                        abs(av - Int(a.bytes[idx + w]))
+                    )
+                    if grad > 5 { tex += 1 }
+                }
+                return tex >= 3
+            }
+
+            if fromLeft {
+                var edge = limit
+                while edge > 0, !columnHasStaticContent(edge - 1) { edge -= 1 }
+                return min(limit, edge + 2)
+            } else {
+                var edge = limit
+                while edge < w, !columnHasStaticContent(edge) { edge += 1 }
+                return max(limit, edge - 2)
+            }
+        }
+
+        var leftOrigX = 0
+        if activeColumns.lowerBound > 0, provesFixedSidebar(colRange: 0..<activeColumns.lowerBound) {
+            let tight = tightSidebarEnd(fromLeft: true, limit: activeColumns.lowerBound)
+            leftOrigX = min(originalWidth, max(0, Int((Double(tight) * scaleX).rounded())))
+        }
+        var rightOrigX = originalWidth
+        if activeColumns.upperBound < w, provesFixedSidebar(colRange: activeColumns.upperBound..<w) {
+            let tight = tightSidebarEnd(fromLeft: false, limit: activeColumns.upperBound)
+            rightOrigX = min(originalWidth, max(leftOrigX, Int((Double(tight) * scaleX).rounded())))
+        }
+
+        guard leftOrigX > 0 || rightOrigX < originalWidth else { return nil }
+        let bodyWidth = rightOrigX - leftOrigX
+        guard bodyWidth >= max(120, originalWidth / 4) else { return nil }
+        return CGRect(x: leftOrigX, y: top, width: bodyWidth, height: bottom - top)
     }
 
     /// 在重叠区选硬切缝。固定浮层在视口原位置不动，却与滚动后的正文不一致：
     /// 旧浮层应使用当前帧已露出的像素，新浮层应保留旧帧仍可见的像素。
     /// 只选择复制边界，不涂白、不融合，也不生成被遮挡的内容。
-    private func seamRow(_ a: GrayFrame, _ b: GrayFrame, top: Int, bottom: Int, shift: Int) -> Int {
+    private func seamRow(_ a: GrayFrame, _ b: GrayFrame, top: Int, bottom: Int,
+                         columns: Range<Int>, shift: Int) -> Int {
         let count = bottom - top - shift
+        guard count > 0 else { return top }
         let middle = count / 2
         var oldCost = [Int](repeating: 0, count: count)
         var newCost = [Int](repeating: 0, count: count)
         var hasVisibleDifference = false
+        let xStart = max(1, columns.lowerBound)
+        let xEnd = min(a.width - 1, columns.upperBound)
 
         func hasDetail(_ frame: GrayFrame, x: Int, y: Int) -> Bool {
             let index = y * frame.width + x
@@ -149,7 +608,7 @@ public final class DisplacementEstimator {
         for row in 0..<count {
             let y = top + row
             guard y > 0, y + shift < a.height - 1 else { continue }
-            for x in 1..<(a.width - 1) {
+            for x in xStart..<xEnd {
                 let previous = (y + shift) * a.width + x
                 let current = y * a.width + x
                 let av = Int(a.bytes[previous]), bv = Int(b.bytes[current])
@@ -181,22 +640,26 @@ public final class DisplacementEstimator {
                 seam = boundary
             }
         }
-        return top + seamAvoidingSoftEdge(seam, previous: a, next: b, top: top, count: count, shift: shift)
+        return top + seamAvoidingSoftEdge(seam, previous: a, next: b, top: top, count: count,
+                                          columns: xStart..<xEnd, shift: shift)
     }
 
     /// 半透明边缘会让滚过的文字变淡，原屏幕坐标上的像素也随之变化。
     /// 只有重叠正文中有足够长的连续吻合区，才考虑把原接缝移进它。
     private func seamAvoidingSoftEdge(_ seam: Int, previous: GrayFrame, next: GrayFrame,
-                                      top: Int, count: Int, shift: Int) -> Int {
+                                      top: Int, count: Int, columns: Range<Int>, shift: Int) -> Int {
         let width = next.width
         let inset = max(1, width / 32) // 与位移估计一样，跳过两侧的滚动条。
-        let columns = inset..<(width - inset)
+        let safeStart = max(columns.lowerBound, inset)
+        let safeEnd = min(columns.upperBound, width - inset)
+        guard safeEnd > safeStart else { return seam }
+        let safeColumns = safeStart..<safeEnd
         var matching = 0..<0
         var start = 0
         for row in 0..<count {
             let current = (top + row) * width
             let prior = current + shift * width
-            let agrees = columns.allSatisfy { x in
+            let agrees = safeColumns.allSatisfy { x in
                 abs(Int(previous.bytes[prior + x]) - Int(next.bytes[current + x])) <= 1
             }
             if !agrees {
@@ -217,7 +680,7 @@ public final class DisplacementEstimator {
             let y = top + row
             guard y > 0, y + shift < previous.height - 1 else { continue }
             var tintedSamples = 0
-            for x in columns {
+            for x in safeColumns {
                 let current = y * width + x
                 let prior = current + shift * width
                 let difference = abs(Int(previous.bytes[prior]) - Int(next.bytes[current]))
@@ -235,7 +698,7 @@ public final class DisplacementEstimator {
                 edgeEnergy += nearTop ? be : ae
                 sharedGradient += Double(ax * bx + ay * by)
             }
-            if tintedSamples > columns.count / 2 { tintedRows += 1 }
+            if tintedSamples > safeColumns.count / 2 { tintedRows += 1 }
         }
         // 对齐后的笔画应同向。平滑会减弱梯度；渐变在少字处主要表现为固定的轻微底色。
         let sameStructure = sharedGradient > 0.5 * sqrt(clearEnergy * edgeEnergy)
@@ -247,14 +710,17 @@ public final class DisplacementEstimator {
     }
 
     private func correlation(_ a: UnsafeBufferPointer<UInt8>, _ b: UnsafeBufferPointer<UInt8>,
-                             width: Int, startA: Int, startB: Int, height: Int, rowStep: Int) -> Double {
+                             width: Int, columns: Range<Int>, startA: Int, startB: Int,
+                             height: Int, rowStep: Int, maxCols: Int = 80) -> Double {
         var sumA = 0.0, sumB = 0.0, sumAA = 0.0, sumBB = 0.0, sumAB = 0.0, count = 0.0
-        // 忽略最外侧的滚动条/边框；样本分布在整个重叠区，底部空白不会单独决定结果。
-        let inset = max(1, width / 32)
+        let colWidth = max(1, columns.upperBound - columns.lowerBound)
+        let xStep = max(1, colWidth / maxCols)
         for y in stride(from: 0, to: height, by: rowStep) {
-            for x in stride(from: inset, to: width - inset, by: max(1, width / 80)) {
-                let av = Double(a[(startA + y) * width + x])
-                let bv = Double(b[(startB + y) * width + x])
+            let rowA = (startA + y) * width
+            let rowB = (startB + y) * width
+            for x in stride(from: columns.lowerBound, to: columns.upperBound, by: xStep) {
+                let av = Double(a[rowA + x])
+                let bv = Double(b[rowB + x])
                 sumA += av; sumB += bv
                 sumAA += av * av; sumBB += bv * bv; sumAB += av * bv
                 count += 1
@@ -318,10 +784,12 @@ public final class FrameStitcher {
     public var configuration: Configuration
     private let estimator: DisplacementEstimator
     private var accumulated: CGImage?
+    private var accumulatedBuffer: Data?
     private var previousFrame: CGImage?
     private var firstFrame: CGImage?
     private var contentStitcher: FrameStitcher?
     private var maximumHeight = Int.max
+    private let allowsAutomaticSidebarDetection: Bool
     public private(set) var scrollingRect: CGRect?
 
     public init(
@@ -332,15 +800,28 @@ public final class FrameStitcher {
         self.configuration = configuration
         self.estimator = estimator
         self.scrollingRect = scrollingRect
+        self.allowsAutomaticSidebarDetection = true
+    }
+
+    private init(
+        configuration: Configuration,
+        estimator: DisplacementEstimator,
+        allowsAutomaticSidebarDetection: Bool
+    ) {
+        self.configuration = configuration
+        self.estimator = estimator
+        self.scrollingRect = nil
+        self.allowsAutomaticSidebarDetection = allowsAutomaticSidebarDetection
     }
 
     public var currentImage: CGImage? { accumulated }
     public var hasFixedRegions: Bool {
+        if let contentStitcher, contentStitcher.hasFixedRegions { return true }
         guard let scrollingRect, let firstFrame else { return false }
         return scrollingRect != CGRect(x: 0, y: 0, width: firstFrame.width, height: firstFrame.height)
     }
 
-    /// 滚动边界来自系统视口或用户框选，不从控件外观猜测。开始拼接后不得改换视口。
+    /// 设置滚动视口（来自系统 AX 视口、用户框选或首帧自动检测）。开始拼接增长后不得改换视口。
     public func setScrollingRect(_ rect: CGRect) throws {
         let rect = try validated(rect, in: firstFrame)
         if let firstFrame, let accumulated, accumulated.height != firstFrame.height {
@@ -374,7 +855,10 @@ public final class FrameStitcher {
     private func makeContentStitcher(for frame: CGImage, rect: CGRect) throws -> FrameStitcher {
         let availableHeight = 64_000_000 / frame.width - (frame.height - Int(rect.height))
         guard availableHeight >= Int(rect.height) else { throw StitchingError.imageTooLarge }
-        let content = FrameStitcher(configuration: configuration, estimator: estimator)
+        // 若当前视口就是整张画面（如 Chrome/Electron 外层 WebView），仍允许内部自动识别 CSS 固定侧栏。
+        let isFullFrame = rect == CGRect(x: 0, y: 0, width: frame.width, height: frame.height)
+        let content = FrameStitcher(configuration: configuration, estimator: estimator,
+                                    allowsAutomaticSidebarDetection: isFullFrame)
         content.maximumHeight = availableHeight
         return content
     }
@@ -439,7 +923,10 @@ public final class FrameStitcher {
         }
 
         guard let previousFrame else { throw StitchingError.noFrames }
-        let match = try estimator.match(previous: previousFrame, next: frame)
+        let canAutoDetectSidebar = allowsAutomaticSidebarDetection
+            && firstFrame.map { existing.height == $0.height } ?? false
+        let match = try estimator.match(previous: previousFrame, next: frame,
+                                        detectSidebars: canAutoDetectSidebar)
         let displacement = match.displacement
         guard displacement.confidence >= configuration.confidenceThreshold else {
             throw StitchingError.ambiguousDisplacement
@@ -457,45 +944,77 @@ public final class FrameStitcher {
             throw StitchingError.ambiguousDisplacement
         }
 
+        // 首段滚动即自动识别出真实固定侧栏时，升级为视口拼接模式，固定侧栏仅保留一次，不重复切条！
+        if canAutoDetectSidebar, let autoRect = match.detectedScrollingRect,
+           let validRect = try? validated(autoRect, in: frame) {
+            try setScrollingRect(validRect)
+            return try appendInViewport(frame, rect: validRect)
+        }
+
         let width = existing.width
         let totalHeight = existing.height + shift
         // 限制单张结果为 64M 像素（RGBA 约 256 MB），避免会话无限增长。
         guard totalHeight <= min(maximumHeight, 64_000_000 / width) else { throw StitchingError.imageTooLarge }
-        guard let context = CGContext(
-            data: nil,
-            width: width,
-            height: totalHeight,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else {
-            throw StitchingError.frameTooSmall
+        let bytesPerRow = width * 4
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
+
+        // 惰性将首帧规范化为连续 sRGB RGBA 顶向下缓冲；后续拼接直接 memcpy 前缀行，不再重绘整张历史画布。
+        let previousBuffer: Data
+        if let existingBuffer = accumulatedBuffer, existingBuffer.count == existing.height * bytesPerRow {
+            previousBuffer = existingBuffer
+        } else {
+            var rendered = Data(count: existing.height * bytesPerRow)
+            let ok = rendered.withUnsafeMutableBytes { raw -> Bool in
+                guard let ctx = CGContext(data: raw.baseAddress, width: width, height: existing.height,
+                                          bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+                                          space: colorSpace, bitmapInfo: bitmapInfo.rawValue) else { return false }
+                ctx.interpolationQuality = .none
+                ctx.draw(existing, in: CGRect(x: 0, y: 0, width: width, height: existing.height))
+                return true
+            }
+            guard ok else { throw StitchingError.frameTooSmall }
+            previousBuffer = rendered
         }
 
-        // 上下文原点在左下。保留接缝上方的已有内容，用当前帧替换整个重叠尾部，
-        // 让后续帧真正露出的正文覆盖旧的固定按钮残片。
-        context.interpolationQuality = .none
         let tailHeight = frame.height - match.seam
         let keptHeight = totalHeight - tailHeight
-        guard let top = existing.cropping(to: CGRect(x: 0, y: 0, width: width, height: keptHeight)) else {
+        guard keptHeight >= 0, keptHeight <= existing.height, tailHeight > 0 else {
             throw StitchingError.frameTooSmall
         }
-        context.draw(top, in: CGRect(x: 0, y: tailHeight, width: width, height: keptHeight))
-        let stripRect = CGRect(
-            x: 0,
-            y: match.seam,
-            width: width,
-            height: tailHeight
-        )
-        guard let strip = frame.cropping(to: stripRect) else {
+        guard let strip = frame.cropping(to: CGRect(x: 0, y: match.seam, width: width, height: tailHeight)) else {
             throw StitchingError.frameTooSmall
         }
-        context.draw(strip, in: CGRect(x: 0, y: 0, width: width, height: tailHeight))
 
-        guard let stitched = context.makeImage() else {
+        var nextBuffer = Data(count: totalHeight * bytesPerRow)
+        let composed = nextBuffer.withUnsafeMutableBytes { dstRaw -> Bool in
+            guard let dstBase = dstRaw.baseAddress else { return false }
+            if keptHeight > 0 {
+                previousBuffer.withUnsafeBytes { srcRaw in
+                    if let srcBase = srcRaw.baseAddress {
+                        memcpy(dstBase, srcBase, keptHeight * bytesPerRow)
+                    }
+                }
+            }
+            let tailPtr = dstBase.advanced(by: keptHeight * bytesPerRow)
+            guard let tailCtx = CGContext(data: tailPtr, width: width, height: tailHeight,
+                                          bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+                                          space: colorSpace, bitmapInfo: bitmapInfo.rawValue) else { return false }
+            tailCtx.interpolationQuality = .none
+            tailCtx.draw(strip, in: CGRect(x: 0, y: 0, width: width, height: tailHeight))
+            return true
+        }
+        guard composed,
+              let provider = CGDataProvider(data: nextBuffer as CFData),
+              let stitched = CGImage(width: width, height: totalHeight,
+                                     bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: bytesPerRow,
+                                     space: colorSpace, bitmapInfo: bitmapInfo, provider: provider,
+                                     decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+        else {
             throw StitchingError.frameTooSmall
         }
+
+        accumulatedBuffer = nextBuffer
         accumulated = stitched
         self.previousFrame = frame
         return stitched
@@ -509,6 +1028,7 @@ public final class FrameStitcher {
 
     public func reset() {
         accumulated = nil
+        accumulatedBuffer = nil
         previousFrame = nil
         firstFrame = nil
         contentStitcher = nil

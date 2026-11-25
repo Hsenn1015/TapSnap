@@ -91,6 +91,7 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
 
         // 识别与翻译
         menu.addItem(shortcutMenuItem("文字识别", action: #selector(startOCR), shortcut: .ocrRegion, symbol: "text.viewfinder"))
+        menu.addItem(shortcutMenuItem("截图秒译", action: #selector(startQuickTranslation), shortcut: .quickTranslate, symbol: "sparkle.magnifyingglass"))
         menu.addItem(menuItem("截图翻译", action: #selector(startTranslation), symbol: "character.bubble"))
         menu.addItem(submenuItem("更多识别", symbol: "sparkles") { sub in
             sub.addItem(menuItem("表格识别", action: #selector(startTableRecognition), symbol: "tablecells"))
@@ -271,6 +272,7 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
     @objc private func startFullScreenCapture() { environment.captureCoordinator.start(.edit, mode: .fullScreen) }
     @objc private func showScreenshotPresets() { environment.screenshotPresets.show() }
     @objc private func startTranslation() { environment.captureCoordinator.start(.translate) }
+    @objc private func startQuickTranslation() { environment.captureCoordinator.start(.quickTranslate) }
     @objc private func startFormulaRecognition() {
         environment.formulaPanel.captureWhenReady { [weak environment = environment] in
             environment?.captureCoordinator.start(.formula)

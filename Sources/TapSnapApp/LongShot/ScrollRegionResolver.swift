@@ -10,6 +10,14 @@ struct ScrollRegionResolution {
 }
 
 enum ScrollRegionResolver {
+    struct ScrollAreaCandidate {
+        var viewport: CGRect
+        var contents: [CGRect]
+        var clippingRects: [CGRect]
+        var verticalScrollbars: [CGRect]
+        var horizontalScrollbars: [CGRect]
+    }
+
     /// 在后台调用；仅查询公开 AX 几何信息，不请求授权或操作目标应用。
     static func resolve(at point: CGPoint, within selection: CGRect) -> ScrollRegionResolution? {
         guard AXIsProcessTrusted(), valid(selection), point.x.isFinite, point.y.isFinite,
@@ -48,54 +56,85 @@ enum ScrollRegionResolver {
             return valid(rect) ? rect : nil
         }
 
+        // 沿父链收集所有 AXScrollArea（从内到外），避免被横向代码块等不可竖向滚动的内层容器截胡。
         var current: AXUIElement? = hit
         var visited: [AXUIElement] = []
-        var scrollArea: AXUIElement?
-        var viewport: CGRect?
-        var clippingRects: [CGRect] = []
-        var reachedWindow = false
+        var scrollAreas: [(element: AXUIElement, bounds: CGRect)] = []
+        var windowBounds: CGRect?
         for _ in 0..<24 {
             guard let node = current, !visited.contains(where: { CFEqual($0, node) }),
                   let role = attribute(node, kAXRoleAttribute) as? String else { return nil }
             visited.append(node)
             if role == kAXScrollAreaRole {
                 guard let bounds = frame(node) else { return nil }
-                if scrollArea == nil {
-                    scrollArea = node
-                    viewport = bounds
-                } else {
-                    clippingRects.append(bounds)
-                }
+                scrollAreas.append((node, bounds))
             } else if role == kAXWindowRole {
                 guard let bounds = frame(node) else { return nil }
-                clippingRects.append(bounds)
-                reachedWindow = true
+                windowBounds = bounds
                 break
             }
             current = element(attribute(node, kAXParentAttribute))
         }
-        guard reachedWindow, let scrollArea, let viewport else { return nil }
+        guard let windowBounds, !scrollAreas.isEmpty else { return nil }
 
-        var contents: [CGRect] = []
-        if let children = attribute(scrollArea, kAXContentsAttribute) as? [AnyObject], children.count <= 64 {
-            for child in children {
-                guard let child = element(child), let bounds = frame(child) else {
-                    // 部分几何不能证明滚动条与所有内容独立。
-                    contents.removeAll()
-                    break
+        var candidates: [ScrollAreaCandidate] = []
+        for (index, item) in scrollAreas.enumerated() {
+            var contents: [CGRect] = []
+            if let children = attribute(item.element, kAXContentsAttribute) as? [AnyObject], children.count <= 64 {
+                for child in children {
+                    guard let child = element(child), let bounds = frame(child) else {
+                        contents.removeAll()
+                        break
+                    }
+                    contents.append(bounds)
                 }
-                contents.append(bounds)
             }
+            let vertical = element(attribute(item.element, kAXVerticalScrollBarAttribute)).flatMap(frame)
+            let horizontal = element(attribute(item.element, kAXHorizontalScrollBarAttribute)).flatMap(frame)
+            var clipping = scrollAreas.dropFirst(index + 1).map(\.bounds)
+            clipping.append(windowBounds)
+            candidates.append(ScrollAreaCandidate(
+                viewport: item.bounds,
+                contents: contents,
+                clippingRects: clipping,
+                verticalScrollbars: vertical.map { [$0] } ?? [],
+                horizontalScrollbars: horizontal.map { [$0] } ?? []
+            ))
         }
-        let vertical = element(attribute(scrollArea, kAXVerticalScrollBarAttribute)).flatMap(frame)
-        let horizontal = element(attribute(scrollArea, kAXHorizontalScrollBarAttribute)).flatMap(frame)
         guard ProcessInfo.processInfo.systemUptime < deadline else { return nil }
-        guard var result = clippedResolution(viewport: viewport, contents: contents, clippingRects: clippingRects,
-                                             verticalScrollbars: vertical.map { [$0] } ?? [],
-                                             horizontalScrollbars: horizontal.map { [$0] } ?? [], selection: selection),
-              result.viewport.contains(point) else { return nil }
+        guard var result = selectBestResolution(from: candidates, at: point, within: selection) else { return nil }
         result.processID = pid
         return result
+    }
+
+    /// 优先选择最内层「明确具备竖向滚动能力」的候选视口（有竖向滚动条或内容高度超出视口）；
+    /// 跳过仅横向滚动或定高不溢出的嵌套子容器。若均未上报溢出信息，则回退最内层合法候选。
+    static func selectBestResolution(
+        from candidates: [ScrollAreaCandidate],
+        at point: CGPoint,
+        within selection: CGRect
+    ) -> ScrollRegionResolution? {
+        var fallback: ScrollRegionResolution?
+        for candidate in candidates {
+            guard let resolution = clippedResolution(
+                viewport: candidate.viewport,
+                contents: candidate.contents,
+                clippingRects: candidate.clippingRects,
+                verticalScrollbars: candidate.verticalScrollbars,
+                horizontalScrollbars: candidate.horizontalScrollbars,
+                selection: selection
+            ), resolution.viewport.contains(point) else { continue }
+            if fallback == nil { fallback = resolution }
+
+            let hasVerticalBar = !candidate.verticalScrollbars.isEmpty
+            let knownContents = candidate.contents.filter(valid)
+            let contentUnion = knownContents.reduce(CGRect.null) { $0.union($1) }
+            let overflowsVertically = !contentUnion.isNull && contentUnion.height > candidate.viewport.height + 4
+            if hasVerticalBar || overflowsVertically {
+                return resolution
+            }
+        }
+        return fallback
     }
 
     /// 纯几何接缝：AXContents 可能是超过视口的文档，也可能只是窄文字节点。

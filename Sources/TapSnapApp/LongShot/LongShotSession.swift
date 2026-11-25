@@ -47,6 +47,7 @@ final class LongShotSession: NSObject {
     private var scrollProcessID: pid_t?
     private var selectionImage: CGImage?
     private var pendingFrame: CGImage?
+    private var queuedLiveFrame: CGImage?
     private var regionWindow: SelectionOverlayWindow?
     private var regionRequestID = UUID()
     private let regionQueue = DispatchQueue(label: "com.sensnap.longshot-region")
@@ -100,12 +101,14 @@ final class LongShotSession: NSObject {
         scrollProcessID = nil
         selectionImage = initialImage
         pendingFrame = nil
+        queuedLiveFrame = nil
         stitchingQueue.async { [stitcher] in stitcher.reset() }
 
         // 预览窗同时充当控制条：完成 / 取消都在它上面。
         preview.showLive(
             on: screen,
             avoiding: rect,
+            theme: environment.theme,
             onFinish: { [weak self] in self?.finish() },
             onCancel: { [weak self] in self?.cancel() },
             onSelectScrollRegion: { [weak self] in self?.selectScrollRegion() },
@@ -136,7 +139,7 @@ final class LongShotSession: NSObject {
             }
         }
         self.streamer = streamer
-        streamer.start(screen: screen, frameRate: 10, excludingCurrentApplication: true,
+        streamer.start(screen: screen, frameRate: 30, excludingCurrentApplication: true,
                        hideDesktopIcons: environment.config.settings.capture.hideDesktopIcons)
         interruptionMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] _ in
             DispatchQueue.main.async {
@@ -155,8 +158,13 @@ final class LongShotSession: NSObject {
             latestAutomaticFrame = frame
             return
         }
-        guard !processingFrame, let rect = selectionRect, let screen,
+        guard let rect = selectionRect, let screen,
               let cropped = Self.cropFrame(frame.image, rect: rect, screen: screen) else { return }
+        if processingFrame {
+            // 正在拼上一帧时仅保留最新到达的一帧，拼完立刻无缝衔接，避免慢帧丢弃导致预览一顿一顿。
+            if layoutReady && !resolvingRegion { queuedLiveFrame = cropped }
+            return
+        }
         if selectionImage == nil {
             selectionImage = cropped
             append(cropped, sessionID: id)
@@ -312,6 +320,7 @@ final class LongShotSession: NSObject {
         scrollMonitor = nil
         dismissRegionWindow()
         pendingFrame = nil
+        queuedLiveFrame = nil
         selectionImage = nil
         resolvingRegion = false
     }
@@ -356,7 +365,13 @@ final class LongShotSession: NSObject {
                 } else if case .failure(let error) = result {
                     self.reportStitchingError(error)
                 }
-                self.startAutomaticScrollIfReady()
+                if onAutomaticResult == nil, self.layoutReady, !self.resolvingRegion,
+                   let nextQueued = self.queuedLiveFrame {
+                    self.queuedLiveFrame = nil
+                    self.append(nextQueued, sessionID: id)
+                } else {
+                    self.startAutomaticScrollIfReady()
+                }
             }
         }
     }
@@ -658,23 +673,27 @@ final class LongShotSession: NSObject {
                                     style: environment.defaultEditStyle, scrollsLongImage: true, restoring: document)
         privacyEditor = editor
         if forcePrivacy || environment.config.settings.privacy.enabled { editor.scanPrivacy() }
+        let renderedOutput: () -> CGImage? = { [weak self] in
+            guard let self, let rendered = self.privacyEditor?.renderedImage() else { return nil }
+            return LongShotPreviewPanel.cropVertically(rendered, fraction: self.preview.verticalCropFraction)
+        }
         preview.showResult(image, actions: [
             ("贴图", { [weak self] in
-                guard let self, let editor = self.privacyEditor, let output = editor.renderedImage() else { return }
+                guard let self, let editor = self.privacyEditor, let output = renderedOutput() else { return }
                 self.environment.pinGroups.show(output, from: editor.outputTopLeft, scale: scale) {
                     self.cancel()
                 }
             }),
             ("复制", { [weak self] in
-                guard let self, let editor = self.privacyEditor, let output = editor.renderedImage() else { return }
+                guard let self, let editor = self.privacyEditor, let output = renderedOutput() else { return }
                 self.environment.pinTransfer.copy(output, scale: scale, sourceTopLeft: editor.outputTopLeft,
                                                   kind: .longShot, successMessage: "已复制长图")
             }),
             ("保存", { [weak self] in
-                guard let self, let output = self.privacyEditor?.renderedImage() else { return }
+                guard let self, let output = renderedOutput() else { return }
                 self.save(output)
             }),
-        ], privacyEditor: editor, onEdit: { [weak self] in
+        ], theme: environment.theme, privacyEditor: editor, dragImageProvider: renderedOutput, onEdit: { [weak self] in
             guard let self, self.state == .result, let editor = self.privacyEditor else { return }
             // 同一个编辑文档交给编辑器，保留已加的遮盖和正在进行的扫描。
             self.privacyEditor = nil

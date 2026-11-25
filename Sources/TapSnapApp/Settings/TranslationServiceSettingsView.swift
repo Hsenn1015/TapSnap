@@ -103,6 +103,8 @@ struct TranslationServiceSettingsView: View {
                 }
             }
 
+            quickTranslateStyleGroup
+
             if let api = draft.apiConfiguration {
                 apiSettingsGroup(api)
             } else if let model = draft.modelConfiguration {
@@ -111,6 +113,80 @@ struct TranslationServiceSettingsView: View {
                 appleSettingsGroup
             }
         }
+    }
+
+    private var quickTranslateStyleGroup: some View {
+        SnapSettingGroup("截图秒译（悬停浮卡）", theme: theme) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("框选屏幕文字松手即弹出译文浮卡，不跳转大窗；框选期间按 Tab 可快速切换目标语言，在「快捷键」中可为截图秒译绑定全局热键。")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(theme.token(.mutedForeground))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                    ForEach(QuickTranslateStyle.allCases, id: \.self) { style in
+                        let selected = draft.quickTranslateStyle == style
+                        Button {
+                            draft.quickTranslateStyle = style
+                            config.update { $0.translation.quickTranslateStyle = style }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack(spacing: 6) {
+                                    quickTranslateStyleAccentDot(for: style)
+                                    Text(style.displayName)
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(theme.token(.foreground))
+                                        .lineLimit(1)
+                                    Spacer(minLength: 2)
+                                    if selected {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(theme.token(.primary))
+                                    }
+                                }
+                                Text(style.summary)
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(theme.token(.mutedForeground))
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 9)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .fill(selected ? theme.token(.accent).opacity(0.65) : theme.token(.secondary).opacity(0.45))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .strokeBorder(selected ? theme.token(.primary) : theme.token(.border), lineWidth: selected ? 1.4 : 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+        }
+    }
+
+    @ViewBuilder
+    private func quickTranslateStyleAccentDot(for style: QuickTranslateStyle) -> some View {
+        let colors: [Color] = switch style {
+        case .liquidGlass:
+            [Color(red: 0.22, green: 0.74, blue: 0.97), Color(red: 0.44, green: 0.38, blue: 0.98)]
+        case .editorial:
+            [Color(red: 0.38, green: 0.72, blue: 0.99), Color(red: 0.39, green: 0.40, blue: 0.95)]
+        case .inlineBilingual:
+            [Color(red: 0.98, green: 0.72, blue: 0.22), Color(red: 0.22, green: 0.74, blue: 0.97)]
+        case .dynamicBubble:
+            [Color(red: 0.20, green: 0.83, blue: 0.60), Color(red: 0.22, green: 0.74, blue: 0.97)]
+        }
+        Circle()
+            .fill(LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing))
+            .frame(width: 9, height: 9)
     }
 
     private func apiSettingsGroup(_ api: TranslationAPIConfiguration) -> some View {
@@ -721,6 +797,7 @@ struct TranslationServiceSettingsView: View {
                 settings.translation.provider = draft.provider
                 settings.translation.targetLanguage = draft.targetLanguage
                 settings.translation.autoTranslateOnOpen = draft.autoTranslateOnOpen
+                settings.translation.quickTranslateStyle = draft.quickTranslateStyle
                 if let api = draft.apiConfiguration {
                     settings.translation.apiProvider = draft.apiProvider
                     settings.translation.saveAPI(api)

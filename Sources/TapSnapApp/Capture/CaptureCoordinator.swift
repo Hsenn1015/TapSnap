@@ -23,6 +23,8 @@ final class CaptureCoordinator {
         /// 交给表格识别
         case table
         case translate
+        /// 截图秒译：松手直接弹出轻量悬停译文卡，不跳大窗
+        case quickTranslate
         case formula
         /// 交给滚动长截图
         case longShot
@@ -152,6 +154,22 @@ final class CaptureCoordinator {
             view.showsMagnifier = captureSettings.showMagnifier
             view.showsSizeLabel = captureSettings.showSelectionSize
             view.config = environment.config
+            if outcome == .quickTranslate {
+                let translationSettings = environment.config.settings.translation
+                view.quickTranslateStyle = translationSettings.quickTranslateStyle
+                view.quickTranslateTargetLanguage = Self.quickTranslateLanguageName(for: translationSettings.targetLanguage)
+                view.showsMagnifier = false
+                view.onCycleQuickTranslateLanguage = { [weak self] in
+                    guard let self else { return "简体中文" }
+                    let nextCode = Self.nextQuickTranslateLanguage(after: self.environment.config.settings.translation.targetLanguage)
+                    self.environment.config.update { $0.translation.targetLanguage = nextCode }
+                    let label = Self.quickTranslateLanguageName(for: nextCode)
+                    for peer in self.overlayViews {
+                        peer.quickTranslateTargetLanguage = label
+                    }
+                    return label
+                }
+            }
             view.onFinish = { [weak self] rect in
                 self?.finish(rect: rect, screen: screen, sessionID: id)
             }
@@ -260,7 +278,7 @@ final class CaptureCoordinator {
         isPreparingHandoff = true
         Task { @MainActor in
             // 留一帧让松手与处理中状态上屏，避免刚点完就突然切走。
-            if selectedOutcome != .copy, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            if selectedOutcome != .copy, selectedOutcome != .quickTranslate, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
                 try? await Task.sleep(for: .milliseconds(65))
             }
             guard self.session?.id == id, isPreparingHandoff else { return }
@@ -344,6 +362,8 @@ final class CaptureCoordinator {
             environment.ocrCoordinator.recognize(cropped)
         case .translate:
             environment.translateImage(cropped, captureRect: globalRect)
+        case .quickTranslate:
+            environment.quickTranslateImage(cropped, captureRect: globalRect)
         case .formula:
             environment.recognizeFormula(cropped)
         case .table:
@@ -467,6 +487,29 @@ final class CaptureCoordinator {
                   let rect = CGRect(dictionaryRepresentation: raw as CFDictionary),
                   rect.width > 2, rect.height > 2 else { return nil }
             return VisibleWindow(bounds: rect, processID: processID)
+        }
+    }
+
+    static let quickTranslateCycleLanguages = ["zh-Hans", "en", "ja", "ko"]
+
+    static func nextQuickTranslateLanguage(after current: String) -> String {
+        guard let index = quickTranslateCycleLanguages.firstIndex(of: current) else {
+            return quickTranslateCycleLanguages[0]
+        }
+        return quickTranslateCycleLanguages[(index + 1) % quickTranslateCycleLanguages.count]
+    }
+
+    static func quickTranslateLanguageName(for code: String) -> String {
+        switch code {
+        case "zh-Hans": return "简体中文"
+        case "zh-Hant": return "繁體中文"
+        case "en": return "英语"
+        case "ja": return "日语"
+        case "ko": return "韩语"
+        case "fr": return "法语"
+        case "de": return "德语"
+        case "es": return "西班牙语"
+        default: return code
         }
     }
 

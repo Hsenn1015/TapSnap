@@ -145,16 +145,18 @@ final class RecordingAnnotationTimeline: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard track.width > 0, track.height > 0, let context = NSGraphicsContext.current?.cgContext else { return }
+        // 无标注时彻底保持透明，避免底部出现突兀的灰色空块。
+        guard !clips.isEmpty else { return }
         context.saveGState()
-        let background = NSBezierPath(roundedRect: track, xRadius: 4, yRadius: 4)
-        NSColor.labelColor.withAlphaComponent(0.06).setFill()
+        let background = NSBezierPath(roundedRect: track, xRadius: 7, yRadius: 7)
+        NSColor.labelColor.withAlphaComponent(0.055).setFill()
         background.fill()
         background.addClip()
         for clip in clips where frame(for: clip).intersects(track) {
             draw(clip)
         }
         if let trimRange {
-            NSColor.windowBackgroundColor.withAlphaComponent(0.58).setFill()
+            NSColor.windowBackgroundColor.withAlphaComponent(0.55).setFill()
             let start = x(at: trimRange.start), end = x(at: trimRange.end)
             CGRect(x: track.minX, y: track.minY, width: start - track.minX, height: track.height).fill()
             CGRect(x: end, y: track.minY, width: track.maxX - end, height: track.height).fill()
@@ -183,16 +185,16 @@ final class RecordingAnnotationTimeline: NSView {
     private func draw(_ clip: Clip) {
         let rect = frame(for: clip)
         let selected = clip.annotation.id == selectedID
-        let body = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
-        (selected ? accentColor.withAlphaComponent(0.19) : NSColor.controlBackgroundColor).setFill()
+        let body = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
+        (selected ? accentColor.withAlphaComponent(0.24) : accentColor.withAlphaComponent(0.10)).setFill()
         body.fill()
-        (selected ? accentColor : NSColor.separatorColor).setStroke()
+        (selected ? accentColor : accentColor.withAlphaComponent(0.32)).setStroke()
         body.stroke()
         guard rect.width >= 21 else { return }
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
         (clip.annotation.kind.title as NSString).draw(in: rect.insetBy(dx: 6, dy: 1), withAttributes: [
-            .font: NSFont.systemFont(ofSize: 11, weight: selected ? .semibold : .medium),
+            .font: NSFont.systemFont(ofSize: 10.5, weight: selected ? .semibold : .medium),
             .foregroundColor: NSColor.labelColor,
             .paragraphStyle: paragraph,
         ])

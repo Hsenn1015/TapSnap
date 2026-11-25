@@ -238,4 +238,28 @@ final class GifExporterTests: XCTestCase {
         XCTAssertEqual(CGImageSourceGetCount(try source(output)), 2)
         XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: directory.path).contains { $0.hasPrefix(".tapsnap-gif-") })
     }
+
+    func testPlaybackSpeedScalesTotalGifDurationAndValidatesRange() async throws {
+        let video = try await makeVideo(frameCount: 20, frameRate: 20)
+        let fast = directory.appendingPathComponent("fast.gif")
+        try await GifExporter.export(videoURL: video, to: fast, sampleInterval: 1.0 / 10.0, playbackSpeed: 2.0)
+        let fastSource = try source(fast)
+        XCTAssertEqual(CGImageSourceGetCount(fastSource), 5)
+        XCTAssertEqual(try delays(fastSource).reduce(0, +), 0.5, accuracy: 0.02)
+
+        let slow = directory.appendingPathComponent("slow.gif")
+        try await GifExporter.export(videoURL: video, to: slow, sampleInterval: 1.0 / 10.0, playbackSpeed: 0.5)
+        let slowSource = try source(slow)
+        XCTAssertEqual(CGImageSourceGetCount(slowSource), 20)
+        XCTAssertEqual(try delays(slowSource).reduce(0, +), 2.0, accuracy: 0.03)
+
+        let invalid = directory.appendingPathComponent("bad-speed.gif")
+        for speed in [0.0, -1.0, 0.1, 8.0, Double.nan, Double.infinity] {
+            do {
+                try await GifExporter.export(videoURL: video, to: invalid, playbackSpeed: speed)
+                XCTFail("无效倍速 \(speed) 应被拒绝")
+            } catch GIFExportError.invalidParameters {
+            }
+        }
+    }
 }

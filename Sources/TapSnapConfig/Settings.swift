@@ -16,6 +16,32 @@ public enum ScreenshotTranslationProvider: String, CaseIterable, Codable, Sendab
     }
 }
 
+/// 截图秒译（松手即译悬停浮卡）的框选标识与浮卡视觉风格。
+public enum QuickTranslateStyle: String, CaseIterable, Codable, Hashable, Sendable {
+    case liquidGlass
+    case editorial
+    case inlineBilingual
+    case dynamicBubble
+
+    public var displayName: String {
+        switch self {
+        case .liquidGlass: return "液态玻璃语义胶囊"
+        case .editorial: return "聚光取词取景器"
+        case .inlineBilingual: return "原地双语高亮卡"
+        case .dynamicBubble: return "灵动岛气泡卡"
+        }
+    }
+
+    public var summary: String {
+        switch self {
+        case .liquidGlass: return "冰蓝靛紫液态边框 + 左上角语义胶囊 + 指向尖角浮卡"
+        case .editorial: return "极轻暗幕四角取词标 + 无顶栏首行直出译文卡"
+        case .inlineBilingual: return "琥珀青蓝双色边 + 原文荧光高亮，支持仅译文 / 双语 / 覆盖原文"
+        case .dynamicBubble: return "薄荷青柔光选区 + 灵动岛药丸展开气泡与侧边迷你浮豆"
+        }
+    }
+}
+
 public enum TranslationFontFamily: String, CaseIterable, Codable, Hashable, Sendable {
     case system, serif, rounded, monospaced
 
@@ -74,13 +100,20 @@ public struct ScreenshotTranslationSettings: Codable, Hashable, Sendable {
     public var onlineProvider: PrivacyAIProvider = .deepSeek
     public var autoTranslateOnOpen = true
     public var style: TranslationTypographyStyle = .default
+    private var quickTranslateStyleRaw: String?
     private var profiles: [String: PrivacyAIConfiguration] = [:]
     private var apiProfiles: [String: TranslationAPIConfiguration] = [:]
+
+    public var quickTranslateStyle: QuickTranslateStyle {
+        get { quickTranslateStyleRaw.flatMap(QuickTranslateStyle.init(rawValue:)) ?? .liquidGlass }
+        set { quickTranslateStyleRaw = newValue == .liquidGlass ? nil : newValue.rawValue }
+    }
 
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
         case provider, targetLanguage, apiProvider, onlineProvider, autoTranslateOnOpen, style, profiles, apiProfiles
+        case quickTranslateStyleRaw = "quickTranslateStyle"
     }
 
     public init(from decoder: Decoder) throws {
@@ -91,6 +124,7 @@ public struct ScreenshotTranslationSettings: Codable, Hashable, Sendable {
         onlineProvider = try container.decodeIfPresent(PrivacyAIProvider.self, forKey: .onlineProvider) ?? .deepSeek
         autoTranslateOnOpen = try container.decodeIfPresent(Bool.self, forKey: .autoTranslateOnOpen) ?? true
         style = try container.decodeIfPresent(TranslationTypographyStyle.self, forKey: .style) ?? .default
+        quickTranslateStyleRaw = try container.decodeIfPresent(String.self, forKey: .quickTranslateStyleRaw)
         profiles = try container.decodeIfPresent([String: PrivacyAIConfiguration].self, forKey: .profiles) ?? [:]
         apiProfiles = try container.decodeIfPresent([String: TranslationAPIConfiguration].self, forKey: .apiProfiles) ?? [:]
     }
@@ -112,6 +146,78 @@ public struct ScreenshotTranslationSettings: Codable, Hashable, Sendable {
 
     public mutating func saveAPI(_ api: TranslationAPIConfiguration) {
         apiProfiles[api.provider.rawValue] = api
+    }
+}
+
+public enum RecordingMouseClickStyle: String, CaseIterable, Sendable {
+    case liquidRipple
+    case squareBracket
+    case miniMouse
+    case opticalFocus
+    case orbitalSweep
+    case microSpark
+    case tactileGlass
+    case crosshairSnap
+    case spotlightHalo
+    case sonarTriple
+    case dualPulse
+    case diamondPrism
+    case liquidPetal
+    case keycapBadge
+
+    public var displayName: String {
+        switch self {
+        case .liquidRipple: return "液态玻璃水波"
+        case .squareBracket: return "方框角标轻扣"
+        case .miniMouse: return "迷你鼠标亮键"
+        case .opticalFocus: return "精密靶环合焦"
+        case .orbitalSweep: return "轨道一笔画弧"
+        case .microSpark: return "极简微粒迸散"
+        case .tactileGlass: return "触控玻璃压痕"
+        case .crosshairSnap: return "精密十字轻锁"
+        case .spotlightHalo: return "无框聚光微晕"
+        case .sonarTriple: return "声纳极细三波"
+        case .dualPulse: return "双轨脉冲环"
+        case .diamondPrism: return "棱镜菱形切晶"
+        case .liquidPetal: return "露珠四瓣绽放"
+        case .keycapBadge: return "键标微泡提示"
+        }
+    }
+}
+
+public enum RecordingMouseScrollStyle: String, CaseIterable, Sendable {
+    case glassPill
+    case kineticChevron
+    case wheelTicks
+    case silkyStream
+    case arcWave
+
+    public var displayName: String {
+        switch self {
+        case .glassPill: return "液态滚动胶囊"
+        case .kineticChevron: return "双层导向箭羽"
+        case .wheelTicks: return "精密滚轮刻度"
+        case .silkyStream: return "轻盈水流尾迹"
+        case .arcWave: return "方向弧波"
+        }
+    }
+}
+
+public enum RecordingMouseEffectPalette: String, CaseIterable, Sendable {
+    case glassBlue
+    case applePure
+    case leicaCoral
+    case mintTeal
+    case goldAmber
+
+    public var displayName: String {
+        switch self {
+        case .glassBlue: return "液态冰蓝"
+        case .applePure: return "纯净白晶"
+        case .leicaCoral: return "徕卡橘红"
+        case .mintTeal: return "薄荷青翠"
+        case .goldAmber: return "香槟暖金"
+        }
     }
 }
 
@@ -504,12 +610,47 @@ public struct Settings: Codable, Hashable, Sendable {
         public var includesCamera = false
         public var showsKeyPresses = false
         public var showsMouseClicks = false
+        private var showsMouseScrollsRaw: Bool?
+        private var mouseClickStyleRaw: String?
+        private var mouseScrollStyleRaw: String?
+        private var mouseEffectPaletteRaw: String?
+        private var mouseEffectScaleRaw: Double?
+
+        public var showsMouseScrolls: Bool {
+            get { showsMouseScrollsRaw ?? false }
+            set { showsMouseScrollsRaw = newValue ? true : nil }
+        }
+        public var mouseClickStyle: RecordingMouseClickStyle {
+            get { mouseClickStyleRaw.flatMap(RecordingMouseClickStyle.init(rawValue:)) ?? .liquidRipple }
+            set { mouseClickStyleRaw = newValue == .liquidRipple ? nil : newValue.rawValue }
+        }
+        public var mouseScrollStyle: RecordingMouseScrollStyle {
+            get { mouseScrollStyleRaw.flatMap(RecordingMouseScrollStyle.init(rawValue:)) ?? .glassPill }
+            set { mouseScrollStyleRaw = newValue == .glassPill ? nil : newValue.rawValue }
+        }
+        public var mouseEffectPalette: RecordingMouseEffectPalette {
+            get { mouseEffectPaletteRaw.flatMap(RecordingMouseEffectPalette.init(rawValue:)) ?? .glassBlue }
+            set { mouseEffectPaletteRaw = newValue == .glassBlue ? nil : newValue.rawValue }
+        }
+        /// 录屏鼠标动效尺寸倍率（0.75 ~ 1.45，默认 1.0）。
+        public var mouseEffectScale: Double {
+            get { min(max(mouseEffectScaleRaw ?? 1.0, 0.75), 1.45) }
+            set {
+                let clamped = min(max(newValue, 0.75), 1.45)
+                mouseEffectScaleRaw = abs(clamped - 1.0) < 0.001 ? nil : clamped
+            }
+        }
 
         public init() {}
 
         private enum CodingKeys: String, CodingKey {
             case frameRate, includesCursor, includesMicrophone, includesSystemAudio, format
             case includesCamera, showsKeyPresses, showsMouseClicks
+            case showsMouseScrollsRaw = "showsMouseScrolls"
+            case mouseClickStyleRaw = "mouseClickStyle"
+            case mouseScrollStyleRaw = "mouseScrollStyle"
+            case mouseEffectPaletteRaw = "mouseEffectPalette"
+            case mouseEffectScaleRaw = "mouseEffectScale"
         }
         public init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -521,6 +662,11 @@ public struct Settings: Codable, Hashable, Sendable {
             includesCamera = try values.decodeIfPresent(Bool.self, forKey: .includesCamera) ?? false
             showsKeyPresses = try values.decodeIfPresent(Bool.self, forKey: .showsKeyPresses) ?? false
             showsMouseClicks = try values.decodeIfPresent(Bool.self, forKey: .showsMouseClicks) ?? false
+            showsMouseScrollsRaw = try values.decodeIfPresent(Bool.self, forKey: .showsMouseScrollsRaw)
+            mouseClickStyleRaw = try values.decodeIfPresent(String.self, forKey: .mouseClickStyleRaw)
+            mouseScrollStyleRaw = try values.decodeIfPresent(String.self, forKey: .mouseScrollStyleRaw)
+            mouseEffectPaletteRaw = try values.decodeIfPresent(String.self, forKey: .mouseEffectPaletteRaw)
+            mouseEffectScaleRaw = try values.decodeIfPresent(Double.self, forKey: .mouseEffectScaleRaw)
         }
     }
 

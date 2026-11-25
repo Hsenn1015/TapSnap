@@ -80,7 +80,26 @@ final class SelectionOverlayView: NSView {
     var accessibilitySnapLookup: (@Sendable (CGPoint) -> CGRect?)?
     /// 窗口模式使用系统给出的前后顺序，不能按面积选到后方窗口。
     var windowRegions: [CGRect] = []
-    var selectsWindows = false { didSet { borderView.showsResizeHandles = !selectsWindows } }
+    var selectsWindows = false { didSet { borderView.showsResizeHandles = !selectsWindows && quickTranslateStyle == nil } }
+    /// 非 nil 时启用「截图秒译」专属框选外观，并在松手后立即触发翻译，无需二次确认。
+    var quickTranslateStyle: QuickTranslateStyle? {
+        didSet {
+            borderView.showsResizeHandles = !selectsWindows && quickTranslateStyle == nil
+            if let style = quickTranslateStyle {
+                borderConfiguration = Self.quickTranslateBorderConfiguration(for: style)
+            }
+            updateBar()
+            needsDisplay = true
+            controlsView.needsDisplay = true
+        }
+    }
+    /// 截图秒译目标语言显示名（如「简体中文」「英语」）。
+    var quickTranslateTargetLanguage: String = "简体中文" {
+        didSet { controlsView.needsDisplay = true }
+    }
+    /// 框选期间按 Tab 循环切换目标语言，返回新的语言显示名。
+    var onCycleQuickTranslateLanguage: (() -> String)?
+    private var pointerInsideView = false
     private var lockedWindowSelection = false
     private var mouseTracking: NSTrackingArea?
     private var snapPointer: CGPoint?
@@ -214,6 +233,11 @@ final class SelectionOverlayView: NSView {
     override func mouseMoved(with event: NSEvent) {
         guard pendingAction == nil else { return }
         let point = convert(event.locationInWindow, from: nil)
+        cursor = point
+        pointerInsideView = bounds.contains(point)
+        if quickTranslateStyle != nil, !isDragging {
+            controlsView.needsDisplay = true
+        }
         if let editorDock, !editorDock.isHidden, editorDock.frame.contains(point) {
             let hover = editorDockHover(at: point)
             setEditorDockHover(hover)
@@ -236,6 +260,8 @@ final class SelectionOverlayView: NSView {
 
     override func mouseEntered(with event: NSEvent) { mouseMoved(with: event) }
     override func mouseExited(with event: NSEvent) {
+        pointerInsideView = false
+        if quickTranslateStyle != nil { controlsView.needsDisplay = true }
         clearSnapPreview()
         hideQuickToolbarTip()
         setBarHover(nil)
@@ -249,6 +275,11 @@ final class SelectionOverlayView: NSView {
     }
 
     func previewSnap(at point: CGPoint) {
+        if quickTranslateStyle != nil, bounds.contains(point) {
+            cursor = point
+            pointerInsideView = true
+            controlsView.needsDisplay = true
+        }
         guard !selectsWindows, selection == nil, !isDragging, bounds.contains(point) else {
             clearSnapPreview()
             return
@@ -394,6 +425,7 @@ final class SelectionOverlayView: NSView {
             return
         }
         guard !selectsWindows else { return }
+        var completedQuickCreate = false
         if case .creating(let anchor) = mode {
             if max(dragDistance, anchor.distance(to: point)) < 4 {
                 selection = pressedSnap
@@ -402,9 +434,14 @@ final class SelectionOverlayView: NSView {
                 selection = rect.width >= 2 && rect.height >= 2 ? rect : nil
             }
             pressedSnap = nil
+            completedQuickCreate = quickTranslateStyle != nil
         }
         mode = .idle
         onSelectionChange?(selection, cursor, false)
+        if completedQuickCreate, let selected = selection, selected.width >= 4, selected.height >= 4 {
+            performBarAction(.confirm)
+            return
+        }
         setBarHover(barButton(at: point))
         updateCursor(at: point)
         needsDisplay = true
@@ -418,6 +455,12 @@ final class SelectionOverlayView: NSView {
         guard pendingAction == nil else { return }
         if handleDockShortcut(event) { return }
         switch event.keyCode {
+        case 48: // Tab — 截图秒译期间快速切换目标语言
+            if quickTranslateStyle != nil, let updated = onCycleQuickTranslateLanguage?() {
+                quickTranslateTargetLanguage = updated
+                return
+            }
+            super.keyDown(with: event)
         case 53: // Esc
             performBarAction(.cancel)
         case 36, 76: // Return / Enter
@@ -506,7 +549,12 @@ final class SelectionOverlayView: NSView {
             context.draw(screenImage, in: bounds)
         }
 
-        context.setFillColor(NSColor.black.withAlphaComponent(0.35).cgColor)
+        let dimAlpha: CGFloat = switch quickTranslateStyle {
+        case .editorial: 0.20
+        case .some: 0.30
+        case .none: 0.35
+        }
+        context.setFillColor(NSColor.black.withAlphaComponent(dimAlpha).cgColor)
         guard let visible = selection ?? snapPreview, visible.width > 0, visible.height > 0 else {
             context.fill(bounds)
             return
@@ -520,12 +568,25 @@ final class SelectionOverlayView: NSView {
             context.clear(visible)
         }
         if selection == nil {
-            context.setStrokeColor(NSColor(quickToolbarTheme.highlight).cgColor)
+            let snapColor: NSColor = quickTranslateStyle != nil
+                ? NSColor(srgbRed: 0.22, green: 0.74, blue: 0.97, alpha: 0.92)
+                : NSColor(quickToolbarTheme.highlight)
+            context.setStrokeColor(snapColor.cgColor)
             context.stroke(visible.insetBy(dx: 1, dy: 1), width: 2)
         }
     }
 
     fileprivate func drawControls(in context: CGContext) {
+        if let qtStyle = quickTranslateStyle {
+            if let selection, selection.width > 0, selection.height > 0 {
+                if selection.intersects(bounds) {
+                    drawQuickTranslateSelectionChrome(style: qtStyle, selection: selection, in: context)
+                }
+            } else if pointerInsideView {
+                drawQuickTranslateCursorBadge(style: qtStyle, at: cursor, in: context)
+            }
+            return
+        }
         guard let selection, selection.width > 0, selection.height > 0 else {
             if isDragging { drawMagnifier(in: context, at: cursor) }
             return
@@ -537,6 +598,276 @@ final class SelectionOverlayView: NSView {
         if isDragging {
             drawMagnifier(in: context, at: cursor)
         }
+    }
+
+    static func quickTranslateBorderConfiguration(for style: QuickTranslateStyle) -> SelectionBorderConfiguration {
+        switch style {
+        case .liquidGlass:
+            return SelectionBorderConfiguration(style: .liquidGlass, motion: .diagonalGlint, palette: .titaniumIce)
+        case .editorial:
+            return SelectionBorderConfiguration(style: .editorial, motion: .silkyDash, palette: .linearIndigo)
+        case .inlineBilingual:
+            return SelectionBorderConfiguration(style: .liquidGlass, motion: .dualSlide, palette: .warmPearl)
+        case .dynamicBubble:
+            return SelectionBorderConfiguration(style: .liquidGlass, motion: .dewdropPulse, palette: .seasalt)
+        }
+    }
+
+    private func drawQuickTranslateSelectionChrome(
+        style: QuickTranslateStyle,
+        selection: CGRect,
+        in context: CGContext
+    ) {
+        let outline = SelectionBorderView.outlineRect(for: selection, in: bounds)
+        let scale = selectionScale ?? screenImage.map { CGFloat($0.width) / max(1, bounds.width) } ?? 1
+        let dimsText = "\(Int((selection.width * scale).rounded()))×\(Int((selection.height * scale).rounded()))"
+
+        switch style {
+        case .liquidGlass:
+            let topText = "译  截图秒译 · → \(quickTranslateTargetLanguage)"
+            drawQuickTranslatePill(
+                text: topText,
+                preferredOrigin: CGPoint(x: outline.minX, y: outline.maxY + 8),
+                fallbackOrigin: CGPoint(x: outline.minX + 8, y: outline.maxY - 30),
+                fill: NSColor(srgbRed: 0.08, green: 0.11, blue: 0.20, alpha: 0.84),
+                stroke: NSColor(srgbRed: 0.36, green: 0.78, blue: 0.99, alpha: 0.78),
+                dotColor: NSColor(srgbRed: 0.22, green: 0.74, blue: 0.97, alpha: 1),
+                textColor: .white,
+                fontSize: 11.5,
+                context: context
+            )
+            let bottomText = "松手即译 · \(dimsText)"
+            let bottomSize = measureQuickTranslatePill(text: bottomText, fontSize: 10.5, hasDot: false)
+            drawQuickTranslatePill(
+                text: bottomText,
+                preferredOrigin: CGPoint(x: outline.maxX - bottomSize.width, y: outline.minY - bottomSize.height - 8),
+                fallbackOrigin: CGPoint(x: outline.maxX - bottomSize.width - 8, y: outline.minY + 8),
+                fill: NSColor(srgbRed: 0.08, green: 0.11, blue: 0.20, alpha: 0.76),
+                stroke: NSColor.white.withAlphaComponent(0.24),
+                dotColor: nil,
+                textColor: NSColor(srgbRed: 0.88, green: 0.93, blue: 1.0, alpha: 0.95),
+                fontSize: 10.5,
+                context: context
+            )
+
+        case .editorial:
+            drawEditorialCornerBrackets(around: outline, in: context)
+            let ribbonText = "译 · 松手即译 → \(quickTranslateTargetLanguage)"
+            let ribbonSize = measureQuickTranslatePill(text: ribbonText, fontSize: 11, hasDot: false)
+            drawQuickTranslatePill(
+                text: ribbonText,
+                preferredOrigin: CGPoint(x: outline.midX - ribbonSize.width / 2, y: outline.maxY + 10),
+                fallbackOrigin: CGPoint(x: outline.midX - ribbonSize.width / 2, y: outline.maxY - ribbonSize.height - 8),
+                fill: NSColor(srgbRed: 0.07, green: 0.09, blue: 0.14, alpha: 0.90),
+                stroke: NSColor(srgbRed: 0.49, green: 0.54, blue: 0.98, alpha: 0.65),
+                dotColor: nil,
+                textColor: .white,
+                fontSize: 11,
+                context: context
+            )
+
+        case .inlineBilingual:
+            let topText = "译  双语取词 · → \(quickTranslateTargetLanguage)"
+            drawQuickTranslatePill(
+                text: topText,
+                preferredOrigin: CGPoint(x: outline.minX, y: outline.maxY + 8),
+                fallbackOrigin: CGPoint(x: outline.minX + 8, y: outline.maxY - 30),
+                fill: NSColor(srgbRed: 0.14, green: 0.11, blue: 0.08, alpha: 0.86),
+                stroke: NSColor(srgbRed: 0.96, green: 0.68, blue: 0.26, alpha: 0.85),
+                dotColor: NSColor(srgbRed: 0.98, green: 0.75, blue: 0.28, alpha: 1),
+                textColor: .white,
+                fontSize: 11.5,
+                context: context
+            )
+            let hintText = "Tab 切换语言 · 松手即译"
+            let hintSize = measureQuickTranslatePill(text: hintText, fontSize: 10.5, hasDot: false)
+            drawQuickTranslatePill(
+                text: hintText,
+                preferredOrigin: CGPoint(x: outline.minX, y: outline.minY - hintSize.height - 8),
+                fallbackOrigin: CGPoint(x: outline.minX + 8, y: outline.minY + 8),
+                fill: NSColor(srgbRed: 0.08, green: 0.11, blue: 0.16, alpha: 0.80),
+                stroke: NSColor(srgbRed: 0.22, green: 0.74, blue: 0.97, alpha: 0.55),
+                dotColor: nil,
+                textColor: NSColor(srgbRed: 0.92, green: 0.95, blue: 1.0, alpha: 0.94),
+                fontSize: 10.5,
+                context: context
+            )
+
+        case .dynamicBubble:
+            let topText = "秒译 · → \(quickTranslateTargetLanguage) · 松手出词"
+            let topSize = measureQuickTranslatePill(text: topText, fontSize: 11, hasDot: true)
+            drawQuickTranslatePill(
+                text: topText,
+                preferredOrigin: CGPoint(x: outline.midX - topSize.width / 2, y: outline.maxY + 10),
+                fallbackOrigin: CGPoint(x: outline.midX - topSize.width / 2, y: outline.maxY - topSize.height - 8),
+                fill: NSColor(srgbRed: 0.06, green: 0.10, blue: 0.12, alpha: 0.90),
+                stroke: NSColor(srgbRed: 0.20, green: 0.83, blue: 0.60, alpha: 0.75),
+                dotColor: NSColor(srgbRed: 0.20, green: 0.83, blue: 0.60, alpha: 1),
+                textColor: .white,
+                fontSize: 11,
+                context: context
+            )
+            // 右下角灵动「译」圆章，强化当前是秒译态。
+            drawDynamicBubbleOrb(near: CGPoint(x: outline.maxX + 10, y: outline.minY - 10), in: context)
+        }
+    }
+
+    private func drawQuickTranslateCursorBadge(
+        style: QuickTranslateStyle,
+        at point: CGPoint,
+        in context: CGContext
+    ) {
+        let (text, fill, stroke, dot): (String, NSColor, NSColor, NSColor?) = switch style {
+        case .liquidGlass:
+            (
+                "译 截图秒译 · → \(quickTranslateTargetLanguage) · Tab",
+                NSColor(srgbRed: 0.08, green: 0.11, blue: 0.20, alpha: 0.86),
+                NSColor(srgbRed: 0.36, green: 0.78, blue: 0.99, alpha: 0.78),
+                NSColor(srgbRed: 0.22, green: 0.74, blue: 0.97, alpha: 1)
+            )
+        case .editorial:
+            (
+                "译 拖选文字即译 · → \(quickTranslateTargetLanguage)",
+                NSColor(srgbRed: 0.07, green: 0.09, blue: 0.14, alpha: 0.88),
+                NSColor(srgbRed: 0.49, green: 0.54, blue: 0.98, alpha: 0.70),
+                nil
+            )
+        case .inlineBilingual:
+            (
+                "译 双语秒译 · → \(quickTranslateTargetLanguage) · Tab",
+                NSColor(srgbRed: 0.14, green: 0.11, blue: 0.08, alpha: 0.86),
+                NSColor(srgbRed: 0.96, green: 0.68, blue: 0.26, alpha: 0.82),
+                NSColor(srgbRed: 0.98, green: 0.75, blue: 0.28, alpha: 1)
+            )
+        case .dynamicBubble:
+            (
+                "秒译 · → \(quickTranslateTargetLanguage) · Tab",
+                NSColor(srgbRed: 0.06, green: 0.10, blue: 0.12, alpha: 0.90),
+                NSColor(srgbRed: 0.20, green: 0.83, blue: 0.60, alpha: 0.78),
+                NSColor(srgbRed: 0.20, green: 0.83, blue: 0.60, alpha: 1)
+            )
+        }
+        let pillSize = measureQuickTranslatePill(text: text, fontSize: 11, hasDot: dot != nil)
+        var origin = CGPoint(x: point.x + 16, y: point.y - pillSize.height - 14)
+        if origin.x + pillSize.width > bounds.maxX - 10 {
+            origin.x = point.x - pillSize.width - 16
+        }
+        if origin.y < 10 {
+            origin.y = point.y + 16
+        }
+        drawQuickTranslatePill(
+            text: text,
+            preferredOrigin: origin,
+            fallbackOrigin: origin,
+            fill: fill,
+            stroke: stroke,
+            dotColor: dot,
+            textColor: .white,
+            fontSize: 11,
+            context: context
+        )
+    }
+
+    private func measureQuickTranslatePill(text: String, fontSize: CGFloat, hasDot: Bool) -> CGSize {
+        let measured = measure(text, fontSize: fontSize, color: .white)
+        let dotExtra: CGFloat = hasDot ? 12 : 0
+        return CGSize(width: ceil(measured.width) + 18 + dotExtra, height: max(22, ceil(measured.height) + 10))
+    }
+
+    private func drawQuickTranslatePill(
+        text: String,
+        preferredOrigin: CGPoint,
+        fallbackOrigin: CGPoint,
+        fill: NSColor,
+        stroke: NSColor,
+        dotColor: NSColor?,
+        textColor: NSColor,
+        fontSize: CGFloat,
+        context: CGContext
+    ) {
+        let hasDot = dotColor != nil
+        let size = measureQuickTranslatePill(text: text, fontSize: fontSize, hasDot: hasDot)
+        let preferredRect = CGRect(origin: preferredOrigin, size: size)
+        let rawOrigin: CGPoint = bounds.insetBy(dx: 8, dy: 8).contains(preferredRect) ? preferredOrigin : fallbackOrigin
+        let clampedX = min(max(8, rawOrigin.x), max(8, bounds.maxX - size.width - 8))
+        let clampedY = min(max(8, rawOrigin.y), max(8, bounds.maxY - size.height - 8))
+        let rect = CGRect(x: clampedX, y: clampedY, width: size.width, height: size.height)
+        let radius = rect.height / 2
+
+        context.saveGState()
+        let path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+        context.setShadow(offset: CGSize(width: 0, height: -2), blur: 8, color: NSColor.black.withAlphaComponent(0.32).cgColor)
+        context.setFillColor(fill.cgColor)
+        context.addPath(path)
+        context.fillPath()
+        context.setShadow(offset: .zero, blur: 0, color: nil)
+
+        context.setStrokeColor(stroke.cgColor)
+        context.setLineWidth(1)
+        context.addPath(path)
+        context.strokePath()
+
+        var textX = rect.minX + 9
+        if let dotColor {
+            let dotRect = CGRect(x: textX, y: rect.midY - 3, width: 6, height: 6)
+            context.setFillColor(dotColor.cgColor)
+            context.fillEllipse(in: dotRect)
+            textX += 12
+        }
+        let measured = measure(text, fontSize: fontSize, color: textColor)
+        let textY = rect.minY + (rect.height - measured.height) / 2
+        drawText(text, at: CGPoint(x: textX, y: textY), fontSize: fontSize, color: textColor, context: context)
+        context.restoreGState()
+    }
+
+    private func drawEditorialCornerBrackets(around outline: CGRect, in context: CGContext) {
+        let arm: CGFloat = min(16, max(8, min(outline.width, outline.height) * 0.25))
+        let inset: CGFloat = -4
+        let r = outline.insetBy(dx: inset, dy: inset)
+        context.saveGState()
+        context.setStrokeColor(NSColor(srgbRed: 0.38, green: 0.72, blue: 0.99, alpha: 0.95).cgColor)
+        context.setLineWidth(2.4)
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+
+        let corners: [(CGPoint, CGPoint, CGPoint)] = [
+            (CGPoint(x: r.minX, y: r.maxY - arm), CGPoint(x: r.minX, y: r.maxY), CGPoint(x: r.minX + arm, y: r.maxY)),
+            (CGPoint(x: r.maxX - arm, y: r.maxY), CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.maxX, y: r.maxY - arm)),
+            (CGPoint(x: r.minX, y: r.minY + arm), CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.minX + arm, y: r.minY)),
+            (CGPoint(x: r.maxX - arm, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.maxX, y: r.minY + arm)),
+        ]
+        for (p1, corner, p2) in corners {
+            context.move(to: p1)
+            context.addLine(to: corner)
+            context.addLine(to: p2)
+        }
+        context.strokePath()
+        context.restoreGState()
+    }
+
+    private func drawDynamicBubbleOrb(near center: CGPoint, in context: CGContext) {
+        let diameter: CGFloat = 24
+        let cx = min(max(diameter / 2 + 8, center.x), bounds.maxX - diameter / 2 - 8)
+        let cy = min(max(diameter / 2 + 8, center.y), bounds.maxY - diameter / 2 - 8)
+        let orbRect = CGRect(x: cx - diameter / 2, y: cy - diameter / 2, width: diameter, height: diameter)
+        context.saveGState()
+        context.setShadow(offset: CGSize(width: 0, height: -2), blur: 8, color: NSColor(srgbRed: 0.12, green: 0.72, blue: 0.58, alpha: 0.45).cgColor)
+        context.setFillColor(NSColor(srgbRed: 0.07, green: 0.14, blue: 0.16, alpha: 0.92).cgColor)
+        context.fillEllipse(in: orbRect)
+        context.setShadow(offset: .zero, blur: 0, color: nil)
+        context.setStrokeColor(NSColor(srgbRed: 0.20, green: 0.83, blue: 0.60, alpha: 0.90).cgColor)
+        context.setLineWidth(1.4)
+        context.strokeEllipse(in: orbRect.insetBy(dx: 0.7, dy: 0.7))
+        let glyph = "译"
+        let m = measure(glyph, fontSize: 11.5, color: .white)
+        drawText(
+            glyph,
+            at: CGPoint(x: orbRect.midX - m.width / 2, y: orbRect.midY - m.height / 2),
+            fontSize: 11.5,
+            color: NSColor(srgbRed: 0.85, green: 1.0, blue: 0.93, alpha: 1),
+            context: context
+        )
+        context.restoreGState()
     }
 
     private var isDragging: Bool {
@@ -680,7 +1011,7 @@ final class SelectionOverlayView: NSView {
     }
 
     func quickToolbarLayout() -> (background: CGRect, actions: ActionsBarLayout)? {
-        guard displaysToolbar, onQuickAction != nil, !isDragging, (!selectsWindows || lockedWindowSelection),
+        guard quickTranslateStyle == nil, displaysToolbar, onQuickAction != nil, !isDragging, (!selectsWindows || lockedWindowSelection),
               let selected = selection, selected.width >= 1, selected.height >= 1 else { return nil }
         let selection = SelectionBorderView.outlineRect(for: selected, in: bounds).intersection(bounds)
         let area = barBounds.insetBy(dx: 8, dy: 8)
@@ -705,7 +1036,7 @@ final class SelectionOverlayView: NSView {
     }
 
     func barLayout() -> (background: CGRect, buttons: [(action: BarButton, rect: CGRect)], primaryAction: BarButton)? {
-        guard displaysToolbar, onQuickAction == nil, !isDragging, (!selectsWindows || lockedWindowSelection),
+        guard quickTranslateStyle == nil, displaysToolbar, onQuickAction == nil, !isDragging, (!selectsWindows || lockedWindowSelection),
               let selected = selection, selected.width >= 1, selected.height >= 1 else { return nil }
         let selection = SelectionBorderView.outlineRect(for: selected, in: bounds)
         var actions: [BarButton] = [.cancel]

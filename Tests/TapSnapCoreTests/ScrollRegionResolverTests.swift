@@ -62,4 +62,29 @@ final class ScrollRegionResolverTests: XCTestCase {
     func testInvalidViewportReturnsNoResolution() {
         XCTAssertNil(ScrollRegionResolver.clippedResolution(viewport: .null, selection: bounds))
     }
+
+    func testSkipsNonVerticallyScrollableInnerScrollAreaForOuterVerticalPage() throws {
+        let selection = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let innerCodeBlock = ScrollRegionResolver.ScrollAreaCandidate(
+            viewport: CGRect(x: 100, y: 120, width: 500, height: 120),
+            contents: [CGRect(x: 100, y: 120, width: 900, height: 100)],
+            clippingRects: [selection],
+            verticalScrollbars: [],
+            horizontalScrollbars: [CGRect(x: 100, y: 224, width: 500, height: 16)]
+        )
+        let outerPage = ScrollRegionResolver.ScrollAreaCandidate(
+            viewport: CGRect(x: 0, y: 0, width: 800, height: 600),
+            contents: [CGRect(x: 0, y: 0, width: 784, height: 2400)],
+            clippingRects: [selection],
+            verticalScrollbars: [CGRect(x: 784, y: 0, width: 16, height: 600)],
+            horizontalScrollbars: []
+        )
+        let result = try XCTUnwrap(ScrollRegionResolver.selectBestResolution(
+            from: [innerCodeBlock, outerPage],
+            at: CGPoint(x: 200, y: 160),
+            within: selection
+        ))
+        XCTAssertEqual(result.viewport, selection)
+        XCTAssertEqual(result.content, CGRect(x: 0, y: 0, width: 784, height: 600))
+    }
 }
