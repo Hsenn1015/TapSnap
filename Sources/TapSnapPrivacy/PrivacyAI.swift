@@ -64,9 +64,10 @@ public struct PrivacyAIConfiguration: Codable, Hashable, Sendable {
     }
 }
 
-public enum PrivacyAIError: Error {
+public enum PrivacyAIError: Error, Equatable, Sendable {
     case configuration, missingKey, invalidKey, keyStorage, network, authorization, response
     case imageEncoding, imageRejected, timeout, rateLimited
+    case serverMessage(String)
 
     public var message: String {
         switch self {
@@ -81,6 +82,7 @@ public enum PrivacyAIError: Error {
         case .imageRejected: return "模型服务未接受图片，请检查模型是否支持视觉输入"
         case .timeout: return "模型补查超时，已保留当前打码"
         case .rateLimited: return "模型服务请求过多，请稍后重试"
+        case .serverMessage(let detail): return detail
         }
     }
 }
@@ -383,7 +385,11 @@ public enum PrivacyAI {
             if requestsJSON { body["response_format"] = ["type": "json_object"] }
             body["thinking"] = ["type": "disabled"]
         case .qwen:
-            body["enable_thinking"] = false
+            let modelName = configuration.model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            // 仅 Qwen3 思考模型在非流式调用时需要显式关闭思考；qwen-mt / qwen-max 等传该字段会被 400 拒绝。
+            if modelName.hasPrefix("qwen3") {
+                body["enable_thinking"] = false
+            }
         default: break
         }
         let timeout: TimeInterval = configuration.usesLoopback ? 45 : 28
@@ -440,7 +446,12 @@ public enum PrivacyAI {
             if http.statusCode == 401 || http.statusCode == 403 { throw PrivacyAIError.authorization }
             if http.statusCode == 429 { throw PrivacyAIError.rateLimited }
             if sendsImage && [400, 413, 415, 422].contains(http.statusCode) { throw PrivacyAIError.imageRejected }
-            guard http.statusCode == 200 else { throw PrivacyAIError.response }
+            guard http.statusCode == 200 else {
+                if let detail = extractErrorMessage(from: data) {
+                    throw PrivacyAIError.serverMessage("服务返回错误（HTTP \(http.statusCode)）：\(detail)")
+                }
+                throw PrivacyAIError.response
+            }
             guard data.count < 256_000 else { throw PrivacyAIError.response }
             return data
         } catch let error as PrivacyAIError {
@@ -453,7 +464,12 @@ public enum PrivacyAI {
     }
 
     /// 流式读取 OpenAI 兼容 SSE 响应；若服务端忽略 stream 参数返回普通 JSON，也自动兼容解析。
-    static func streamDeltas(for request: URLRequest, usesLoopback: Bool) -> AsyncThrowingStream<String, Error> {
+    /// `deduplicateCumulativeChunks` 为 true 时兼容如 `qwen-mt-plus` 每次返回累计全文的流式块。
+    static func streamDeltas(
+        for request: URLRequest,
+        usesLoopback: Bool,
+        deduplicateCumulativeChunks: Bool = false
+    ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -464,10 +480,21 @@ public enum PrivacyAI {
                     guard let http = response as? HTTPURLResponse else { throw PrivacyAIError.response }
                     if http.statusCode == 401 || http.statusCode == 403 { throw PrivacyAIError.authorization }
                     if http.statusCode == 429 { throw PrivacyAIError.rateLimited }
-                    guard http.statusCode == 200 else { throw PrivacyAIError.response }
+                    guard http.statusCode == 200 else {
+                        var errorBytes = Data()
+                        for try await byte in bytes {
+                            errorBytes.append(byte)
+                            if errorBytes.count >= 8192 { break }
+                        }
+                        if let detail = extractErrorMessage(from: errorBytes) {
+                            throw PrivacyAIError.serverMessage("服务返回错误（HTTP \(http.statusCode)）：\(detail)")
+                        }
+                        throw PrivacyAIError.response
+                    }
 
                     let contentType = (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
                     var rawBuffer = ""
+                    var emittedSoFar = ""
                     var yieldedAny = false
 
                     for try await line in bytes.lines {
@@ -478,8 +505,15 @@ public enum PrivacyAI {
                             let payload = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
                             if payload == "[DONE]" { break }
                             if let delta = extractSSEDelta(from: payload), !delta.isEmpty {
-                                yieldedAny = true
-                                continuation.yield(delta)
+                                let piece = incrementalChunk(
+                                    from: delta,
+                                    emittedSoFar: &emittedSoFar,
+                                    deduplicateCumulative: deduplicateCumulativeChunks
+                                )
+                                if !piece.isEmpty {
+                                    yieldedAny = true
+                                    continuation.yield(piece)
+                                }
                             }
                         } else if !contentType.contains("event-stream") {
                             rawBuffer.append(trimmed)
@@ -509,6 +543,30 @@ public enum PrivacyAI {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    static func incrementalChunk(from delta: String, emittedSoFar: inout String, deduplicateCumulative: Bool) -> String {
+        guard deduplicateCumulative, !emittedSoFar.isEmpty, delta.hasPrefix(emittedSoFar) else {
+            emittedSoFar.append(delta)
+            return delta
+        }
+        let suffix = String(delta.dropFirst(emittedSoFar.count))
+        emittedSoFar = delta
+        return suffix
+    }
+
+    static func extractErrorMessage(from data: Data) -> String? {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        if let err = obj["error"] as? [String: Any],
+           let msg = err["message"] as? String {
+            let trimmed = msg.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
+        }
+        if let msg = obj["message"] as? String {
+            let trimmed = msg.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
+        }
+        return nil
     }
 
     private static func extractSSEDelta(from jsonString: String) -> String? {

@@ -19,48 +19,128 @@ struct SettingsView: View {
 
     @State private var section: SettingsSection
 
-    init(environment: AppEnvironment, section: SettingsSection = .general) {
+    /// 未指定分类时回到上次停留的分类。
+    static let lastSectionKey = "settings.lastSection"
+
+    init(environment: AppEnvironment, section: SettingsSection? = nil) {
         self.environment = environment
         self.config = environment.config
-        _section = State(initialValue: section)
+        let stored = UserDefaults.standard.string(forKey: Self.lastSectionKey).flatMap(SettingsSection.init(rawValue:))
+        _section = State(initialValue: section ?? stored ?? .general)
     }
 
     var body: some View {
         HStack(spacing: 0) {
             sidebar
             Rectangle()
-                .fill(theme.token(.sidebarBorder))
-                .frame(width: 1)
+                .fill(theme.settingsCardBorder)
+                .frame(width: 0.75)
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(theme.token(.background))
+                .background(theme.settingsCanvas)
         }
-        .frame(width: 640, height: 460)
-        .background(theme.token(.background))
+        .ignoresSafeArea(.container, edges: .top)
+        .frame(minWidth: 680, idealWidth: 760, maxWidth: 960, minHeight: 480, idealHeight: 580, maxHeight: .infinity)
+        .background(theme.settingsCanvas)
         .foregroundStyle(theme.token(.foreground))
         .environment(\.colorScheme, theme.isDark ? .dark : .light)
+        .onChange(of: section) { _, value in
+            UserDefaults.standard.set(value.rawValue, forKey: Self.lastSectionKey)
+        }
     }
 
     // MARK: - 侧边栏
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(SettingsSection.allCases) { item in
-                SidebarItem(
-                    title: item.title,
-                    icon: item.icon,
-                    theme: theme,
-                    isSelected: section == item
-                ) {
-                    withAnimation(Interaction.toggle) { section = item }
+        VStack(alignment: .leading, spacing: 0) {
+            // 顶部留出红黄绿交通灯区域，并支持拖移窗口。
+            ZStack(alignment: .bottomLeading) {
+                WindowDragArea()
+                HStack(spacing: 6) {
+                    Spacer()
+                    if AppPaths.isDevelopmentBuild {
+                        Text("开发版")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(theme.controlAccent)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(theme.controlAccent.opacity(theme.isDark ? 0.20 : 0.12), in: Capsule())
+                    }
                 }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
             }
-            Spacer()
+            .frame(height: 44)
+
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(SettingsSection.groups, id: \.title) { group in
+                        if let title = group.title {
+                            Text(title)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(theme.token(.mutedForeground).opacity(0.85))
+                                .padding(.horizontal, 10)
+                                .padding(.top, 11)
+                                .padding(.bottom, 3)
+                                .accessibilityAddTraits(.isHeader)
+                        }
+                        ForEach(group.items) { item in
+                            sidebarItem(item)
+                        }
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.top, 2)
+                .padding(.bottom, 8)
+            }
+
+            Rectangle()
+                .fill(theme.settingsCardBorder)
+                .frame(height: 0.75)
+                .padding(.horizontal, 12)
+
+            VStack(alignment: .leading, spacing: 4) {
+                sidebarItem(.about)
+                HStack(spacing: 6) {
+                    Text(AppInfo.displayName)
+                        .font(.system(size: 10.5, weight: .medium))
+                    Text("v\(AppInfo.version)")
+                        .font(.system(size: 10.5).monospacedDigit())
+                    Spacer()
+                }
+                .foregroundStyle(theme.token(.mutedForeground).opacity(0.72))
+                .padding(.horizontal, 10)
+                .padding(.top, 2)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 10)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 10)
-        .frame(width: 168)
-        .background(theme.token(.sidebar))
+        .frame(width: 196)
+        .frame(maxHeight: .infinity)
+        .background {
+            ZStack {
+                SettingsSidebarBackdrop(isDark: theme.isDark)
+                (theme.isDark ? Color.black.opacity(0.14) : Color.white.opacity(0.32))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sidebarItem(_ item: SettingsSection) -> some View {
+        let button = SidebarItem(
+            section: item,
+            theme: theme,
+            isSelected: section == item
+        ) {
+            withAnimation(Interaction.toggle) { section = item }
+        }
+        if let key = item.keyEquivalent {
+            button
+                .keyboardShortcut(KeyEquivalent(key), modifiers: .command)
+                .help("\(item.title)（⌘\(String(key))）")
+        } else {
+            button
+        }
     }
 
     // MARK: - 内容
@@ -71,7 +151,7 @@ struct SettingsView: View {
         case .general: GeneralSettings(environment: environment)
         case .capture: CaptureSettings(environment: environment)
         case .translation:
-            SettingsPage(title: "截图翻译", theme: theme) {
+            SettingsPage(section: .translation, theme: theme) {
                 TranslationServiceSettingsView(config: config, theme: theme)
             }
         case .privacy: PrivacySettingsView(config: config, theme: theme)
@@ -85,12 +165,45 @@ struct SettingsView: View {
     }
 }
 
+/// 侧边栏原生 macOS 毛玻璃材质背景。
+private struct SettingsSidebarBackdrop: NSViewRepresentable {
+    let isDark: Bool
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        view.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
+        view.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
+    }
+}
+
 // MARK: - 侧边栏条目
 
 enum SettingsSection: String, CaseIterable, Identifiable {
     case general, capture, translation, privacy, pin, annotate, record, longShot, shortcut, about
 
     var id: String { rawValue }
+
+    /// 侧边栏分组：基础 / 截图 / 录屏 / 智能，「关于」固定在底部。
+    static let groups: [(title: String?, items: [SettingsSection])] = [
+        (nil, [.general, .shortcut]),
+        ("截图", [.capture, .annotate, .pin, .longShot]),
+        ("录屏", [.record]),
+        ("智能", [.translation, .privacy]),
+    ]
+
+    /// 按侧边栏显示顺序分配 ⌘1…⌘9。
+    var keyEquivalent: Character? {
+        let ordered = Self.groups.flatMap(\.items)
+        guard let index = ordered.firstIndex(of: self), index < 9 else { return nil }
+        return Character(String(index + 1))
+    }
 
     var title: String {
         switch self {
@@ -104,6 +217,36 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .longShot: return "长截图"
         case .shortcut: return "快捷键"
         case .about: return "关于"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .general: return "外观主题、悬浮入口与演示录屏模式"
+        case .capture: return "框选工具栏、选区边框风格与默认输出"
+        case .translation: return "翻译服务引擎、目标语言与秒译卡片样式"
+        case .privacy: return "本机脱敏规则、AI 补查与打码外观"
+        case .pin: return "贴图阴影质感、窗口行为与不透明度"
+        case .annotate: return "画笔线宽、文字字号与马赛克默认参数"
+        case .record: return "录屏帧率、鼠标键位动效与音频权限"
+        case .longShot: return "自动滚动节奏与长图拼接重叠比例"
+        case .shortcut: return "点击快捷键帽即可录制全局与操作绑定"
+        case .about: return "版本信息与使用指南"
+        }
+    }
+
+    var badgeGradient: [Color] {
+        switch self {
+        case .general: return [Color(red: 0.28, green: 0.56, blue: 0.99), Color(red: 0.14, green: 0.42, blue: 0.95)]
+        case .shortcut: return [Color(red: 0.43, green: 0.44, blue: 0.96), Color(red: 0.31, green: 0.28, blue: 0.89)]
+        case .capture: return [Color(red: 0.08, green: 0.67, blue: 0.95), Color(red: 0.02, green: 0.50, blue: 0.86)]
+        case .annotate: return [Color(red: 0.62, green: 0.38, blue: 0.97), Color(red: 0.48, green: 0.23, blue: 0.91)]
+        case .pin: return [Color(red: 0.98, green: 0.64, blue: 0.14), Color(red: 0.90, green: 0.46, blue: 0.06)]
+        case .longShot: return [Color(red: 0.11, green: 0.74, blue: 0.66), Color(red: 0.05, green: 0.58, blue: 0.54)]
+        case .record: return [Color(red: 0.96, green: 0.32, blue: 0.34), Color(red: 0.85, green: 0.16, blue: 0.22)]
+        case .translation: return [Color(red: 0.07, green: 0.72, blue: 0.85), Color(red: 0.15, green: 0.47, blue: 0.94)]
+        case .privacy: return [Color(red: 0.12, green: 0.75, blue: 0.51), Color(red: 0.05, green: 0.59, blue: 0.40)]
+        case .about: return [Color(red: 0.47, green: 0.53, blue: 0.62), Color(red: 0.33, green: 0.39, blue: 0.48)]
         }
     }
 
@@ -123,9 +266,31 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     }
 }
 
+/// macOS 风格圆角彩色图标徽章。
+struct SettingsIconBadge: View {
+    let section: SettingsSection
+    var size: CGFloat = 21
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: section.badgeGradient,
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .shadow(color: section.badgeGradient.last?.opacity(0.28) ?? .clear, radius: 2, y: 1)
+            IconView(icon: section.icon, size: size * 0.56, color: .white)
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
 private struct SidebarItem: View {
-    var title: String
-    var icon: IconSet
+    var section: SettingsSection
     var theme: Theme
     var isSelected: Bool
     var action: () -> Void
@@ -135,63 +300,116 @@ private struct SidebarItem: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 9) {
-                IconView(
-                    icon: icon,
-                    size: 13,
-                    color: isSelected ? theme.token(.sidebarAccentForeground) : theme.token(.sidebarForeground).opacity(0.75)
-                )
-                .frame(width: 16)
-                Text(title)
-                    .font(.system(size: 12, weight: isSelected ? .medium : .regular))
-                    .foregroundStyle(isSelected ? theme.token(.sidebarAccentForeground) : theme.token(.sidebarForeground))
+                SettingsIconBadge(section: section, size: 21)
+                Text(section.title)
+                    .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? theme.token(.foreground) : theme.token(.foreground).opacity(0.84))
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 9)
-            .frame(height: 30)
+            .padding(.horizontal, 8)
+            .frame(height: 32)
             .background {
-                RoundedRectangle(cornerRadius: theme.metrics.radiusSM, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(background)
+                    .overlay {
+                        if isSelected {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(
+                                    theme.isDark ? Color.white.opacity(0.09) : Color.black.opacity(0.065),
+                                    lineWidth: 0.75
+                                )
+                        }
+                    }
+                    .shadow(
+                        color: isSelected ? Color.black.opacity(theme.isDark ? 0.22 : 0.06) : .clear,
+                        radius: 2.5,
+                        y: 1
+                    )
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(SnapPressStyle(scale: 0.98))
+        .buttonStyle(SnapPressStyle(scale: 0.985))
         .onHoverChange { hovering in
             withAnimation(Interaction.hover) { isHovering = hovering }
         }
     }
 
     private var background: Color {
-        if isSelected { return theme.token(.sidebarAccent) }
-        if isHovering { return theme.token(.sidebarAccent).opacity(0.6) }
+        if isSelected {
+            return theme.isDark ? Color.white.opacity(0.11) : Color.white.opacity(0.88)
+        }
+        if isHovering {
+            return theme.isDark ? Color.white.opacity(0.055) : Color.black.opacity(0.045)
+        }
         return .clear
     }
 }
 
 // MARK: - 页面骨架
 
-/// 每个设置页统一的头部 + 滚动内容。
+/// 每个设置页统一的顶栏（可拖移窗口）+ 滚动卡片内容。
 struct SettingsPage<Content: View>: View {
+    var section: SettingsSection?
     var title: String
+    var subtitle: String?
     var theme: Theme
     private let content: () -> Content
 
-    init(title: String, theme: Theme, @ViewBuilder content: @escaping () -> Content) {
+    init(section: SettingsSection, theme: Theme, @ViewBuilder content: @escaping () -> Content) {
+        self.section = section
+        self.title = section.title
+        self.subtitle = section.subtitle
+        self.theme = theme
+        self.content = content
+    }
+
+    init(title: String, subtitle: String? = nil, theme: Theme, @ViewBuilder content: @escaping () -> Content) {
+        self.section = nil
         self.title = title
+        self.subtitle = subtitle
         self.theme = theme
         self.content = content
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                Text(title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(theme.token(.foreground))
-                    .padding(.bottom, 2)
-                content()
+        VStack(spacing: 0) {
+            ZStack(alignment: .bottomLeading) {
+                WindowDragArea()
+                HStack(spacing: 11) {
+                    if let section {
+                        SettingsIconBadge(section: section, size: 30)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .font(.system(size: 16.5, weight: .semibold))
+                            .foregroundStyle(theme.token(.foreground))
+                        if let subtitle {
+                            Text(subtitle)
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(theme.token(.mutedForeground))
+                        }
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 20)
+                .padding(.bottom, 14)
+                .allowsHitTesting(false)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(20)
+            .frame(height: 70)
+
+            Rectangle()
+                .fill(theme.settingsCardBorder)
+                .frame(height: 0.75)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    content()
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 20)
+            }
         }
     }
 }
@@ -210,7 +428,7 @@ private struct GeneralSettings: View {
     }
 
     var body: some View {
-        SettingsPage(title: "通用", theme: theme) {
+        SettingsPage(section: .general, theme: theme) {
             SnapSettingGroup("外观", theme: theme) {
                 SnapSettingRow("深色界面", theme: theme) {
                     SnapToggle(
@@ -240,7 +458,11 @@ private struct GeneralSettings: View {
             }
 
             SnapSettingGroup("录屏与演示", theme: theme) {
-                SnapSettingRow("演示模式（允许录屏）", theme: theme) {
+                SnapSettingRow(
+                    "演示模式（允许录屏）",
+                    subtitle: "允许系统截屏、录屏软件或双开 TapSnap 捕获本应用的选区、贴图与工具栏",
+                    theme: theme
+                ) {
                     SnapToggle(
                         isOn: Binding(
                             get: { config.settings.capture.allowSelfCapture },
@@ -249,7 +471,6 @@ private struct GeneralSettings: View {
                         theme: theme
                     )
                 }
-                .help("开启后允许系统截屏、录屏软件或双开 TapSnap 捕获本应用的选区、贴图与工具栏")
             }
         }
     }
@@ -269,7 +490,7 @@ private struct CaptureSettings: View {
     }
 
     var body: some View {
-        SettingsPage(title: "截图", theme: theme) {
+        SettingsPage(section: .capture, theme: theme) {
             SnapSettingGroup(theme: theme) {
                 SnapSettingRow("框选工具栏", theme: theme) {
                     SnapButton("自定义…", theme: theme, variant: .outline, size: .sm) {
@@ -300,19 +521,21 @@ private struct CaptureSettings: View {
                     .frame(width: 152)
                 }
                 SnapRowDivider(theme: theme)
-                SnapSettingRow("主题配色", theme: theme) {
-                    Picker("主题配色", selection: bind(\.capture.selectionBorderPalette)) {
-                        ForEach(config.settings.capture.selectionBorderStyle.availablePalettes, id: \.self) { palette in
-                            Text(palette.displayName).tag(palette)
-                        }
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("主题配色")
+                            .font(.system(size: 13))
+                            .foregroundStyle(theme.token(.foreground))
+                        Spacer()
+                        Text(config.settings.capture.selectionBorderPalette.displayName)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(theme.token(.mutedForeground))
                     }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(width: 152)
+                    borderPaletteSwatchStrip
                 }
-                borderPaletteSwatchStrip
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 10)
+                .padding(.horizontal, 14)
+                .padding(.top, 10)
+                .padding(.bottom, 10)
                 SelectionBorderPreview(configuration: config.settings.capture.selectionBorderConfiguration)
                     .frame(height: 122)
                     .clipShape(RoundedRectangle(cornerRadius: theme.metrics.radiusSM))
@@ -348,12 +571,22 @@ private struct CaptureSettings: View {
                 SnapRowDivider(theme: theme)
                 SnapSettingRow("保存目录", theme: theme) {
                     HStack(spacing: 8) {
-                        Text(config.settings.capture.saveDirectory)
-                            .font(.system(size: 11))
+                        Button {
+                            revealSaveDirectory()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "folder")
+                                    .font(.system(size: 10.5))
+                                Text(abbreviatedSaveDirectory)
+                                    .font(.system(size: 11))
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
                             .foregroundStyle(theme.token(.mutedForeground))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .frame(maxWidth: 180, alignment: .trailing)
+                            .frame(maxWidth: 190, alignment: .trailing)
+                        }
+                        .buttonStyle(.plain)
+                        .help("点击在访达中打开：\(config.settings.capture.saveDirectory)")
                         SnapButton("更改…", theme: theme, variant: .outline, size: .sm) {
                             chooseSaveDirectory()
                         }
@@ -402,12 +635,12 @@ private struct CaptureSettings: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
                     .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(isSelected ? theme.token(.secondary) : theme.token(.background).opacity(0.6))
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(isSelected ? theme.controlAccent.opacity(theme.isDark ? 0.18 : 0.10) : theme.fieldSurface)
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(isSelected ? theme.token(.primary) : theme.token(.border), lineWidth: isSelected ? 1.2 : 0.8)
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .stroke(isSelected ? theme.controlAccent : theme.settingsCardBorder, lineWidth: isSelected ? 1.3 : 0.8)
                     )
                 }
                 .buttonStyle(.plain)
@@ -421,12 +654,32 @@ private struct CaptureSettings: View {
         }
     }
 
+    private var abbreviatedSaveDirectory: String {
+        (config.settings.capture.saveDirectory as NSString).abbreviatingWithTildeInPath
+    }
+
+    private func revealSaveDirectory() {
+        let path = (config.settings.capture.saveDirectory as NSString).expandingTildeInPath
+        let url = URL(fileURLWithPath: path, isDirectory: true)
+        NSWorkspace.shared.open(url)
+    }
+
     private func chooseSaveDirectory() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        if panel.runModal() == .OK, let url = panel.url {
+        let expanded = (config.settings.capture.saveDirectory as NSString).expandingTildeInPath
+        if FileManager.default.fileExists(atPath: expanded) {
+            panel.directoryURL = URL(fileURLWithPath: expanded, isDirectory: true)
+        }
+        if let window = NSApp.keyWindow {
+            panel.beginSheetModal(for: window) { response in
+                if response == .OK, let url = panel.url {
+                    config.update { $0.capture.saveDirectory = url.path }
+                }
+            }
+        } else if panel.runModal() == .OK, let url = panel.url {
             config.update { $0.capture.saveDirectory = url.path }
         }
     }
@@ -488,11 +741,14 @@ private struct SelectionBorderPreview: NSViewRepresentable {
 private struct PinSettings: View {
     let environment: AppEnvironment
     @ObservedObject private var config: ConfigStore
+    @ObservedObject private var pinGroups: PinGroupManager
+    @State private var confirmsCloseAll = false
     private var theme: Theme { environment.theme }
 
     init(environment: AppEnvironment) {
         self.environment = environment
         self.config = environment.config
+        self.pinGroups = environment.pinGroups
     }
 
     private var previewAppearance: PinShadowAppearance {
@@ -506,12 +762,12 @@ private struct PinSettings: View {
     }
 
     var body: some View {
-        SettingsPage(title: "贴图", theme: theme) {
+        SettingsPage(section: .pin, theme: theme) {
             SnapSettingGroup("阴影与外观", theme: theme) {
                 row("显示阴影", bind(\.pin.showShadow))
                 if config.settings.pin.showShadow {
                     SnapRowDivider(theme: theme)
-                    SnapSettingRow("阴影样式", theme: theme) {
+                    SnapSettingRow("阴影样式", subtitle: "在桌面贴图上右键也可快速切换", theme: theme) {
                         Picker("阴影样式", selection: bind(\.pin.shadowStyle)) {
                             ForEach(PinShadowStyle.allCases, id: \.self) { style in
                                 Text(style.displayName).tag(style)
@@ -521,7 +777,6 @@ private struct PinSettings: View {
                         .pickerStyle(.menu)
                         .frame(width: 156)
                     }
-                    .help("在桌面贴图上右键也可快速切换")
                     PinShadowPreview(appearance: previewAppearance)
                         .frame(height: 122)
                         .clipShape(RoundedRectangle(cornerRadius: theme.metrics.radiusSM))
@@ -537,8 +792,10 @@ private struct PinSettings: View {
                                     set: { value in config.update { $0.pin.shadowIntensity = value } }
                                 ),
                                 in: 0.5...1.6,
+                                step: 0.1,
                                 theme: theme,
-                                width: 132
+                                width: 132,
+                                onEditingChanged: { $0 ? config.beginContinuousChange() : config.endContinuousChange() }
                             )
                             Text(String(format: "%.1fx", config.settings.pin.shadowIntensity))
                                 .font(.system(size: 11, design: .monospaced))
@@ -555,8 +812,10 @@ private struct PinSettings: View {
                                     set: { value in config.update { $0.pin.shadowSpread = value } }
                                 ),
                                 in: 0.6...1.5,
+                                step: 0.1,
                                 theme: theme,
-                                width: 132
+                                width: 132,
+                                onEditingChanged: { $0 ? config.beginContinuousChange() : config.endContinuousChange() }
                             )
                             Text(String(format: "%.1fx", config.settings.pin.shadowSpread))
                                 .font(.system(size: 11, design: .monospaced))
@@ -587,21 +846,48 @@ private struct PinSettings: View {
                 row("拖动时吸附屏幕边缘", bind(\.pin.snapToEdges))
                 SnapRowDivider(theme: theme)
                 SnapSettingRow("默认不透明度", theme: theme) {
-                    SnapSlider(
-                        value: Binding(
-                            get: { config.settings.pin.defaultOpacity },
-                            set: { value in config.update { $0.pin.defaultOpacity = value } }
-                        ),
-                        in: 0.1...1,
-                        theme: theme,
-                        width: 160
-                    )
+                    HStack(spacing: 8) {
+                        SnapSlider(
+                            value: Binding(
+                                get: { config.settings.pin.defaultOpacity },
+                                set: { value in config.update { $0.pin.defaultOpacity = value } }
+                            ),
+                            in: 0.1...1,
+                            step: 0.05,
+                            theme: theme,
+                            width: 132,
+                            onEditingChanged: { $0 ? config.beginContinuousChange() : config.endContinuousChange() }
+                        )
+                        Text("\(Int((config.settings.pin.defaultOpacity * 100).rounded()))%")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(theme.token(.mutedForeground))
+                            .frame(width: 34, alignment: .trailing)
+                    }
                 }
             }
 
-            SnapButton("关闭所有贴图", theme: theme, variant: .destructive, size: .md) {
+            let openCount = pinGroups.items.count
+            SnapButton(
+                openCount > 0 ? "关闭所有贴图（\(openCount)）" : "关闭所有贴图",
+                theme: theme,
+                variant: .destructive,
+                size: .md,
+                isEnabled: openCount > 0
+            ) {
+                confirmsCloseAll = true
+            }
+        }
+        .confirmationDialog(
+            "关闭全部 \(pinGroups.items.count) 张贴图？",
+            isPresented: $confirmsCloseAll,
+            titleVisibility: .visible
+        ) {
+            Button("全部关闭", role: .destructive) {
                 environment.pinGroups.closeAll()
             }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("关闭后的贴图仍可在历史贴图中找回。")
         }
     }
 
@@ -703,20 +989,22 @@ private struct AnnotateSettings: View {
     }
 
     var body: some View {
-        SettingsPage(title: "标注", theme: theme) {
+        SettingsPage(section: .annotate, theme: theme) {
             SnapSettingGroup("工具默认值", theme: theme) {
                 SnapSettingRow("默认线宽", theme: theme) {
                     HStack(spacing: 10) {
                         SnapSlider(
                             value: Binding(
                                 get: { config.settings.annotate.defaultLineWidth },
-                                set: { value in config.update { $0.annotate.defaultLineWidth = value } }
+                                set: { value in config.update { $0.annotate.defaultLineWidth = value.rounded() } }
                             ),
                             in: 1...12,
+                            step: 1,
                             theme: theme,
-                            width: 150
+                            width: 150,
+                            onEditingChanged: { $0 ? config.beginContinuousChange() : config.endContinuousChange() }
                         )
-                        valueLabel("\(Int(config.settings.annotate.defaultLineWidth))")
+                        valueLabel("\(Int(config.settings.annotate.defaultLineWidth.rounded())) px")
                     }
                 }
                 SnapRowDivider(theme: theme)
@@ -725,13 +1013,15 @@ private struct AnnotateSettings: View {
                         SnapSlider(
                             value: Binding(
                                 get: { config.settings.annotate.defaultFontSize },
-                                set: { value in config.update { $0.annotate.defaultFontSize = value } }
+                                set: { value in config.update { $0.annotate.defaultFontSize = value.rounded() } }
                             ),
                             in: 10...48,
+                            step: 1,
                             theme: theme,
-                            width: 150
+                            width: 150,
+                            onEditingChanged: { $0 ? config.beginContinuousChange() : config.endContinuousChange() }
                         )
-                        valueLabel("\(Int(config.settings.annotate.defaultFontSize))")
+                        valueLabel("\(Int(config.settings.annotate.defaultFontSize.rounded())) pt")
                     }
                 }
                 SnapRowDivider(theme: theme)
@@ -740,11 +1030,13 @@ private struct AnnotateSettings: View {
                         SnapSlider(
                             value: Binding(
                                 get: { Double(config.settings.annotate.mosaicBlockSize) },
-                                set: { value in config.update { $0.annotate.mosaicBlockSize = Int(value) } }
+                                set: { value in config.update { $0.annotate.mosaicBlockSize = Int(value.rounded()) } }
                             ),
                             in: 4...40,
+                            step: 1,
                             theme: theme,
-                            width: 150
+                            width: 150,
+                            onEditingChanged: { $0 ? config.beginContinuousChange() : config.endContinuousChange() }
                         )
                         valueLabel("\(config.settings.annotate.mosaicBlockSize) px")
                     }
@@ -780,6 +1072,7 @@ private struct ShortcutSettings: View {
     @ObservedObject private var config: ConfigStore
     @ObservedObject private var center: ShortcutCenter
     @StateObject private var recorder: ShortcutRecorder
+    @State private var confirmsReset = false
     private var theme: Theme { environment.theme }
 
     init(environment: AppEnvironment) {
@@ -790,21 +1083,29 @@ private struct ShortcutSettings: View {
     }
 
     var body: some View {
-        SettingsPage(title: "快捷键", theme: theme) {
+        SettingsPage(section: .shortcut, theme: theme) {
             bindings("全局快捷键", for: ShortcutAction.allCases.map(ShortcutRecorder.Target.global))
             bindings("框选与编辑", for: OperationShortcut.all.map(ShortcutRecorder.Target.operation))
 
-            if recorder.action == nil, let message = recorder.message {
+            if recorder.action == nil, recorder.feedbackTarget == nil, let message = recorder.message {
                 Text(message)
                     .font(.system(size: 11))
                     .foregroundStyle(theme.token(recorder.hasError ? .destructive : .mutedForeground))
             }
             SnapButton("恢复默认快捷键", theme: theme, variant: .outline, size: .md) {
-                recorder.cancel()
-                config.resetShortcutsToDefaults()
+                confirmsReset = true
             }
         }
         .onDisappear { recorder.cancel() }
+        .confirmationDialog("恢复默认快捷键？", isPresented: $confirmsReset, titleVisibility: .visible) {
+            Button("恢复默认", role: .destructive) {
+                recorder.cancel()
+                config.resetShortcutsToDefaults()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("所有自定义的全局快捷键和操作快捷键都会恢复为初始绑定。")
+        }
     }
 
     private func bindings(_ title: String, for actions: [ShortcutRecorder.Target]) -> some View {
@@ -813,19 +1114,38 @@ private struct ShortcutSettings: View {
                 if index > 0 { SnapRowDivider(theme: theme) }
                 VStack(alignment: .leading, spacing: 4) {
                     SnapSettingRow(action.displayName, theme: theme) {
-                        HStack(spacing: 8) {
+                        HStack(spacing: 6) {
                             if recorder.action == action {
-                                SnapKbd(recorder.preview, theme: theme)
+                                ShortcutKeyCap(
+                                    label: recorder.preview,
+                                    isRecording: true,
+                                    isUnset: false,
+                                    theme: theme
+                                ) {}
                                 SnapButton("取消", theme: theme, variant: .outline, size: .sm) { recorder.cancel() }
                             } else {
                                 let binding = action.binding(in: config)
-                                SnapKbd(binding?.displayString ?? "未设置", theme: theme)
-                                SnapButton("录制", theme: theme, variant: .outline, size: .sm) { recorder.begin(action) }
-                                    .accessibilityLabel("录制\(action.displayName)快捷键")
-                                SnapButton("清除", theme: theme, variant: .ghost, size: .sm, isEnabled: binding != nil) {
-                                    recorder.clear(action)
+                                ShortcutKeyCap(
+                                    label: binding?.displayString ?? "点击录制",
+                                    isRecording: false,
+                                    isUnset: binding == nil,
+                                    theme: theme
+                                ) {
+                                    recorder.begin(action)
                                 }
-                                .accessibilityLabel("清除\(action.displayName)快捷键")
+                                .accessibilityLabel("录制\(action.displayName)快捷键")
+                                .help(binding == nil ? "点击录制快捷键" : "点击重新录制，录制时按 Delete 可清除")
+                                if binding != nil {
+                                    SnapButton(theme: theme, variant: .ghost, size: .icon) {
+                                        recorder.clear(action)
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(theme.token(.mutedForeground))
+                                    }
+                                    .accessibilityLabel("清除\(action.displayName)快捷键")
+                                    .help("清除快捷键")
+                                }
                             }
                         }
                     }
@@ -835,20 +1155,67 @@ private struct ShortcutSettings: View {
                             .font(.system(size: 11))
                             .foregroundStyle(theme.token(.destructive))
                             .fixedSize(horizontal: false, vertical: true)
-                            .padding(.horizontal, 12)
+                            .padding(.horizontal, 14)
                             .padding(.bottom, 8)
                     }
                     if recorder.action == action {
-                        Text(recorder.message ?? "等待按键…")
+                        Text(recorder.message ?? "等待按键…（Esc 取消，Delete 清除）")
                             .font(.system(size: 11))
                             .foregroundStyle(theme.token(recorder.hasError ? .destructive : .mutedForeground))
                             .fixedSize(horizontal: false, vertical: true)
-                            .padding(.horizontal, 12)
+                            .padding(.horizontal, 14)
+                            .padding(.bottom, 8)
+                    } else if recorder.feedbackTarget == action, let message = recorder.message {
+                        Text(message)
+                            .font(.system(size: 11))
+                            .foregroundStyle(recorder.hasError ? theme.token(.destructive) : Color.green)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 14)
                             .padding(.bottom, 8)
                     }
                 }
             }
         }
+    }
+}
+
+/// 可点击的快捷键帽：点击即进入录制，录制中带高亮描边。
+private struct ShortcutKeyCap: View {
+    let label: String
+    let isRecording: Bool
+    let isUnset: Bool
+    let theme: Theme
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 11, weight: isUnset ? .regular : .medium, design: isUnset ? .default : .rounded))
+                .foregroundStyle(
+                    isRecording ? theme.token(.foreground)
+                    : (isUnset ? theme.token(.mutedForeground) : theme.token(.foreground))
+                )
+                .padding(.horizontal, 10)
+                .frame(minWidth: 64, minHeight: 24)
+                .background {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(
+                            isRecording ? theme.controlAccent.opacity(theme.isDark ? 0.22 : 0.12)
+                            : (isHovering ? theme.fieldSurface.opacity(1.6) : theme.fieldSurface)
+                        )
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(
+                            isRecording ? theme.controlAccent : (isHovering ? theme.controlAccent.opacity(0.5) : theme.settingsCardBorder),
+                            lineWidth: isRecording ? 1.5 : 1
+                        )
+                }
+        }
+        .buttonStyle(SnapPressStyle(scale: 0.97))
+        .onHoverChange { isHovering = $0 }
     }
 }
 
@@ -859,27 +1226,51 @@ private struct AboutSettings: View {
     private var theme: Theme { environment.theme }
 
     var body: some View {
-        SettingsPage(title: "关于", theme: theme) {
-            SnapButton("打开使用指南", theme: theme, variant: .outline, size: .md) { environment.tutorial.show() }
+        SettingsPage(section: .about, theme: theme) {
             SnapSettingGroup(theme: theme) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 10) {
-                        IconView(icon: .crop, size: 20, color: theme.token(.foreground))
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(AppInfo.displayName)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(theme.token(.foreground))
-                            Text("版本 \(AppInfo.version) (\(AppInfo.build))")
-                                .font(.system(size: 11))
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 14) {
+                        if let icon = NSApp.applicationIconImage {
+                            Image(nsImage: icon)
+                                .resizable()
+                                .interpolation(.high)
+                                .frame(width: 52, height: 52)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                .shadow(color: .black.opacity(theme.isDark ? 0.35 : 0.14), radius: 6, y: 2)
+                        } else {
+                            SettingsIconBadge(section: .capture, size: 48)
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 8) {
+                                Text(AppInfo.displayName)
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundStyle(theme.token(.foreground))
+                                if AppPaths.isDevelopmentBuild {
+                                    Text("开发版")
+                                        .font(.system(size: 10.5, weight: .semibold))
+                                        .foregroundStyle(theme.controlAccent)
+                                        .padding(.horizontal, 7)
+                                        .padding(.vertical, 2)
+                                        .background(theme.controlAccent.opacity(0.14), in: Capsule())
+                                }
+                            }
+                            Text("版本 \(AppInfo.version)（Build \(AppInfo.build)）")
+                                .font(.system(size: 12).monospacedDigit())
                                 .foregroundStyle(theme.token(.mutedForeground))
+                            Text("为 macOS 打造的截图、标注、贴图、长截图、录屏与截图秒译工具")
+                                .font(.system(size: 12))
+                                .foregroundStyle(theme.token(.mutedForeground))
+                                .padding(.top, 2)
                         }
                         Spacer()
                     }
-                    Text("截图、标注、贴图与录屏工具")
-                        .font(.system(size: 12))
-                        .foregroundStyle(theme.token(.mutedForeground))
+                    HStack(spacing: 8) {
+                        SnapButton("打开使用指南", theme: theme, variant: .primary, size: .sm) {
+                            environment.tutorial.show()
+                        }
+                    }
                 }
-                .padding(14)
+                .padding(18)
             }
         }
     }
@@ -890,6 +1281,9 @@ private struct AboutSettings: View {
 private struct RecordSettings: View {
     let environment: AppEnvironment
     @ObservedObject private var config: ConfigStore
+    @State private var cameraStatus: PermissionStatus = .notDetermined
+    @State private var microphoneStatus: PermissionStatus = .notDetermined
+    @State private var screenStatus: PermissionStatus = .notDetermined
     private var theme: Theme { environment.theme }
 
     init(environment: AppEnvironment) {
@@ -898,9 +1292,9 @@ private struct RecordSettings: View {
     }
 
     var body: some View {
-        SettingsPage(title: "录屏", theme: theme) {
+        SettingsPage(section: .record, theme: theme) {
             SnapSettingGroup("画面", theme: theme) {
-                SnapSettingRow("帧率", theme: theme) {
+                SnapSettingRow("帧率", subtitle: "码率固定 8 Mbps，H.264 硬件编码", theme: theme) {
                     SnapSegmented(
                         items: [30, 60],
                         selection: Binding(
@@ -912,7 +1306,6 @@ private struct RecordSettings: View {
                         "\(fps) fps"
                     }
                 }
-                .help("码率固定 8 Mbps，H.264 硬编")
                 SnapRowDivider(theme: theme)
                 SnapSettingRow("包含光标", theme: theme) {
                     SnapToggle(
@@ -926,63 +1319,68 @@ private struct RecordSettings: View {
             }
 
             SnapSettingGroup("演示与鼠标动效", theme: theme) {
-                recordingToggle("摄像头画中画", keyPath: \.record.includesCamera)
+                permissionToggleRow(
+                    "摄像头画中画",
+                    keyPath: \.record.includesCamera,
+                    permission: .camera,
+                    status: cameraStatus
+                )
                 SnapRowDivider(theme: theme)
                 recordingToggle("显示快捷键", keyPath: \.record.showsKeyPresses)
                 SnapRowDivider(theme: theme)
                 recordingToggle("显示鼠标点击", keyPath: \.record.showsMouseClicks)
-                SnapRowDivider(theme: theme)
-                recordingToggle("显示滚轮滑动", keyPath: \.record.showsMouseScrolls)
-                if config.settings.record.showsMouseClicks || config.settings.record.showsMouseScrolls {
-                    if config.settings.record.showsMouseClicks {
-                        SnapRowDivider(theme: theme)
-                        SnapSettingRow("点击动效样式", theme: theme) {
-                            Picker("点击动效样式", selection: Binding(
-                                get: { config.settings.record.mouseClickStyle },
-                                set: { value in config.update { $0.record.mouseClickStyle = value } }
-                            )) {
-                                ForEach(RecordingMouseClickStyle.allCases, id: \.self) { style in
-                                    Text(style.displayName).tag(style)
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .frame(width: 152)
-                        }
-                    }
-                    if config.settings.record.showsMouseScrolls {
-                        SnapRowDivider(theme: theme)
-                        SnapSettingRow("滚轮动效样式", theme: theme) {
-                            Picker("滚轮动效样式", selection: Binding(
-                                get: { config.settings.record.mouseScrollStyle },
-                                set: { value in config.update { $0.record.mouseScrollStyle = value } }
-                            )) {
-                                ForEach(RecordingMouseScrollStyle.allCases, id: \.self) { style in
-                                    Text(style.displayName).tag(style)
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .frame(width: 152)
-                        }
-                    }
+                if config.settings.record.showsMouseClicks {
                     SnapRowDivider(theme: theme)
-                    SnapSettingRow("动效配色", theme: theme) {
-                        Picker("动效配色", selection: Binding(
-                            get: { config.settings.record.mouseEffectPalette },
-                            set: { value in config.update { $0.record.mouseEffectPalette = value } }
+                    SnapSettingRow("点击动效样式", theme: theme) {
+                        Picker("点击动效样式", selection: Binding(
+                            get: { config.settings.record.mouseClickStyle },
+                            set: { value in config.update { $0.record.mouseClickStyle = value } }
                         )) {
-                            ForEach(RecordingMouseEffectPalette.allCases, id: \.self) { palette in
-                                Text(palette.displayName).tag(palette)
+                            ForEach(RecordingMouseClickStyle.allCases, id: \.self) { style in
+                                Text(style.displayName).tag(style)
                             }
                         }
                         .labelsHidden()
                         .pickerStyle(.menu)
                         .frame(width: 152)
                     }
-                    mousePaletteSwatchStrip
-                        .padding(.horizontal, 14)
-                        .padding(.bottom, 8)
+                    .padding(.leading, 12)
+                }
+                SnapRowDivider(theme: theme)
+                recordingToggle("显示滚轮滑动", keyPath: \.record.showsMouseScrolls)
+                if config.settings.record.showsMouseScrolls {
+                    SnapRowDivider(theme: theme)
+                    SnapSettingRow("滚轮动效样式", theme: theme) {
+                        Picker("滚轮动效样式", selection: Binding(
+                            get: { config.settings.record.mouseScrollStyle },
+                            set: { value in config.update { $0.record.mouseScrollStyle = value } }
+                        )) {
+                            ForEach(RecordingMouseScrollStyle.allCases, id: \.self) { style in
+                                Text(style.displayName).tag(style)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(width: 152)
+                    }
+                    .padding(.leading, 12)
+                }
+                if config.settings.record.showsMouseClicks || config.settings.record.showsMouseScrolls {
+                    SnapRowDivider(theme: theme)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text("动效配色")
+                                .font(.system(size: 13))
+                                .foregroundStyle(theme.token(.foreground))
+                            Spacer()
+                            Text(config.settings.record.mouseEffectPalette.displayName)
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(theme.token(.mutedForeground))
+                        }
+                        mousePaletteSwatchStrip
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
                     SnapRowDivider(theme: theme)
                     SnapSettingRow("动效尺寸", theme: theme) {
                         HStack(spacing: 8) {
@@ -992,52 +1390,108 @@ private struct RecordSettings: View {
                                     set: { value in config.update { $0.record.mouseEffectScale = value } }
                                 ),
                                 in: 0.75...1.45,
+                                step: 0.05,
                                 theme: theme,
-                                width: 132
+                                width: 132,
+                                onEditingChanged: { $0 ? config.beginContinuousChange() : config.endContinuousChange() }
                             )
-                            Text(String(format: "%.1fx", config.settings.record.mouseEffectScale))
+                            Text(String(format: "%.2fx", config.settings.record.mouseEffectScale))
                                 .font(.system(size: 11, design: .monospaced))
                                 .foregroundStyle(theme.token(.mutedForeground))
-                                .frame(width: 34, alignment: .trailing)
+                                .frame(width: 40, alignment: .trailing)
                         }
                     }
-                    RecordingMouseEffectsPreview(
-                        showsClicks: config.settings.record.showsMouseClicks,
-                        showsScrolls: config.settings.record.showsMouseScrolls,
-                        clickStyle: config.settings.record.mouseClickStyle,
-                        scrollStyle: config.settings.record.mouseScrollStyle,
-                        palette: config.settings.record.mouseEffectPalette,
-                        scale: config.settings.record.mouseEffectScale
-                    )
+                    ZStack(alignment: .bottomLeading) {
+                        RecordingMouseEffectsPreview(
+                            showsClicks: config.settings.record.showsMouseClicks,
+                            showsScrolls: config.settings.record.showsMouseScrolls,
+                            clickStyle: config.settings.record.mouseClickStyle,
+                            scrollStyle: config.settings.record.mouseScrollStyle,
+                            palette: config.settings.record.mouseEffectPalette,
+                            scale: config.settings.record.mouseEffectScale
+                        )
+                        Text("点击或滚动预览区可试看效果")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.88))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(.black.opacity(0.42), in: Capsule())
+                            .padding(8)
+                            .allowsHitTesting(false)
+                    }
                     .frame(height: 124)
                     .clipShape(RoundedRectangle(cornerRadius: theme.metrics.radiusSM))
                     .padding(.horizontal, 14)
                     .padding(.bottom, 12)
-                    .help("可在预览区内直接左键、右键、双击或滚轮试看效果")
                 }
             }
 
             SnapSettingGroup("声音", theme: theme) {
-                SnapSettingRow("录制系统声音", theme: theme) {
-                    SnapToggle(
-                        isOn: Binding(
-                            get: { config.settings.record.includesSystemAudio },
-                            set: { value in config.update { $0.record.includesSystemAudio = value } }
-                        ),
-                        theme: theme
-                    )
-                }
+                permissionToggleRow(
+                    "录制系统声音",
+                    keyPath: \.record.includesSystemAudio,
+                    permission: .screenCapture,
+                    status: screenStatus
+                )
                 SnapRowDivider(theme: theme)
-                SnapSettingRow("录制麦克风", theme: theme) {
-                    SnapToggle(
-                        isOn: Binding(
-                            get: { config.settings.record.includesMicrophone },
-                            set: { value in config.update { $0.record.includesMicrophone = value } }
-                        ),
-                        theme: theme
-                    )
-                }
+                permissionToggleRow(
+                    "录制麦克风",
+                    keyPath: \.record.includesMicrophone,
+                    permission: .microphone,
+                    status: microphoneStatus
+                )
             }
+        }
+        .onAppear { refreshPermissions() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshPermissions()
+        }
+    }
+
+    private func refreshPermissions() {
+        cameraStatus = Permissions.status(of: .camera)
+        microphoneStatus = Permissions.status(of: .microphone)
+        screenStatus = Permissions.status(of: .screenCapture)
+    }
+
+    private func permissionToggleRow(
+        _ title: String,
+        keyPath: WritableKeyPath<TapSnapConfig.Settings, Bool>,
+        permission: SystemPermission,
+        status: PermissionStatus
+    ) -> some View {
+        let isOn = config.settings[keyPath: keyPath]
+        let needsGrant = isOn && status != .authorized
+        return SnapSettingRow(
+            title,
+            subtitle: needsGrant ? "缺少\(permission.displayName)权限，开始录屏时将无法生效" : nil,
+            theme: theme
+        ) {
+            HStack(spacing: 8) {
+                if needsGrant {
+                    SnapButton(status == .notDetermined ? "申请权限" : "去授权", theme: theme, variant: .outline, size: .sm) {
+                        requestOrOpenPermission(permission, status: status)
+                    }
+                }
+                SnapToggle(
+                    isOn: Binding(
+                        get: { config.settings[keyPath: keyPath] },
+                        set: { value in config.update { $0[keyPath: keyPath] = value } }
+                    ),
+                    theme: theme
+                )
+            }
+        }
+    }
+
+    private func requestOrOpenPermission(_ permission: SystemPermission, status: PermissionStatus) {
+        if status == .notDetermined {
+            DispatchQueue.global(qos: .userInitiated).async {
+                _ = Permissions.request(permission)
+                DispatchQueue.main.async { refreshPermissions() }
+            }
+        } else {
+            Permissions.openSettingsPanel(for: permission)
         }
     }
     private var mousePaletteSwatchStrip: some View {
@@ -1073,12 +1527,12 @@ private struct RecordSettings: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
                     .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(isSelected ? theme.token(.secondary) : theme.token(.background).opacity(0.6))
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(isSelected ? theme.controlAccent.opacity(theme.isDark ? 0.18 : 0.10) : theme.fieldSurface)
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(isSelected ? theme.token(.primary) : theme.token(.border), lineWidth: isSelected ? 1.2 : 0.8)
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .stroke(isSelected ? theme.controlAccent : theme.settingsCardBorder, lineWidth: isSelected ? 1.3 : 0.8)
                     )
                 }
                 .buttonStyle(.plain)
@@ -1270,18 +1724,143 @@ private struct LongShotSettings: View {
     let environment: AppEnvironment
     @ObservedObject private var config: ConfigStore
     private var theme: Theme { environment.theme }
-    init(environment: AppEnvironment) { self.environment = environment; config = environment.config }
+
+    private enum ScrollPreset: String, CaseIterable, Hashable {
+        case slow, standard, fast, custom
+
+        var title: String {
+            switch self {
+            case .slow: return "慢速"
+            case .standard: return "标准"
+            case .fast: return "快速"
+            case .custom: return "自定义"
+            }
+        }
+
+        var values: (step: Int, intervalMs: Int)? {
+            switch self {
+            case .slow: return (140, 700)
+            case .standard: return (200, 500)
+            case .fast: return (360, 350)
+            case .custom: return nil
+            }
+        }
+
+        static func matching(step: Int, intervalMs: Int) -> ScrollPreset {
+            for preset in [ScrollPreset.slow, .standard, .fast] {
+                if let pair = preset.values, pair.step == step, pair.intervalMs == intervalMs {
+                    return preset
+                }
+            }
+            return .custom
+        }
+    }
+
+    init(environment: AppEnvironment) {
+        self.environment = environment
+        self.config = environment.config
+    }
+
     var body: some View {
-        SettingsPage(title: "长截图", theme: theme) {
-            Toggle("选区就绪后自动滚动", isOn: bind(\.longShot.autoScroll))
-            Stepper("每次滚动 \(config.settings.longShot.scrollStep) 点", value: bind(\.longShot.scrollStep), in: 20...800, step: 20)
-            Stepper("滚动间隔 \(config.settings.longShot.scrollIntervalMs) 毫秒", value: bind(\.longShot.scrollIntervalMs), in: 300...3000, step: 100)
-            HStack {
-                Text("保留重叠 \(Int(config.settings.longShot.overlapRatio * 100))%")
-                Slider(value: bind(\.longShot.overlapRatio), in: 0.35...0.85, step: 0.05)
+        SettingsPage(section: .longShot, theme: theme) {
+            SnapSettingGroup("自动滚动", theme: theme) {
+                SnapSettingRow(
+                    "选区就绪后自动滚动",
+                    subtitle: "关闭后需手动滚动页面完成拼接",
+                    theme: theme
+                ) {
+                    SnapToggle(isOn: bind(\.longShot.autoScroll), theme: theme)
+                }
+                if config.settings.longShot.autoScroll {
+                    SnapRowDivider(theme: theme)
+                    SnapSettingRow("滚动速度预设", theme: theme) {
+                        SnapSegmented(
+                            items: [ScrollPreset.slow, .standard, .fast],
+                            selection: Binding(
+                                get: {
+                                    ScrollPreset.matching(
+                                        step: config.settings.longShot.scrollStep,
+                                        intervalMs: config.settings.longShot.scrollIntervalMs
+                                    )
+                                },
+                                set: { preset in
+                                    guard let values = preset.values else { return }
+                                    config.update {
+                                        $0.longShot.scrollStep = values.step
+                                        $0.longShot.scrollIntervalMs = values.intervalMs
+                                    }
+                                }
+                            ),
+                            theme: theme,
+                            title: \.title
+                        )
+                    }
+                    SnapRowDivider(theme: theme)
+                    SnapSettingRow("每次滚动距离", theme: theme) {
+                        HStack(spacing: 10) {
+                            SnapSlider(
+                                value: Binding(
+                                    get: { Double(config.settings.longShot.scrollStep) },
+                                    set: { value in config.update { $0.longShot.scrollStep = Int(value.rounded()) } }
+                                ),
+                                in: 20...800,
+                                step: 20,
+                                theme: theme,
+                                width: 150,
+                                onEditingChanged: { $0 ? config.beginContinuousChange() : config.endContinuousChange() }
+                            )
+                            valueLabel("\(config.settings.longShot.scrollStep) pt")
+                        }
+                    }
+                    SnapRowDivider(theme: theme)
+                    SnapSettingRow("滚动间隔", theme: theme) {
+                        HStack(spacing: 10) {
+                            SnapSlider(
+                                value: Binding(
+                                    get: { Double(config.settings.longShot.scrollIntervalMs) },
+                                    set: { value in config.update { $0.longShot.scrollIntervalMs = Int(value.rounded()) } }
+                                ),
+                                in: 300...3000,
+                                step: 100,
+                                theme: theme,
+                                width: 150,
+                                onEditingChanged: { $0 ? config.beginContinuousChange() : config.endContinuousChange() }
+                            )
+                            valueLabel("\(config.settings.longShot.scrollIntervalMs) ms")
+                        }
+                    }
+                }
+            }
+
+            SnapSettingGroup("拼接", theme: theme) {
+                SnapSettingRow(
+                    "保留重叠比例",
+                    subtitle: "重叠比例越高拼接越稳，但总滚动次数会增加",
+                    theme: theme
+                ) {
+                    HStack(spacing: 10) {
+                        SnapSlider(
+                            value: bind(\.longShot.overlapRatio),
+                            in: 0.35...0.85,
+                            step: 0.05,
+                            theme: theme,
+                            width: 150,
+                            onEditingChanged: { $0 ? config.beginContinuousChange() : config.endContinuousChange() }
+                        )
+                        valueLabel("\(Int((config.settings.longShot.overlapRatio * 100).rounded()))%")
+                    }
+                }
             }
         }
     }
+
+    private func valueLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11).monospacedDigit())
+            .foregroundStyle(theme.token(.mutedForeground))
+            .frame(width: 54, alignment: .trailing)
+    }
+
     private func bind<T>(_ keyPath: WritableKeyPath<TapSnapConfig.Settings, T>) -> Binding<T> {
         Binding(get: { config.settings[keyPath: keyPath] }, set: { value in config.update { $0[keyPath: keyPath] = value } })
     }

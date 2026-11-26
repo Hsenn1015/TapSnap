@@ -86,7 +86,7 @@ public struct SnapButton<Label: View>: View {
 
     private var foreground: Color {
         switch variant {
-        case .primary: return theme.token(.primaryForeground)
+        case .primary: return .white
         case .secondary: return theme.token(.secondaryForeground)
         case .outline, .ghost, .link: return theme.token(.foreground)
         case .destructive: return theme.token(.destructiveForeground)
@@ -96,20 +96,20 @@ public struct SnapButton<Label: View>: View {
     private var background: Color {
         switch variant {
         case .primary:
-            return theme.token(.primary).opacity(isHovering ? 0.88 : 1)
+            return theme.controlAccent.opacity(isHovering ? 0.88 : 1)
         case .secondary:
             return theme.token(.secondary).opacity(isHovering ? 0.80 : 1)
         case .outline:
-            return isHovering ? theme.token(.accent) : .clear
+            return isHovering ? theme.fieldSurface : .clear
         case .ghost, .link:
-            return isHovering ? theme.token(.accent) : .clear
+            return isHovering ? theme.fieldSurface : .clear
         case .destructive:
             return theme.token(.destructive).opacity(isHovering ? 0.88 : 1)
         }
     }
 
     private var borderColor: Color {
-        variant == .outline ? theme.token(.input) : .clear
+        variant == .outline ? theme.settingsCardBorder : .clear
     }
 }
 

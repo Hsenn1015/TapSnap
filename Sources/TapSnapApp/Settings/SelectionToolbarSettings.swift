@@ -85,11 +85,13 @@ struct SelectionToolbarSettings: View {
             .senCardStyle(theme: theme)
 
             HStack {
-                Button("恢复默认布局") { pinned = nil }
-                    .disabled(pinned == nil)
+                SnapButton("恢复默认布局", theme: theme, variant: .ghost, size: .sm, isEnabled: pinned != nil) {
+                    pinned = nil
+                }
                 Spacer()
-                Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("保存") {
+                SnapButton("取消", theme: theme, variant: .outline, size: .sm) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                SnapButton("保存", theme: theme, variant: .primary, size: .sm) {
                     save(pinned?.map(\.rawValue))
                     dismiss()
                 }

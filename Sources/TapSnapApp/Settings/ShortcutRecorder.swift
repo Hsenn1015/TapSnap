@@ -36,6 +36,7 @@ final class ShortcutRecorder: ObservableObject {
     }
 
     @Published private(set) var action: Target?
+    @Published private(set) var feedbackTarget: Target?
     @Published private(set) var preview = "请按组合键"
     @Published private(set) var message: String?
     @Published private(set) var hasError = false
@@ -48,12 +49,14 @@ final class ShortcutRecorder: ObservableObject {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var generation = UUID()
+    private var feedbackDismissWorkItem: DispatchWorkItem?
 
     init(center: ShortcutCenter) { self.center = center }
 
     func begin(_ action: Target) {
         cancel()
         self.action = action
+        feedbackTarget = action
         preview = action.allowsSingleKey ? "请按快捷键" : "请按组合键"
         message = nil
         hasError = false
@@ -82,10 +85,13 @@ final class ShortcutRecorder: ObservableObject {
 
     func cancel() {
         generation = UUID()
+        feedbackDismissWorkItem?.cancel()
+        feedbackDismissWorkItem = nil
         removeEventMonitoring()
         pendingKey = nil
         pendingBinding = nil
         action = nil
+        feedbackTarget = nil
         message = nil
         hasError = false
         window = nil
@@ -94,9 +100,23 @@ final class ShortcutRecorder: ObservableObject {
 
     func clear(_ action: Target) {
         cancel()
-        message = save(nil, for: action)
-        hasError = message != nil
-        if message == nil { message = "已清除\(action.displayName)快捷键" }
+        let error = save(nil, for: action)
+        showFeedback(error ?? "已清除\(action.displayName)快捷键", for: action, isError: error != nil)
+    }
+
+    private func showFeedback(_ text: String, for target: Target?, isError: Bool) {
+        feedbackDismissWorkItem?.cancel()
+        feedbackTarget = target
+        message = text
+        hasError = isError
+        guard !isError else { return }
+        let item = DispatchWorkItem { [weak self] in
+            guard let self, self.action == nil, self.message == text else { return }
+            self.message = nil
+            self.feedbackTarget = nil
+        }
+        feedbackDismissWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: item)
     }
 
     func handle(_ event: NSEvent) {
@@ -118,8 +138,7 @@ final class ShortcutRecorder: ObservableObject {
                 let result = pendingBinding.map { "\(action.displayName)已设为 \($0.displayString)" }
                     ?? "已清除\(action.displayName)快捷键"
                 cancel()
-                message = result
-                hasError = false
+                showFeedback(result, for: action, isError: false)
             }
             return
         }
@@ -138,8 +157,7 @@ final class ShortcutRecorder: ObservableObject {
             hasError = false
         case .cancel:
             cancel()
-            message = "已取消，原快捷键保留"
-            hasError = false
+            showFeedback("已取消，原快捷键保留", for: action, isError: false)
         case .invalid:
             pendingKey = nil
             message = action.allowsSingleKey ? "回车和 Tab 用于确认与切换焦点，请换一个键位"

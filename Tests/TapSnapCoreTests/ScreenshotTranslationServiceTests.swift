@@ -55,6 +55,33 @@ final class ScreenshotTranslationServiceTests: XCTestCase {
         XCTAssertEqual(output, "会话已过期")
     }
 
+    func testQwenMTModelUsesSingleUserMessageAndTranslationOptionsWithoutSystemPrompt() async throws {
+        var model = PrivacyAIConfiguration(provider: .qwen)
+        model.model = "qwen-mt-plus"
+        let output = try await TextModelTranslation.translate("Hello", source: "en", target: "zh-Hans",
+                                                              model: model, key: "mock-key") { request in
+            let data = try XCTUnwrap(request.httpBody)
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let messages = try XCTUnwrap(body["messages"] as? [[String: String]])
+            XCTAssertEqual(messages, [["role": "user", "content": "Hello"]])
+            XCTAssertNil(body["enable_thinking"])
+            let options = try XCTUnwrap(body["translation_options"] as? [String: String])
+            XCTAssertEqual(options["source_lang"], "English")
+            XCTAssertEqual(options["target_lang"], "Chinese")
+            return Data(#"{"choices":[{"message":{"content":"你好"},"finish_reason":"stop"}]}"#.utf8)
+        }
+        XCTAssertEqual(output, "你好")
+
+        var emitted = ""
+        XCTAssertEqual(PrivacyAI.incrementalChunk(from: "你", emittedSoFar: &emitted, deduplicateCumulative: true), "你")
+        XCTAssertEqual(PrivacyAI.incrementalChunk(from: "你好", emittedSoFar: &emitted, deduplicateCumulative: true), "好")
+        XCTAssertEqual(PrivacyAI.incrementalChunk(from: "你好世界", emittedSoFar: &emitted, deduplicateCumulative: true), "世界")
+        XCTAssertEqual(emitted, "你好世界")
+
+        let errData = Data(#"{"error":{"message":"system role is not supported"}}"#.utf8)
+        XCTAssertEqual(PrivacyAI.extractErrorMessage(from: errData), "system role is not supported")
+    }
+
     func testLocalAndOnlineDestinationsAreSeparatedBeforeSending() async throws {
         var local = PrivacyAIConfiguration(provider: .local)
         local.model = "demo"

@@ -13,11 +13,14 @@ struct TranslationServiceSettingsView: View {
     private let onSave: (_ settingsChanged: Bool) -> Void
     @State private var draft: ScreenshotTranslationSettings
     @State private var key = ""
+    @State private var savedKeySnapshot = ""
     @State private var revealsKey = false
     @State private var keyCopied = false
     @State private var status = ""
     @State private var statusIsError = false
     @State private var trial: Task<Void, Never>?
+    @State private var confirmsRemoveKey = false
+    @FocusState private var isKeyFocused: Bool
 
     static let supportedLanguages: [(code: String, name: String)] = [
         ("zh-Hans", "简体中文"),
@@ -68,6 +71,39 @@ struct TranslationServiceSettingsView: View {
         }
         .onAppear { loadSavedKey() }
         .onDisappear { clearTrial() }
+        .confirmationDialog("移除已保存的翻译密钥？", isPresented: $confirmsRemoveKey, titleVisibility: .visible) {
+            Button("移除密钥", role: .destructive) {
+                if let api = draft.apiConfiguration {
+                    removeSavedAPIKey(for: api)
+                } else if let model = draft.modelConfiguration {
+                    removeSavedModelKey(for: model)
+                }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("移除后需要重新填写密钥才能继续使用该翻译服务。")
+        }
+    }
+
+    /// 设置页中非即时项（服务商、凭据、端点等）是否有尚未保存的改动。
+    private var hasUnsavedServiceChanges: Bool {
+        let saved = config.settings.translation
+        if draft.provider != saved.provider { return true }
+        switch draft.provider {
+        case .apple, nil:
+            return false
+        case .api:
+            return draft.apiProvider != saved.apiProvider
+                || draft.apiConfiguration != saved.apiConfiguration
+                || key != savedKeySnapshot
+        case .local:
+            return draft.modelConfiguration != saved.modelConfiguration
+                || key != savedKeySnapshot
+        case .online:
+            return draft.onlineProvider != saved.onlineProvider
+                || draft.modelConfiguration != saved.modelConfiguration
+                || key != savedKeySnapshot
+        }
     }
 
     // MARK: - 设置页完整布局
@@ -93,16 +129,30 @@ struct TranslationServiceSettingsView: View {
                 .padding(.vertical, 12)
                 SnapRowDivider(theme: theme)
                 SnapSettingRow("默认目标语言", theme: theme) {
-                    Picker("默认目标语言", selection: $draft.targetLanguage) {
+                    Picker(
+                        "默认目标语言",
+                        selection: Binding(
+                            get: { draft.targetLanguage },
+                            set: { newValue in
+                                draft.targetLanguage = newValue
+                                config.update { $0.translation.targetLanguage = newValue }
+                            }
+                        )
+                    ) {
                         ForEach(Self.supportedLanguages, id: \.code) { item in
                             Text(item.name).tag(item.code)
                         }
                     }
                     .labelsHidden()
-                    .frame(width: 120)
+                    .pickerStyle(.menu)
+                    .frame(width: 126)
                 }
                 SnapRowDivider(theme: theme)
-                SnapSettingRow("打开后自动翻译", theme: theme) {
+                SnapSettingRow(
+                    "打开后自动翻译",
+                    subtitle: "关闭后先展示本机 OCR 原文，可勾选段落后再翻译",
+                    theme: theme
+                ) {
                     SnapToggle(
                         isOn: Binding(
                             get: { draft.autoTranslateOnOpen },
@@ -114,7 +164,6 @@ struct TranslationServiceSettingsView: View {
                         theme: theme
                     )
                 }
-                .help("关闭后先展示本机 OCR 原文，可勾选段落后再翻译")
             }
 
             quickTranslateStyleGroup
@@ -160,31 +209,31 @@ struct TranslationServiceSettingsView: View {
                     .lineLimit(1)
                 if let badge {
                     Text(badge)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Color(red: 0.04, green: 0.48, blue: 1.0))
-                        .padding(.horizontal, 5)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(theme.controlAccent)
+                        .padding(.horizontal, 6)
                         .padding(.vertical, 1.5)
-                        .background(Color(red: 0.04, green: 0.48, blue: 1.0).opacity(0.12), in: Capsule())
+                        .background(theme.controlAccent.opacity(theme.isDark ? 0.20 : 0.12), in: Capsule())
                 }
                 Spacer(minLength: 2)
                 if selected {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(Color(red: 0.04, green: 0.48, blue: 1.0))
+                        .font(.system(size: 13))
+                        .foregroundStyle(theme.controlAccent)
                 }
             }
             .padding(.horizontal, 11)
             .padding(.vertical, 9)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(selected ? theme.token(.accent).opacity(0.65) : theme.token(.secondary).opacity(0.45))
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(selected ? theme.controlAccent.opacity(theme.isDark ? 0.18 : 0.10) : theme.fieldSurface)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .strokeBorder(
-                        selected ? Color(red: 0.04, green: 0.48, blue: 1.0).opacity(0.75) : theme.token(.border),
-                        lineWidth: selected ? 1.3 : 1
+                        selected ? theme.controlAccent : theme.settingsCardBorder,
+                        lineWidth: selected ? 1.3 : 0.9
                     )
             )
         }
@@ -221,6 +270,7 @@ struct TranslationServiceSettingsView: View {
                         }
                     }
                     .labelsHidden()
+                    .pickerStyle(.menu)
                     .frame(width: 180)
                 }
                 .help(api.provider.hint)
@@ -232,7 +282,7 @@ struct TranslationServiceSettingsView: View {
                             text: apiField(\.appID),
                             theme: theme,
                             placeholder: "填写 \(api.provider.appIDLabel)",
-                            width: 240,
+                            width: 280,
                             monospaced: true
                         )
                         .accessibilityLabel(api.provider.appIDLabel)
@@ -243,7 +293,7 @@ struct TranslationServiceSettingsView: View {
                 SnapSettingRow(api.provider.secretLabel, theme: theme) {
                     secureField(
                         placeholder: api.provider.requiresSecret ? "输入密钥" : "可选（留空免密）",
-                        width: 240
+                        width: 280
                     )
                 }
 
@@ -254,7 +304,7 @@ struct TranslationServiceSettingsView: View {
                             text: apiField(\.region),
                             theme: theme,
                             placeholder: api.provider.regionPlaceholder,
-                            width: 240,
+                            width: 280,
                             monospaced: true
                         )
                     }
@@ -267,7 +317,7 @@ struct TranslationServiceSettingsView: View {
                             text: apiField(\.customBaseURL),
                             theme: theme,
                             placeholder: api.provider.endpointPlaceholder,
-                            width: 240,
+                            width: 280,
                             monospaced: true
                         )
                     }
@@ -291,14 +341,35 @@ struct TranslationServiceSettingsView: View {
                         }
                         .help("使用示例文字 Hello 测试速度与连通性")
 
-                        SnapButton("移除已存密钥", theme: theme, variant: .ghost, size: .sm, isEnabled: trial == nil) {
-                            removeSavedAPIKey(for: api)
+                        SnapButton(
+                            "移除已存密钥",
+                            theme: theme,
+                            variant: .ghost,
+                            size: .sm,
+                            isEnabled: !savedKeySnapshot.isEmpty && trial == nil
+                        ) {
+                            confirmsRemoveKey = true
                         }
 
                         Spacer()
 
-                        SnapButton("保存翻译服务", theme: theme, variant: .primary, size: .sm, isEnabled: canSave && trial == nil, action: save)
-                            .keyboardShortcut(.defaultAction)
+                        if hasUnsavedServiceChanges {
+                            Text("未保存")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Color.orange)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.12), in: Capsule())
+                        }
+
+                        SnapButton(
+                            "保存翻译服务",
+                            theme: theme,
+                            variant: .primary,
+                            size: .sm,
+                            isEnabled: canSave && hasUnsavedServiceChanges && trial == nil,
+                            action: save
+                        )
                     }
                 }
                 .padding(.horizontal, 14)
@@ -318,7 +389,8 @@ struct TranslationServiceSettingsView: View {
                             }
                         }
                         .labelsHidden()
-                        .frame(width: 160)
+                        .pickerStyle(.menu)
+                        .frame(width: 168)
                     }
                     SnapRowDivider(theme: theme)
                 }
@@ -328,7 +400,7 @@ struct TranslationServiceSettingsView: View {
                         text: modelField(\.baseURL),
                         theme: theme,
                         placeholder: "https://…/v1",
-                        width: 240,
+                        width: 280,
                         monospaced: true
                     )
                     .accessibilityLabel("翻译服务地址")
@@ -340,7 +412,7 @@ struct TranslationServiceSettingsView: View {
                         text: modelField(\.model),
                         theme: theme,
                         placeholder: "已启用的模型名称",
-                        width: 240,
+                        width: 280,
                         monospaced: true
                     )
                     .accessibilityLabel("翻译模型名称")
@@ -348,7 +420,7 @@ struct TranslationServiceSettingsView: View {
                 SnapRowDivider(theme: theme)
 
                 SnapSettingRow("API Key", theme: theme) {
-                    secureField(placeholder: "输入 API Key", width: 240)
+                    secureField(placeholder: "输入 API Key", width: 280)
                 }
                 SnapRowDivider(theme: theme)
 
@@ -368,14 +440,35 @@ struct TranslationServiceSettingsView: View {
                         }
                         .help("使用示例文字 Hello 测试，不读取截图")
 
-                        SnapButton("移除已存密钥", theme: theme, variant: .ghost, size: .sm, isEnabled: model.endpoint != nil && trial == nil) {
-                            removeSavedModelKey(for: model)
+                        SnapButton(
+                            "移除已存密钥",
+                            theme: theme,
+                            variant: .ghost,
+                            size: .sm,
+                            isEnabled: model.endpoint != nil && !savedKeySnapshot.isEmpty && trial == nil
+                        ) {
+                            confirmsRemoveKey = true
                         }
 
                         Spacer()
 
-                        SnapButton("保存翻译服务", theme: theme, variant: .primary, size: .sm, isEnabled: canSave && trial == nil, action: save)
-                            .keyboardShortcut(.defaultAction)
+                        if hasUnsavedServiceChanges {
+                            Text("未保存")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Color.orange)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.12), in: Capsule())
+                        }
+
+                        SnapButton(
+                            "保存翻译服务",
+                            theme: theme,
+                            variant: .primary,
+                            size: .sm,
+                            isEnabled: canSave && hasUnsavedServiceChanges && trial == nil,
+                            action: save
+                        )
                     }
                 }
                 .padding(.horizontal, 14)
@@ -390,13 +483,14 @@ struct TranslationServiceSettingsView: View {
                 if !status.isEmpty {
                     statusBanner
                 }
-                HStack {
-                    Text("本机离线运行，无需密钥")
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.green)
+                    Text("已生效 · 本机离线运行，无需密钥")
                         .font(.system(size: 12))
                         .foregroundStyle(theme.token(.mutedForeground))
                     Spacer()
-                    SnapButton("保存翻译服务", theme: theme, variant: .primary, size: .sm, isEnabled: canSave, action: save)
-                        .keyboardShortcut(.defaultAction)
                 }
             }
             .padding(14)
@@ -602,6 +696,10 @@ struct TranslationServiceSettingsView: View {
                 set: { newValue in
                     draft.provider = newValue
                     endpointChanged()
+                    // Apple 设备端翻译无需额外凭据，在设置页切过去即生效。
+                    if !compact, newValue == .apple {
+                        config.update { $0.translation.provider = .apple }
+                    }
                 }
             ),
             theme: theme,
@@ -651,7 +749,7 @@ struct TranslationServiceSettingsView: View {
             clearTrial()
             key = $0
         })
-        return HStack(spacing: 4) {
+        return HStack(spacing: 6) {
             Group {
                 if revealsKey {
                     TextField(placeholder, text: binding)
@@ -662,6 +760,7 @@ struct TranslationServiceSettingsView: View {
             .textFieldStyle(.plain)
             .font(.system(size: 12, design: .monospaced))
             .foregroundStyle(theme.token(.foreground))
+            .focused($isKeyFocused)
 
             if !key.isEmpty {
                 Button {
@@ -673,9 +772,9 @@ struct TranslationServiceSettingsView: View {
                     }
                 } label: {
                     Image(systemName: keyCopied ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(keyCopied ? Color.green : theme.token(.mutedForeground))
-                        .frame(width: 18, height: 18)
+                        .frame(width: 20, height: 20)
                 }
                 .buttonStyle(.plain)
                 .help(keyCopied ? "已复制密钥" : "复制当前密钥")
@@ -685,21 +784,29 @@ struct TranslationServiceSettingsView: View {
                 revealsKey.toggle()
             } label: {
                 Image(systemName: revealsKey ? "eye.slash" : "eye")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(revealsKey ? theme.token(.foreground) : theme.token(.mutedForeground))
-                    .frame(width: 20, height: 20)
+                    .frame(width: 22, height: 22)
             }
             .buttonStyle(.plain)
             .help(revealsKey ? "隐藏明文密钥" : "查看已配置密钥")
         }
-        .padding(.leading, 8)
-        .padding(.trailing, 5)
-        .frame(width: width, height: 26)
-        .background(theme.token(.background), in: RoundedRectangle(cornerRadius: theme.metrics.radiusSM, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: theme.metrics.radiusSM, style: .continuous)
-                .strokeBorder(theme.token(.input), lineWidth: 1)
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .frame(width: width, height: 30)
+        .background(
+            isKeyFocused ? theme.settingsCardSurface : theme.fieldSurface,
+            in: RoundedRectangle(cornerRadius: 7.5, style: .continuous)
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7.5, style: .continuous)
+                .strokeBorder(
+                    isKeyFocused ? theme.controlAccent : theme.settingsCardBorder,
+                    lineWidth: isKeyFocused ? 1.5 : 1
+                )
+        )
+        .shadow(color: isKeyFocused ? theme.controlAccent.opacity(0.18) : .clear, radius: 3)
+        .animation(Interaction.hover, value: isKeyFocused)
         .accessibilityLabel("翻译 API Key")
     }
 
@@ -766,6 +873,7 @@ struct TranslationServiceSettingsView: View {
         } else {
             key = ""
         }
+        savedKeySnapshot = key
     }
 
     private func endpointChanged() {
@@ -849,6 +957,7 @@ struct TranslationServiceSettingsView: View {
             }
             statusIsError = false
             status = "已保存"
+            savedKeySnapshot = key
             TranslationModelClient.prewarm(config: config)
             onSave(config.settings.translation != previous)
         } catch {

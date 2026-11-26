@@ -73,8 +73,22 @@ public struct PrivacySettings: Codable, Hashable, Sendable {
     public var customRules: [CustomPrivacyRule] = []
     private var maskAppearance: PrivacyMaskAppearance?
     public var ai: PrivacyAIConfiguration?
+    private var aiProfiles: [String: PrivacyAIConfiguration]?
 
     public init() {}
+
+    /// 读取上次保存的某服务商配置，切回时不必重新填写地址和模型名。
+    public func savedAI(for provider: PrivacyAIProvider) -> PrivacyAIConfiguration {
+        if let ai, ai.provider == provider { return ai }
+        if let profile = aiProfiles?[provider.rawValue] { return profile }
+        return PrivacyAIConfiguration(provider: provider)
+    }
+
+    public mutating func saveAIProfile(_ configuration: PrivacyAIConfiguration) {
+        var profiles = aiProfiles ?? [:]
+        profiles[configuration.provider.rawValue] = configuration
+        aiProfiles = profiles
+    }
 
     public var appearance: PrivacyMaskAppearance {
         get { maskAppearance ?? PrivacyMaskAppearance() }

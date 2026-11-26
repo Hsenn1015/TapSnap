@@ -125,10 +125,14 @@ final class AppEnvironment {
                 window.contentViewController = NSHostingController(rootView: SettingsView(environment: self, section: section))
             }
         } else {
-            let hosting = NSHostingController(rootView: SettingsView(environment: self, section: section ?? .general))
+            let hosting = NSHostingController(rootView: SettingsView(environment: self, section: section))
             window = NSWindow(contentViewController: hosting)
             window.title = "\(AppInfo.displayName) 设置"
-            window.styleMask = [.titled, .closable, .miniaturizable]
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+            window.minSize = NSSize(width: 680, height: 480)
+            window.maxSize = NSSize(width: 960, height: 1400)
             window.isReleasedWhenClosed = false
             settingsAppearanceObservation = config.$settings
                 .map(\.appearance.useDarkTheme)
@@ -137,13 +141,24 @@ final class AppEnvironment {
                     window?.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
                 }
             hosting.view.layoutSubtreeIfNeeded()
-            let mouse = NSEvent.mouseLocation
-            if let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main {
-                let visible = screen.visibleFrame
-                let content = CGRect(origin: .zero, size: hosting.view.fittingSize)
-                let size = window.frameRect(forContentRect: content).size
-                window.setFrameOrigin(CGPoint(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2))
+            let frameName = NSWindow.FrameAutosaveName("TapSnap.SettingsWindow.v2")
+            if !window.setFrameUsingName(frameName) {
+                let mouse = NSEvent.mouseLocation
+                if let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main {
+                    let visible = screen.visibleFrame
+                    let size = NSSize(width: 760, height: 580)
+                    window.setFrame(
+                        NSRect(
+                            x: visible.midX - size.width / 2,
+                            y: visible.midY - size.height / 2,
+                            width: size.width,
+                            height: size.height
+                        ),
+                        display: false
+                    )
+                }
             }
+            window.setFrameAutosaveName(frameName)
             settingsWindow = window
         }
         // The long-shot preview is a floating panel.

@@ -78,7 +78,29 @@ public final class ConfigStore: ObservableObject {
         var copy = settings
         mutate(&copy)
         settings = copy
-        save()
+        if continuousChangeDepth > 0 {
+            hasDeferredSave = true
+        } else {
+            save()
+        }
+    }
+
+    private var continuousChangeDepth = 0
+    private var hasDeferredSave = false
+
+    /// 连续交互（如拖动滑块）开始：此后的 `update` 只更新内存并发布变更，暂缓落盘。
+    public func beginContinuousChange() {
+        continuousChangeDepth += 1
+    }
+
+    /// 连续交互结束：若期间有修改，只写一次盘。
+    public func endContinuousChange() {
+        guard continuousChangeDepth > 0 else { return }
+        continuousChangeDepth -= 1
+        if continuousChangeDepth == 0, hasDeferredSave {
+            hasDeferredSave = false
+            save()
+        }
     }
 
     public func save() {
