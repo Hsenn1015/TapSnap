@@ -1,160 +1,227 @@
-<p align="center">
-  <img src="assets/readme/tapsnap-icon.png" alt="TapSnap 应用图标" width="120">
+<div align="center">
+
+<img src="assets/readme/tapsnap-icon.png" alt="TapSnap 应用图标" width="104" />
+
+<h1>TapSnap</h1>
+
+<p>
+  <strong>为 macOS 与 Windows 打造的现代化截图、贴图、标注、录屏与截图秒译工具</strong>
 </p>
 
-<h2 align="center">TapSnap</h2>
-
-<p align="center">
-  <sub>macOS 与 Windows 的截图、贴图、标注和录屏工具。</sub>
+<p>
+  <a href="https://github.com/Hsenn1015/TapSnap/releases/latest">
+    <img src="https://img.shields.io/badge/下载_macOS_版-Apple_Silicon-007AFF?style=for-the-badge&logo=apple&logoColor=white" alt="下载 macOS 版" />
+  </a>
+  &nbsp;
+  <a href="https://github.com/Hsenn1015/TapSnap/releases/latest">
+    <img src="https://img.shields.io/badge/下载_Windows_版-x64_%2F_ARM64-18181B?style=for-the-badge&logo=windows11&logoColor=white" alt="下载 Windows 版" />
+  </a>
 </p>
 
-<p align="center">
-  <img src="assets/readme/badge-macos.png" alt="macOS 14+" width="98" height="24">
-  <img src="assets/readme/badge-windows.png" alt="Windows x64 / ARM64" width="160" height="24">
-  <img src="assets/readme/badge-swift.png" alt="Swift" width="71" height="24">
-  <img src="assets/readme/badge-dotnet.png" alt=".NET 10" width="83" height="24">
+<p>
+  <a href="https://github.com/Hsenn1015/TapSnap/releases/latest">
+    <img src="https://img.shields.io/github/v/release/Hsenn1015/TapSnap?style=flat-square&color=007AFF&label=Release" alt="Latest Release" />
+  </a>
+  <img src="https://img.shields.io/badge/macOS-14%2B-2F363D?style=flat-square&logo=apple&logoColor=white" alt="macOS 14+" />
+  <img src="https://img.shields.io/badge/Windows-11-0078D4?style=flat-square&logo=windows11&logoColor=white" alt="Windows 11" />
+  <img src="https://img.shields.io/badge/Swift-6-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift" />
+  <img src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet&logoColor=white" alt=".NET 10" />
 </p>
 
-<p align="center">
-  <sub>
-    <a href="#功能介绍">功能介绍</a> ·
-    <a href="#开源工具对比">开源工具对比</a> ·
-    <a href="#操作演示">操作演示</a> ·
-    <a href="#安装与构建">安装与构建</a> ·
-    <a href="#使用指南">使用指南</a> ·
-    <a href="Docs/releases">版本记录</a>
-  </sub>
+<p>
+  <a href="#核心能力">核心能力</a> ·
+  <a href="#开源工具对比">开源对比</a> ·
+  <a href="#常用快捷键">快捷键</a> ·
+  <a href="#安装与源码构建">安装与构建</a> ·
+  <a href="Docs/releases">版本记录</a> ·
+  <a href="windows/README.md">Windows 版说明</a>
 </p>
 
-![TapSnap 功能插画。日程窗口居中展示流光框选和手绘标注，左侧是贴图和滚动长截图，右侧是文字识别、Markdown 和打码，底部是录屏时间轴。](assets/readme/capture-overview.webp)
+<br />
 
-## 功能介绍
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/hero-bento-dark.jpg" />
+  <source media="(prefers-color-scheme: light)" srcset="assets/readme/hero-bento-light.jpg" />
+  <img src="assets/readme/hero-bento-light.jpg" alt="TapSnap 预览：极光选区边框、液态玻璃工具栏、截图秒译浮卡、原位贴图溢光阴影与录屏时间轴" width="100%" />
+</picture>
 
-- **截图与框选** 支持区域、窗口、全屏和延时截图。macOS 版可吸附到窗口或控件，框选后可直接复制、贴图、标注，也可切换到长截图或录屏。
-- **滚动长截图** 手动或自动滚动拼接正文，固定区域只保留一次。长图完成后可继续编辑、复制、保存或贴图。
-- **标注与高亮** 可添加箭头、形状、文字、序号和马赛克。手绘样式支持调整线条起伏与填充纹理，高亮笔可沿任意路径涂画。
-- **贴图与剪贴板历史** 把截图或剪贴板图片固定在桌面上，支持置顶、分组、调节透明度和鼠标穿透，也可从历史记录找回图片或文字。
-- **录屏与编辑** 支持录制选定区域，录完可以裁剪、逐帧预览，并在单帧或指定时段加上箭头、文字或打码。可直接复制视频或 GIF，也可保存为 MP4 或 GIF。
-- **文字、表格与公式识别** 文字可按原始行、段落或 Markdown 查看，表格可复制为 CSV。安装公式识别组件后，可以预览、编辑和复制 LaTeX。
-- **隐私检查** 截图时可在本机检查敏感文字、二维码和人脸。复制、保存或贴图前可以调整遮盖范围与样式，确认后随图片一起输出。
+</div>
 
-列表与演示以 macOS 版为例。Windows 的操作和支持范围见 [Windows 版说明](windows/README.md)。
+---
+
+## 核心能力
+
+<table width="100%">
+  <tr>
+    <td width="50%" valign="top">
+      <h3>✂️ 极速截图与 7 大选区边框</h3>
+      <p>
+        支持区域、窗口吸附、全屏与延时截图；提供极光流动、液态玻璃等 <strong>7 大选区边框风格</strong> 与多套主题配色。框选后可直接在液态玻璃工具栏一键复制、原位贴图、标注，或无缝切换至长截图与录屏。
+      </p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>🌐 截图秒译（5 套风格 · 流式提速）</h3>
+      <p>
+        框选松手即译，内置 <strong>极简分块卡片</strong>、液态玻璃语义胶囊、聚光取词、原地双语高亮与灵动岛气泡 5 套风格；支持 Apple 离线、Google、百度、DeepL、微软、腾讯、有道、Qwen-MT、DeepSeek 与本机 Ollama，浮卡内随时切换引擎。
+      </p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>📌 桌面贴图与 6 款质感阴影</h3>
+      <p>
+        支持截图 <code>⌘T</code> 原位贴图（过渡无闪动）与剪贴板贴图，提供置顶、分组、透明度调节、鼠标穿透与历史贴图找回；内置自适应取色溢光、磨砂画框等 <strong>6 款贴图阴影</strong>，右键即可快速切换并调节浓淡与扩散。
+      </p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>📜 滚动长截图</h3>
+      <p>
+        支持自动或手动滚动智能拼接长页面，自动识别并去除固定顶栏/侧边栏重复内容；设置页提供慢速 / 标准 / 快速预设与重叠比例微调，拼接完成后可直接继续标注、打码、复制或贴图。
+      </p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>🎥 录屏动效、时段标注与 GIF 倍速</h3>
+      <p>
+        内置 <strong>19 款鼠标动效</strong>（14 款点击 + 5 款滚轮）、实时快捷键显示与摄像头画中画；录完支持逐帧裁剪、在时间轴上为指定时段添加箭头/文字/打码，一键复制或导出 MP4 与 <code>0.25×–4×</code> 倍速 GIF。
+      </p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>🛡️ 本机隐私打码与 OCR / 公式</h3>
+      <p>
+        截图时可在本机自动识别手机号、密钥/Token、内网 IP、二维码与人脸并生成可编辑遮盖，支持自定义正则与可选 AI 补查；OCR 支持原始行、段落、Markdown 还原、表格 CSV 与本机离线 LaTeX 公式识别。
+      </p>
+    </td>
+  </tr>
+</table>
+
+> 上述核心功能已同步覆盖 macOS 14+ 与 Windows 11，Windows 平台细节与差异见 [Windows 版说明](windows/README.md)。
+
+---
 
 ## 开源工具对比
 
-| 功能 | TapSnap | [Snow Shot](https://snowshot.top/guides/index.html) | [ShareX](https://getsharex.com/) | [Flameshot](https://flameshot.org/) |
-| --- | :---: | :---: | :---: | :---: |
-| 截图标注 | ✅ | ✅ | ✅ | ✅ |
+| 能力 | TapSnap | [Snow Shot](https://snowshot.top/guides/index.html) | [ShareX](https://getsharex.com/) | [Flameshot](https://flameshot.org/) |
+| :--- | :---: | :---: | :---: | :---: |
+| 截图标注 / 桌面贴图 | ✅ | ✅ | ✅ | ✅ |
 | 滚动长截图 | ✅ | ✅ | ✅ | — |
-| 桌面贴图 | ✅ | ✅ | ✅ | ✅ |
-| 录屏 / GIF | ✅ | ✅ | ✅ | — |
-| 录屏时段标注 | ✅ | — | — | — |
-| 文字识别 | ✅ | ✅ | ✅ | — |
-| 表格与公式识别 | ✅ | ✅ | — | — |
+| 截图秒译（多引擎 + 5 套样式） | ✅ | ✅ | — | — |
+| 录屏鼠标动效 + 时间轴时段标注 | ✅ | — | — | — |
+| 本机隐私自动打码（文字 / 人脸 / 二维码） | ✅ | — | — | — |
+| OCR / Markdown / 表格 / 公式识别 | ✅ | ✅ | 仅 OCR | — |
+| macOS & Windows 原生双端 | ✅ | ✅ | 仅 Windows | ✅ |
 
-✅ 表示支持，`—` 表示官方文档未列出。TapSnap 以 macOS 版为例。Snow Shot 的表格和公式识别可使用在线服务。
+<sub>✅ 表示原生支持，<code>—</code> 表示官方文档未列出。Snow Shot 的表格与公式识别支持在线服务。</sub>
 
-## 操作演示
+---
 
-### 录屏时间轴标注
+## 常用快捷键
 
-![TapSnap 浅色录屏预览。为示例发布看板添加箭头，拖动时间轴上的标注末端调整显示时段。](assets/readme/recording-annotations.gif)
+在「设置 → 快捷键」中点击任意键帽即可自定义录制；Windows 默认使用 `Ctrl+1` 发起区域截图、`Ctrl+Shift+T` 发起截图秒译。
 
-录完可精确裁剪所选片段，也可以拖动时间轴上的标注，让它只在指定时段出现。预览底部可直接点「复制视频」或「复制 GIF」。
+<table width="100%">
+  <tr>
+    <td width="50%" valign="top">
 
-<details>
-<summary><strong>展开观看框选与直接复制</strong></summary>
+**全局快捷键（macOS 默认）**
 
-![在浅色发布看板上拖出流光选区，悬停在底部工具栏的勾选按钮上查看复制提示。](assets/readme/quick-capture.gif)
+| 快捷键 | 操作 |
+| :--- | :--- |
+| <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>1</kbd> | 区域截图 |
+| <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>T</kbd> | 截图秒译 |
+| <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>2</kbd> | 截图并贴图 |
+| <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>V</kbd> | 剪贴板图片贴到屏幕 |
+| <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>L</kbd> | 滚动长截图 |
+| <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>R</kbd> | 开始 / 结束录屏 |
+| <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>O</kbd> | 区域文字识别 |
+| <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>H</kbd> | 剪贴板历史 |
 
-</details>
+    </td>
+    <td width="50%" valign="top">
 
-## 安装与构建
+**框选与编辑器操作**
 
-[下载最新正式版](https://github.com/Hsenn1015/TapSnap/releases/latest)。Apple 芯片 Mac 可选安装向导（`.pkg`）或磁盘映像（`.dmg`）。Windows 按处理器选择 x64 或 ARM64 安装包。
+| 快捷键 | 操作 |
+| :--- | :--- |
+| <kbd>⌘</kbd> <kbd>T</kbd> / <kbd>Shift</kbd>+<kbd>P</kbd> | 将选区或编辑图贴回原处 |
+| <kbd>Enter</kbd> | 进入标注编辑器 |
+| <kbd>⌘</kbd> <kbd>C</kbd> / <kbd>Ctrl</kbd>+<kbd>C</kbd> | 复制当前结果 |
+| <kbd>⌘</kbd> <kbd>S</kbd> / <kbd>Ctrl</kbd>+<kbd>S</kbd> | 选择位置保存 |
+| <kbd>A</kbd> / <kbd>B</kbd> / <kbd>T</kbd> | 切换箭头 / 画笔 / 文字工具 |
+| <kbd>⌘</kbd> + 滚轮 | 围绕指针缩放编辑画布 |
+| <kbd>Space</kbd>（按住） | 原图覆译模式下透视原图 |
+| <kbd>⌘</kbd> <kbd>1</kbd>–<kbd>9</kbd> | 设置窗口快速切换分类 |
 
-| 平台 | 源码构建 |
-| --- | --- |
-| **macOS 14+** | 需要 Xcode 的 Swift 工具链。执行下方命令，生成 `dist/TapSnap.app`。 |
-| **Windows x64 / ARM64** | 推荐 Windows 11。构建需要 .NET 10 SDK。框架依赖的构建产物需要对应架构的 .NET 10 Desktop Runtime。详见 [Windows 构建与运行](windows/README.md#运行与构建)。 |
+    </td>
+  </tr>
+</table>
+
+---
+
+## 安装与源码构建
+
+直接前往 **[GitHub Releases](https://github.com/Hsenn1015/TapSnap/releases/latest)** 下载最新正式版：
+
+- **macOS（Apple Silicon，macOS 14+）**：提供 `.pkg` 安装向导与 `.dmg` 镜像，安装后可在菜单栏「检查更新…」获取自动更新。首次截图需在系统设置授予**屏幕录制**权限；若需优先响应全局快捷键，可按需开启**辅助功能**权限。
+- **Windows（Windows 11，x64 / ARM64）**：提供 `-Setup.exe` 安装向导与便携版 `.zip`（内置完整 .NET 运行时，开箱即用）。
+
+### 从源码构建
 
 ```bash
-# macOS：首次在本机开发时创建签名身份，以后重复使用
-Scripts/setup-signing.sh
-Scripts/build-app.sh
+# macOS（需要 Xcode / Swift 工具链）
+Scripts/setup-signing.sh   # 首次配置本机固定签名，后续覆盖安装可保留系统权限
+Scripts/build-app.sh       # 构建正式版 dist/TapSnap.app
 open dist/TapSnap.app
 ```
 
 ```powershell
-# Windows：构建并运行
+# Windows（需要 .NET 10 SDK，详见 windows/README.md）
 dotnet build windows/TapSnap.Windows.slnx -c Release
 dotnet run --project windows/TapSnap.Windows -c Release
 ```
 
-macOS 首次截图需要授予屏幕录制权限。全局快捷键发生冲突时可以启用优先响应，这需要辅助功能权限。应用启动后可从 macOS 菜单栏或 Windows 系统托盘进入。
+---
 
-## 使用指南
-
-| macOS 默认快捷键 | 操作 |
-| --- | --- |
-| `⌘⇧1` | 区域截图 |
-| `⌘⇧2` | 截图并贴图 |
-| `⌘T` | 将当前选区或正在编辑的截图贴回原处（框选或编辑时） |
-| `⌘⇧V` | 将剪贴板里的图贴到屏幕 |
-| `⌘⇧L` | 滚动长截图 |
-| `⌘⇧R` | 开始或结束录屏 |
-| `⌘⇧O` | 区域文字识别 |
-| `⌘⇧H` | 剪贴板历史 |
-
-在「设置 → 快捷键」可录制全局快捷键。下方的「框选与编辑」支持为贴图、复制、保存、撤销、重做、画布缩放和标注工具录制单键或组合键。Windows 默认按 `Ctrl+1` 开始区域截图。
-
-框选完成后，默认可按 `A` 选箭头、`B` 选画笔、`T` 选文字，进入编辑器后也能用同一套键位切换工具。工具栏悬停提示和「更多」菜单显示当前键位。按回车打开编辑器，按 `⌘T`（Mac）或 `Shift+P`（Windows）贴图，按 `⌘C`／`Ctrl+C` 复制，按 `⌘S`／`Ctrl+S` 选择保存位置。开启截图隐私检查时，输出前会先进入复查。
-
-编辑图片时，可用底栏的 `−` 和 `+` 缩放画布，点击百分比恢复适合窗口。macOS 按住 `⌘`、Windows 按住 `Ctrl` 滚动鼠标滚轮，可围绕指针缩放。缩放只影响编辑时的显示比例。
+## 进阶功能与开发文档
 
 <details>
-<summary><strong>隐私检查与远程 AI</strong></summary>
+<summary><strong>🛡️ 隐私检查与远程 AI 补查</strong></summary>
+<br />
 
-普通截图和长图可用本机规则扫描。每条规则可以设为自动遮盖、仅提示或关闭，也可以添加自己的正则。检查结果可以逐处确认，遮盖会随复制、保存或贴图压平到图片。
-
-可选的 AI 补查支持文字或图片定位。选择远程服务时，应用会先显示目的地并请求确认。图片定位会先在本机遮住已知敏感区域。录屏帧不经过截图隐私规则。
+- 普通截图和长图均支持本机规则扫描。每条规则可独立设为**自动遮盖**、**仅提示**或**关闭**（支持按分组一键批量设置），也可添加自定义正则表达式。输出前可逐处复查，确认后的遮盖会随复制、保存或贴图压平到图片中。
+- 可选的 AI 补查支持文字与图片定位：选择远程服务时，应用会先展示请求目的地并征得确认；图片定位前会先在本机遮盖已知敏感区域。录屏帧不经过截图隐私规则。
 
 </details>
 
 <details>
-<summary><strong>公式识别与翻译</strong></summary>
+<summary><strong>∑ 公式识别与截图翻译细节</strong></summary>
+<br />
 
-macOS 菜单栏点「公式识别」，按提示准备 Python 3.12，再在应用内安装依赖和模型。安装会校验模型文件。识别在本机进行，可编辑、预览和复制 LaTeX。
-
-macOS 可从菜单栏的「截图翻译」开始框选，也可在选区、编辑器或 OCR 结果页进入翻译。翻译窗口提供「对照」（左原图右译文，可拖拽调节比例、多选整理与智能滤杂、自定义字号/字体/高亮色）与「原图」（原位覆译支持按住 `Space` 透视对比，或切到划词翻译与可拖动/缩放/固定的译文浮卡）两种模式。工具栏空间不足时可从「更多」进入。
-
-首次使用时可选择翻译服务和目标语言。支持 Apple 离线翻译（需 macOS 15+）、第三方高速翻译 API（Google 翻译、百度翻译、DeepL、微软翻译、腾讯翻译君、有道翻译）、本机模型与在线大模型；也可关闭「打开后自动翻译」，先清理冗余段落再按需翻译。Windows 的组件准备见 [可选本机组件](windows/README.md#可选本机组件)。
+- **公式识别**：在 macOS 菜单栏点击「公式识别」，按引导准备 Python 3.12 后即可在应用内自动安装并校验本机模型，识别全程离线运行，支持预览、编辑与一键复制 LaTeX。Windows 准备流程见 [可选本机组件](windows/README.md#可选本机组件)。
+- **截图翻译**：支持通过菜单栏、全局快捷键、选区工具栏、编辑器或 OCR 结果页触发。提供**截图秒译**（5 套浮卡风格 + 浮卡内实时切换引擎 + SSE 流式提速）以及完整翻译窗口的**对照模式**（拖拽分栏、多选整理、智能滤杂、自定义排版）与**原图模式**（原位覆译按住 `Space` 透视对比、划词翻译）。
+- **支持引擎**：Apple 离线翻译（macOS 15+）、Google / 百度 / DeepL / 微软 / 腾讯翻译君 / 有道翻译、本机 OpenAI 兼容模型（Ollama 等）及在线大模型（DeepSeek / 通义千问含 `qwen-mt-*` / 自定义接口）。
 
 </details>
 
 <details>
-<summary><strong>更新与开发</strong></summary>
+<summary><strong>🛠️ 开发版调试、CI 测试、签名与自动更新</strong></summary>
+<br />
 
-在 macOS 上运行 `Scripts/build-app.sh debug` 会生成 `dist/dev/TapSnap 开发版.app`，可与正式版同时打开。菜单栏带「开发版」字样的图标用于调试。开发版单独保存设置和历史，默认不占用全局快捷键，可在自己的设置中绑定。
-
-推送 `main`、提交面向 `main` 的 PR，或在 [GitHub Actions](https://github.com/Hsenn1015/TapSnap/actions/workflows/build.yml) 手动运行时，会执行 macOS 托管环境回归测试与 Windows 四组回归，并在运行详情的 Artifacts 提供 Apple Silicon DMG 和两种架构的自包含 Windows ZIP。需要实际桌面、系统编码器和识别环境的 macOS 用例可在本机运行 `swift test`。
-
-发布前，将该版本的新增功能、问题修复和升级说明写入 `Docs/releases/<标签>.md`。在 **Build and release → Run workflow** 中选择 `main` 并填写版本标签，两端构建通过后，流程会为该提交打标签，并将这份说明、安装包和 SHA-256 校验清单发布到 [GitHub Releases](https://github.com/Hsenn1015/TapSnap/releases)。直接推送版本标签也可以触发发布。手动运行时留空版本标签只执行 CI。
-
-macOS 正式版使用 TapSnap 专用的长期自签名证书。从 GitHub 首次下载安装时，macOS 可能提示无法验证开发者。维护者在仓库 Actions 变量 `TAPSNAP_MAC_SIGNING_SHA1` 中填写签名证书的 40 位 SHA-1 指纹，将加密 PKCS#12 文件的 Base64 内容和密码分别存入 Actions Secrets `TAPSNAP_MAC_SIGNING_P12`、`TAPSNAP_MAC_SIGNING_PASSWORD`。发布时会校验安装包的签名。维护者也可在主分支手动运行 **Verify macOS upgrade signing**，用两个构建验证升级前后的签名身份。
-
-覆盖安装时，沿用相同的 Bundle ID 和签名证书通常可以保留授权。从临时签名或使用其他证书的本地构建切换到正式版时，macOS 可能要求重新授权。系统设置已开启但截图仍失败时，可从菜单栏打开「权限检查」验证当前运行的 TapSnap。窗口会保留检测结果。当前进程仍被拒绝时，可以选择「重新打开 TapSnap」。
-
-本地持续使用的构建请保留首次使用的证书及私钥。多人或多台构建机分发同一版本线时，请在打包机上使用同一分发身份。没有固定身份的临时 CI 测试可设置 `TAPSNAP_ALLOW_ADHOC_SIGNING=1`，此类构建更新后可能需要重新授权。正式和预发布标签均使用固定证书。
-
-配置更新源的 macOS 构建可通过菜单栏「检查更新…」查看新版。自动提醒会等截图、录屏和编辑结束后出现，由用户确认安装。
-
-为仓库设置 Actions 变量 `TAPSNAP_UPDATE_PUBLIC_KEY` 和 Actions Secret `TAPSNAP_UPDATE_PRIVATE_KEY`，分别填入 Sparkle 公钥和当前版 `generate_keys -x` 导出的私钥。配置后，正式版本标签会生成已签名的更新包和 `appcast.xml`，一并发布到 GitHub Releases。应用从最新正式 Release 读取清单。此前未配置更新源的版本需要手动覆盖安装一次。
-
-本机测试可用 `TAPSNAP_UPDATE_FEED_URL` 和 `TAPSNAP_UPDATE_PUBLIC_KEY` 配置回环更新源。使用 `TAPSNAP_VERSION` 和递增的 `TAPSNAP_BUILD_NUMBER` 标记版本。
-
-运行 `swift build` 编译 macOS 源码，`swift test` 跑回归测试。已有 macOS 构建沿用应用标识和配置路径，旧的 `sensnap://` 链接仍可用。
+- **独立开发版**：在 macOS 运行 `Scripts/build-app.sh debug` 会生成 `dist/dev/TapSnap 开发版.app`，使用独立 Bundle ID（`com.sensnap.app.dev`）、独立配置与历史，可与正式版同时运行调试，菜单栏图标带「开发版」标识。
+- **回归测试**：本地运行 `swift build` 与 `swift test`。推送 `main`、提交 PR 或在 [GitHub Actions](https://github.com/Hsenn1015/TapSnap/actions/workflows/build.yml) 手动运行时，会自动执行 macOS 托管环境测试与 Windows 四组回归，并输出 Artifacts（Apple Silicon DMG + Windows x64/ARM64 ZIP）。
+- **发版流程**：将新版本说明写入 `Docs/releases/<标签>.md`，推送 `v*` 标签或在 **Build and release → Run workflow** 填写版本标签，双端构建通过后会自动打包签名、生成 SHA-256 清单与 Sparkle `appcast.xml`，并发布至 [GitHub Releases](https://github.com/Hsenn1015/TapSnap/releases)。
+- **macOS 签名与更新源**：正式版使用长期自签名证书以在覆盖更新时保留系统授权。维护者在仓库配置 Actions 变量 `TAPSNAP_MAC_SIGNING_SHA1`、`TAPSNAP_UPDATE_PUBLIC_KEY` 及 Secrets `TAPSNAP_MAC_SIGNING_P12`、`TAPSNAP_MAC_SIGNING_PASSWORD`、`TAPSNAP_UPDATE_PRIVATE_KEY` 即可启用签名校验与 Sparkle 自动更新；临时 CI 测试可用 `TAPSNAP_ALLOW_ADHOC_SIGNING=1`。本机调试更新源可通过 `TAPSNAP_UPDATE_FEED_URL`、`TAPSNAP_UPDATE_PUBLIC_KEY`、`TAPSNAP_VERSION`、`TAPSNAP_BUILD_NUMBER` 指定。
 
 </details>
 
-[架构说明](ARCHITECTURE.md) · [第三方组件](THIRD_PARTY.md)
+---
+
+<div align="center">
+  <sub>
+    <a href="Docs/releases">版本记录</a> ·
+    <a href="windows/README.md">Windows 版说明</a> ·
+    <a href="ARCHITECTURE.md">架构说明</a> ·
+    <a href="THIRD_PARTY.md">第三方组件</a>
+  </sub>
+</div>
