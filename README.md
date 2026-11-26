@@ -54,12 +54,14 @@
 <table width="100%">
   <tr>
     <td width="50%" valign="top">
+      <p><img src="assets/readme/feature-capture.jpg" alt="极速截图与 7 大选区边框预览" width="100%" /></p>
       <h3>✂️ 极速截图与 7 大选区边框</h3>
       <p>
         支持区域、窗口吸附、全屏与延时截图；提供极光流动、液态玻璃等 <strong>7 大选区边框风格</strong> 与多套主题配色。框选后可直接在液态玻璃工具栏一键复制、原位贴图、标注，或无缝切换至长截图与录屏。
       </p>
     </td>
     <td width="50%" valign="top">
+      <p><img src="assets/readme/feature-translate.jpg" alt="截图秒译极简分块卡片预览" width="100%" /></p>
       <h3>🌐 截图秒译（5 套风格 · 流式提速）</h3>
       <p>
         框选松手即译，内置 <strong>极简分块卡片</strong>、液态玻璃语义胶囊、聚光取词、原地双语高亮与灵动岛气泡 5 套风格；支持 Apple 离线、Google、百度、DeepL、微软、腾讯、有道、Qwen-MT、DeepSeek 与本机 Ollama，浮卡内随时切换引擎。
@@ -68,12 +70,14 @@
   </tr>
   <tr>
     <td width="50%" valign="top">
+      <p><img src="assets/readme/feature-pin.jpg" alt="桌面贴图与 6 款质感阴影预览" width="100%" /></p>
       <h3>📌 桌面贴图与 6 款质感阴影</h3>
       <p>
         支持截图 <code>⌘T</code> 原位贴图（过渡无闪动）与剪贴板贴图，提供置顶、分组、透明度调节、鼠标穿透与历史贴图找回；内置自适应取色溢光、磨砂画框等 <strong>6 款贴图阴影</strong>，右键即可快速切换并调节浓淡与扩散。
       </p>
     </td>
     <td width="50%" valign="top">
+      <p><img src="assets/readme/feature-longshot.jpg" alt="滚动长截图智能拼接预览" width="100%" /></p>
       <h3>📜 滚动长截图</h3>
       <p>
         支持自动或手动滚动智能拼接长页面，自动识别并去除固定顶栏/侧边栏重复内容；设置页提供慢速 / 标准 / 快速预设与重叠比例微调，拼接完成后可直接继续标注、打码、复制或贴图。
@@ -82,12 +86,14 @@
   </tr>
   <tr>
     <td width="50%" valign="top">
+      <p><img src="assets/readme/feature-record.jpg" alt="录屏鼠标动效与时间轴时段标注预览" width="100%" /></p>
       <h3>🎥 录屏动效、时段标注与 GIF 倍速</h3>
       <p>
         内置 <strong>19 款鼠标动效</strong>（14 款点击 + 5 款滚轮）、实时快捷键显示与摄像头画中画；录完支持逐帧裁剪、在时间轴上为指定时段添加箭头/文字/打码，一键复制或导出 MP4 与 <code>0.25×–4×</code> 倍速 GIF。
       </p>
     </td>
     <td width="50%" valign="top">
+      <p><img src="assets/readme/feature-privacy.jpg" alt="本机隐私自动打码与 OCR 表格识别预览" width="100%" /></p>
       <h3>🛡️ 本机隐私打码与 OCR / 公式</h3>
       <p>
         截图时可在本机自动识别手机号、密钥/Token、内网 IP、二维码与人脸并生成可编辑遮盖，支持自定义正则与可选 AI 补查；OCR 支持原始行、段落、Markdown 还原、表格 CSV 与本机离线 LaTeX 公式识别。
