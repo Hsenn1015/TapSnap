@@ -75,6 +75,9 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
         menu.addItem(shortcutMenuItem("长截图", action: #selector(startLongShot), shortcut: .longShot, symbol: "rectangle.expand.vertical"))
         menu.addItem(shortcutMenuItem("屏幕录制", action: #selector(startRecording), shortcut: .recordScreen, symbol: "record.circle"))
         menu.addItem(submenuItem("更多截图与编辑", symbol: "ellipsis.circle") { sub in
+            sub.addItem(shortcutMenuItem("极速截图（松手即输出）", action: #selector(startQuickCapture), shortcut: .quickCapture, symbol: "bolt"))
+            sub.addItem(shortcutMenuItem("重截上次区域", action: #selector(recaptureLastRegion), shortcut: .captureLastRegion, symbol: "arrow.counterclockwise"))
+            sub.addItem(.separator())
             sub.addItem(menuItem("窗口截图", action: #selector(startWindowCapture), symbol: "macwindow"))
             sub.addItem(menuItem("全屏截图", action: #selector(startFullScreenCapture), symbol: "rectangle.dashed"))
             sub.addItem(menuItem("隐私截图", action: #selector(startPrivacyCapture), symbol: "eye.slash"))
@@ -91,6 +94,7 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
 
         // 识别与翻译
         menu.addItem(shortcutMenuItem("文字识别", action: #selector(startOCR), shortcut: .ocrRegion, symbol: "text.viewfinder"))
+        menu.addItem(shortcutMenuItem("极速取字", action: #selector(startQuickOCR), shortcut: .quickOCR, symbol: "doc.text.viewfinder"))
         menu.addItem(shortcutMenuItem("截图秒译", action: #selector(startQuickTranslation), shortcut: .quickTranslate, symbol: "sparkle.magnifyingglass"))
         menu.addItem(menuItem("截图翻译", action: #selector(startTranslation), symbol: "character.bubble"))
         menu.addItem(submenuItem("更多识别", symbol: "sparkles") { sub in
@@ -150,6 +154,7 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(editRecentScreenshot) { return environment.recentScreenshot != nil }
+        if menuItem.action == #selector(recaptureLastRegion) { return environment.config.settings.capture.lastSelection != nil }
         if menuItem.action == #selector(restoreLastPin) { return environment.pinGroups.canRestoreLastClosed }
         if menuItem.action == #selector(checkForUpdates) { return updater?.canCheckForUpdates == true }
         return true
@@ -264,6 +269,14 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
         environment.captureCoordinator.start(.edit)
     }
 
+    @objc private func startQuickCapture() {
+        environment.captureCoordinator.start(.quickCapture)
+    }
+
+    @objc private func recaptureLastRegion() {
+        environment.captureCoordinator.recaptureLastSelection()
+    }
+
     @objc private func startPrivacyCapture() { environment.captureCoordinator.start(.edit, forcePrivacy: true) }
     @objc private func editRecentScreenshot() { environment.editRecentScreenshot() }
     @objc private func editClipboardImage() { environment.editClipboardImage() }
@@ -304,6 +317,10 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSMenuItemValidation {
 
     @objc private func startOCR() {
         environment.ocrCoordinator.captureAndRecognize()
+    }
+
+    @objc private func startQuickOCR() {
+        environment.ocrCoordinator.captureAndCopySilently()
     }
 
     @objc private func startTableRecognition() {

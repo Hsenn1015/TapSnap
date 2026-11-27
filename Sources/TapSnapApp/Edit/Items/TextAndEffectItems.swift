@@ -393,9 +393,10 @@ final class SerialItem: EditItem {
         context.fillEllipse(in: circle)
         context.restoreGState()
 
+        let fontScale: CGFloat = label.count >= 3 ? 0.36 : (label.count == 2 ? 0.46 : 0.55)
         let attributed = AnnotateDrawing.attributedText(
             label,
-            fontSize: max(8, diameter * 0.55),
+            fontSize: max(7, diameter * fontScale),
             color: CGColor(gray: 1, alpha: 1)
         )
         AnnotateDrawing.drawCentered(attributed, in: circle, context: context)

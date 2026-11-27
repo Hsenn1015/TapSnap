@@ -168,6 +168,8 @@ final class EditDocument {
     let capturedAt: Date
     /// Quartz 全局坐标中的原图左上角，来自文件或外部剪贴板时可能未知。
     let sourceTopLeft: CGPoint?
+    /// 截图选区对应的来源应用名称（用于按来源应用自动命名）。
+    let sourceAppName: String?
     let baseImage: CGImage
     let scale: CGFloat
     private(set) var items: [any EditItem]
@@ -177,9 +179,10 @@ final class EditDocument {
     var cropRect: CGRect?
 
     init(baseImage: CGImage, scale: CGFloat = 1, items: [any EditItem] = [], capturedAt: Date = Date(),
-         sourceTopLeft: CGPoint? = nil) {
+         sourceTopLeft: CGPoint? = nil, sourceAppName: String? = nil) {
         self.capturedAt = capturedAt
         self.sourceTopLeft = sourceTopLeft
+        self.sourceAppName = sourceAppName
         self.baseImage = baseImage
         self.scale = scale
         self.items = items

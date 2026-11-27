@@ -19,6 +19,8 @@ struct PinItem: Identifiable {
     var scale: CGFloat
     /// 所属分组的名称。
     var group: String?
+    /// 若贴图来自纯文本，保留原文以便右键或快捷键直接复制回纯文本。
+    var sourceText: String?
     var createdAt: Date
 
     init(
@@ -32,6 +34,7 @@ struct PinItem: Identifiable {
         rotationAngle: Double = 0,
         scale: CGFloat = 1,
         group: String? = nil,
+        sourceText: String? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -44,6 +47,7 @@ struct PinItem: Identifiable {
         self.rotationAngle = rotationAngle
         self.scale = scale
         self.group = group
+        self.sourceText = sourceText
         self.createdAt = createdAt
     }
 

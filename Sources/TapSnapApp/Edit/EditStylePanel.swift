@@ -205,9 +205,41 @@ struct EditStylePanel: View {
                     .font(.system(size: 11))
             }
         case .serialNumber:
-            Picker("序号格式", selection: $controller.toolOptions.serialFormat) {
-                ForEach(SerialItem.Format.allCases, id: \.self) { format in
-                    Text(format.displayName).tag(format)
+            LabeledRow("序号格式", theme: theme) {
+                Picker("序号格式", selection: $controller.toolOptions.serialFormat) {
+                    ForEach(SerialItem.Format.allCases, id: \.self) { format in
+                        Text(format.displayName).tag(format)
+                    }
+                }
+                .labelsHidden().pickerStyle(.menu).frame(width: 176)
+            }
+            LabeledRow("下一编号", theme: theme) {
+                let nextIndex = Binding<Int>(
+                    get: { controller.nextSerialIndex },
+                    set: { controller.nextSerialIndex = $0 }
+                )
+                HStack(spacing: 6) {
+                    TextField("下一编号", value: nextIndex, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 64)
+                        .accessibilityLabel("下一编号")
+                    Stepper("", value: nextIndex, in: 1...999)
+                        .labelsHidden()
+                        .accessibilityLabel("调整下一编号")
+                    if controller.toolOptions.serialFormat != .numeric {
+                        Text(SerialItem(index: controller.nextSerialIndex, bounds: .zero,
+                                        format: controller.toolOptions.serialFormat).label)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(theme.token(.mutedForeground))
+                            .frame(minWidth: 18)
+                    }
+                    if controller.nextSerialIndex != 1 {
+                        Button("重置") { controller.nextSerialIndex = 1 }
+                            .buttonStyle(.borderless)
+                            .font(.system(size: 11))
+                            .foregroundStyle(theme.token(.mutedForeground))
+                    }
                 }
             }
         case .magnifier:

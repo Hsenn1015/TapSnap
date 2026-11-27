@@ -29,7 +29,7 @@ final class AppEnvironment {
     let ocr: OCRService
     let stitcher: FrameStitcher
     let pinGroups: PinGroupManager
-    private let selectScreenshotFile: (ImageFormat, URL) -> URL?
+    private let selectScreenshotFile: ((ImageFormat, URL) -> URL?)?
 
     @MainActor lazy var toastPresenter = ToastPresenter(center: toast, theme: { [weak self] in self?.theme ?? .dark })
     lazy var captureCoordinator = CaptureCoordinator(environment: self)
@@ -77,7 +77,7 @@ final class AppEnvironment {
     }
 
     init(config: ConfigStore = .shared,
-         selectScreenshotFile: @escaping (ImageFormat, URL) -> URL? = AppEnvironment.showSavePanel) {
+         selectScreenshotFile: ((ImageFormat, URL) -> URL?)? = nil) {
         self.config = config
         self.selectScreenshotFile = selectScreenshotFile
         self.palette = ColorPaletteStore()
@@ -181,7 +181,7 @@ final class AppEnvironment {
                     outputOptions: ScreenshotOutputOptions? = nil, forcePrivacy: Bool = false, reviewedAction: ActionKind? = nil,
                     initialAction: ActionKind? = nil, restoring document: EditDocument? = nil) {
         let requiresPrivacyReview = forcePrivacy || config.settings.privacy.enabled || reviewedAction == .copy || reviewedAction == .save
-            || reviewedAction == .print || reviewedAction == .qrCode
+            || reviewedAction == .confirm || reviewedAction == .print || reviewedAction == .qrCode
         let controller = EditController(
             environment: self,
             image: image,
@@ -244,39 +244,105 @@ final class AppEnvironment {
         if let initialAction, !initialAction.isAnnotationTool { controller.perform(initialAction) }
     }
 
-    func chooseScreenshotDestination(format: ImageFormat) -> URL? {
-        selectScreenshotFile(format, URL(fileURLWithPath: config.settings.capture.saveDirectory, isDirectory: true))
+    func chooseScreenshotDestination(format: ImageFormat, suggestedFileName: String? = nil) -> URL? {
+        let directory = URL(fileURLWithPath: config.settings.capture.saveDirectory, isDirectory: true)
+        if let selectScreenshotFile {
+            return selectScreenshotFile(format, directory)
+        }
+        return Self.showSavePanel(format: format, directory: directory, suggestedFileName: suggestedFileName)
     }
 
-    private static func showSavePanel(format: ImageFormat, directory: URL) -> URL? {
+    private static func showSavePanel(format: ImageFormat, directory: URL, suggestedFileName: String? = nil) -> URL? {
         let panel = NSSavePanel()
         panel.directoryURL = directory
         panel.allowedContentTypes = [UTType(format.uti) ?? .image]
-        panel.nameFieldStringValue = "\(ImageCodec.defaultFileName()).\(format.fileExtension)"
+        panel.nameFieldStringValue = "\(suggestedFileName ?? ImageCodec.defaultFileName()).\(format.fileExtension)"
         NSApp.activate(ignoringOtherApps: true)
         return panel.runModal() == .OK ? panel.url : nil
     }
 
+    /// 按截图命名设置生成不含扩展名的文件名。
+    func resolvedScreenshotFileName(
+        in directory: URL,
+        format: ImageFormat,
+        sourceAppName: String? = nil,
+        now: Date = Date()
+    ) -> String {
+        let capture = config.settings.capture
+        switch capture.fileNamingMode {
+        case .defaultTimestamp:
+            return ImageCodec.defaultFileName(now: now)
+        case .timestampOnly:
+            return ImageCodec.timestampString(now: now)
+        case .customPrefixSequence:
+            return ImageCodec.nextSequentialFileName(prefix: capture.fileNamePrefix, in: directory, format: format)
+        case .sourceAppTimestamp:
+            let app = sourceAppName.map { ImageCodec.sanitizedFileNameComponent($0) } ?? ""
+            let stamp = ImageCodec.timestampString(now: now)
+            return app.isEmpty ? stamp : "\(app)_\(stamp)"
+        }
+    }
+
     @discardableResult
-    func saveScreenshot(_ image: CGImage, formatOverride: String? = nil, chooseLocation: Bool = false) -> Bool {
+    func saveScreenshot(_ image: CGImage, formatOverride: String? = nil, chooseLocation: Bool = false,
+                        sourceAppName: String? = nil) -> Bool {
+        saveScreenshotImage(image, formatOverride: formatOverride, chooseLocation: chooseLocation,
+                            sourceAppName: sourceAppName, notify: true) != nil
+    }
+
+    @discardableResult
+    func saveScreenshotImage(_ image: CGImage, formatOverride: String? = nil, chooseLocation: Bool = false,
+                             sourceAppName: String? = nil, notify: Bool = true) -> URL? {
         let settings = config.settings.capture
         let format = ImageFormat(fileExtension: formatOverride ?? settings.saveFormat) ?? .png
         let directory = URL(fileURLWithPath: settings.saveDirectory, isDirectory: true)
+        let fileName = resolvedScreenshotFileName(in: directory, format: format, sourceAppName: sourceAppName)
         do {
             let url: URL
             if chooseLocation {
-                guard let destination = chooseScreenshotDestination(format: format) else { return false }
+                guard let destination = chooseScreenshotDestination(format: format, suggestedFileName: fileName) else { return nil }
                 url = destination
                 try ImageCodec.encode(image, as: format, quality: settings.jpegQuality).write(to: url, options: .atomic)
             } else {
-                url = try ImageCodec.write(image, to: directory, format: format, quality: settings.jpegQuality)
+                url = try ImageCodec.write(image, to: directory, fileName: fileName, format: format, quality: settings.jpegQuality)
             }
-            toast.success("已保存到 \(url.lastPathComponent)")
-            return true
+            if notify { toast.success("已保存到 \(url.lastPathComponent)") }
+            return url
         } catch {
             toast.error("保存失败：\(error)")
-            return false
+            return nil
         }
+    }
+
+    /// 按截图输出设置执行自动保存与/或复制，并给出合并后的轻提示。
+    @discardableResult
+    func completeScreenshotOutputs(
+        _ image: CGImage,
+        scale: CGFloat = 1,
+        sourceTopLeft: CGPoint? = nil,
+        sourceAppName: String? = nil,
+        kind: ClipMetaData.Kind = .screenshot,
+        formatOverride: String? = nil,
+        autoSaveOverride: Bool? = nil,
+        to pasteboard: NSPasteboard = .general
+    ) -> Bool {
+        let settings = config.settings.capture
+        let autoCopy = settings.autoCopyToClipboard
+        let autoSave = autoSaveOverride ?? settings.autoSaveToFile
+        var savedURL: URL?
+        if autoSave {
+            guard let url = saveScreenshotImage(image, formatOverride: formatOverride, chooseLocation: false,
+                                                sourceAppName: sourceAppName, notify: !autoCopy) else {
+                return false
+            }
+            savedURL = url
+        }
+        if autoCopy {
+            let message = savedURL.map { "已保存并复制 \($0.lastPathComponent)" } ?? "已复制到剪贴板"
+            return pinTransfer.copy(image, scale: scale, sourceTopLeft: sourceTopLeft, kind: kind,
+                                    to: pasteboard, successMessage: message)
+        }
+        return true
     }
 
     @MainActor

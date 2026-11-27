@@ -13,17 +13,30 @@ final class PinTransfer {
         self.environment = environment
     }
 
-    /// 把剪贴板里的图贴到屏幕上（⌘⇧V 或菜单「贴图」）。
-    func pinFromPasteboard() {
-        let pasteboard = NSPasteboard.general
-
-        guard let (image, meta) = imagePayload(from: pasteboard) else {
-            environment.toast.warning("剪贴板里没有图片")
-            return
+    /// 把剪贴板里的图片或纯文字贴到屏幕上（⌘⇧V 或菜单「贴图」）。
+    @discardableResult
+    func pinFromPasteboard(from pasteboard: NSPasteboard = .general) -> PinItem? {
+        if let (image, meta) = imagePayload(from: pasteboard) {
+            let item = environment.pinGroups.show(image, from: meta?.sourceTopLeft, scale: meta?.scale ?? 1)
+            environment.toast.success("已贴图")
+            return item
         }
 
-        environment.pinGroups.show(image, from: meta?.sourceTopLeft, scale: meta?.scale ?? 1)
-        environment.toast.success("已贴图")
+        if let text = textPayload(from: pasteboard) {
+            let mouse = NSEvent.mouseLocation
+            let screenScale = NSScreen.screens.first { $0.frame.contains(mouse) }?.backingScaleFactor
+                ?? NSScreen.main?.backingScaleFactor ?? 2
+            guard let rendered = PinTextRenderer.render(text, isDark: environment.theme.isDark, scale: screenScale) else {
+                environment.toast.error("无法生成文字贴图")
+                return nil
+            }
+            let item = environment.pinGroups.show(rendered.image, from: nil, scale: rendered.scale, sourceText: text)
+            environment.toast.success("已贴出文字")
+            return item
+        }
+
+        environment.toast.warning("剪贴板里没有图片或文字")
+        return nil
     }
 
     @discardableResult
@@ -57,10 +70,16 @@ final class PinTransfer {
         return item
     }
 
-    func copy(_ text: String) {
-        let pasteboard = NSPasteboard.general
+    func copy(_ text: String, to pasteboard: NSPasteboard = .general) {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+    }
+
+    func textPayload(from pasteboard: NSPasteboard) -> String? {
+        guard let text = pasteboard.string(forType: .string),
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
+        return text
     }
 
     func imagePayload(from pasteboard: NSPasteboard) -> (image: CGImage, metadata: ClipMetaData?)? {

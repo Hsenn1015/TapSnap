@@ -83,7 +83,7 @@ struct EditCanvasView: View {
                 return AnyView(EditStylePanel(controller: controller, theme: theme, action: action).id(action))
             },
             availableWidth: width,
-            confirmationTitle: controller.reviewedAction?.title ?? "完成",
+            confirmationTitle: controller.confirmationTitle,
             isOutputBlocked: privacy.blocksOutput,
             toolTip: { ActionsBarModel().toolTip(for: $0, config: config) }
         ) { controller.perform($0) }

@@ -77,6 +77,53 @@ final class SerialAnnotationTests: XCTestCase {
         XCTAssertEqual(controller.nextSerialIndex, previewIndex + 1)
     }
 
+    func testCustomNextSerialIndexAdvancesAndRestoresOnUndoRedoAndDelete() throws {
+        let controller = makeController()
+        controller.nextSerialIndex = 4
+        XCTAssertEqual(controller.nextSerialIndex, 4)
+
+        let fourth = try serial()
+        controller.add(fourth)
+        settleUndoGroup()
+        let fifth = try serial()
+        controller.add(fifth)
+        settleUndoGroup()
+        XCTAssertEqual([fourth.index, fifth.index], [4, 5])
+        XCTAssertEqual(controller.nextSerialIndex, 6)
+
+        controller.perform(.undo)
+        settleUndoGroup()
+        XCTAssertEqual(controller.nextSerialIndex, 5)
+
+        controller.perform(.undo)
+        settleUndoGroup()
+        XCTAssertEqual(controller.nextSerialIndex, 4)
+
+        controller.perform(.redo)
+        settleUndoGroup()
+        XCTAssertEqual(controller.nextSerialIndex, 5)
+
+        // 删除最新落下的序号 4 时回退到 4；撤销删除再恢复到 5
+        controller.remove(fourth)
+        settleUndoGroup()
+        XCTAssertEqual(controller.nextSerialIndex, 4)
+        controller.perform(.undo)
+        settleUndoGroup()
+        XCTAssertEqual(controller.nextSerialIndex, 5)
+
+        // 非空画布上也可手动重置为 1 或跳号，且限制在合法范围内
+        controller.nextSerialIndex = 0
+        XCTAssertEqual(controller.nextSerialIndex, 1)
+        let restarted = try serial()
+        controller.add(restarted)
+        settleUndoGroup()
+        XCTAssertEqual(restarted.index, 1)
+        XCTAssertEqual(controller.nextSerialIndex, 2)
+
+        controller.nextSerialIndex = 2000
+        XCTAssertEqual(controller.nextSerialIndex, 999)
+    }
+
     private func settleUndoGroup() {
         // 与真实鼠标事件一样，让 UndoManager 在操作之间结束当前分组。
         RunLoop.current.run(until: Date().addingTimeInterval(0.02))

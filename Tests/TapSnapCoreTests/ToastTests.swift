@@ -44,4 +44,19 @@ final class ToastTests: XCTestCase {
         center.dismiss(second.id)
         XCTAssertTrue(center.messages.isEmpty)
     }
+
+    func testActionToastTriggersCallbackOnceAndDismisses() {
+        let center = ToastCenter()
+        var triggers = 0
+        let message = ToastMessage(text: "已复制 12 个字符", style: .success, duration: 10, actionTitle: "查看结果")
+        center.show(message) { triggers += 1 }
+        XCTAssertEqual(center.messages.first?.actionTitle, "查看结果")
+
+        center.performAction(for: message.id)
+        XCTAssertEqual(triggers, 1)
+        XCTAssertTrue(center.messages.isEmpty)
+
+        center.performAction(for: message.id)
+        XCTAssertEqual(triggers, 1)
+    }
 }

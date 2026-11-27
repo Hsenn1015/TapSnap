@@ -19,12 +19,13 @@ final class PinGroupManager: ObservableObject {
         let clickThrough: Bool
         let scale: CGFloat
         let group: String?
+        let sourceText: String?
         let createdAt: Date
 
         init(_ item: PinItem) {
             id = item.id; imageID = item.imageID; frame = item.frame; opacity = item.opacity
             alwaysOnTop = item.isAlwaysOnTop; clickThrough = item.isClickThrough
-            scale = item.scale; group = item.group; createdAt = item.createdAt
+            scale = item.scale; group = item.group; sourceText = item.sourceText; createdAt = item.createdAt
         }
         func item(image: CGImage) -> PinItem? {
             guard frame.origin.x.isFinite, frame.origin.y.isFinite,
@@ -32,7 +33,8 @@ final class PinGroupManager: ObservableObject {
                   scale.isFinite, scale > 0 else { return nil }
             return PinItem(id: id, imageID: imageID, image: image, frame: frame,
                            opacity: min(1, max(0.1, opacity)), isAlwaysOnTop: alwaysOnTop,
-                           isClickThrough: clickThrough, scale: scale, group: group, createdAt: createdAt)
+                           isClickThrough: clickThrough, scale: scale, group: group,
+                           sourceText: sourceText, createdAt: createdAt)
         }
     }
     private struct Manifest: Codable {
@@ -199,7 +201,7 @@ final class PinGroupManager: ObservableObject {
     }
 
     @discardableResult
-    func show(_ image: CGImage, from sourceTopLeft: CGPoint? = nil, scale: CGFloat = 1) -> PinItem {
+    func show(_ image: CGImage, from sourceTopLeft: CGPoint? = nil, scale: CGFloat = 1, sourceText: String? = nil) -> PinItem {
         let screens = NSScreen.screens
         let pointer = NSEvent.mouseLocation
         let desktopTop = screens.first?.frame.maxY ?? CGDisplayBounds(CGMainDisplayID()).height
@@ -209,7 +211,7 @@ final class PinGroupManager: ObservableObject {
         let size = CGSize(width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale)
         let frame = Self.initialFrame(size: size, sourceTopLeft: sourceTopLeft, desktopTop: desktopTop,
                                       screens: screens.map(\.frame), pointer: pointer, visible: visible)
-        return add(image, frame: frame, scale: scale)
+        return add(image, frame: frame, scale: scale, sourceText: sourceText)
     }
 
     /// 先把贴图放到位，再在同一次窗口更新中撤下框选、编辑器或长图预览。
@@ -235,15 +237,15 @@ final class PinGroupManager: ObservableObject {
     }
 
     @discardableResult
-    func show(_ image: CGImage, at origin: CGPoint, scale: CGFloat = 1, group: String? = nil) -> PinItem {
+    func show(_ image: CGImage, at origin: CGPoint, scale: CGFloat = 1, group: String? = nil, sourceText: String? = nil) -> PinItem {
         let scale = max(0.1, scale)
         let size = CGSize(width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale)
-        return add(image, frame: CGRect(origin: origin, size: size), scale: scale, group: group)
+        return add(image, frame: CGRect(origin: origin, size: size), scale: scale, group: group, sourceText: sourceText)
     }
 
-    private func add(_ image: CGImage, frame: CGRect, scale: CGFloat, group: String? = nil) -> PinItem {
+    private func add(_ image: CGImage, frame: CGRect, scale: CGFloat, group: String? = nil, sourceText: String? = nil) -> PinItem {
         let item = PinItem(image: image, frame: frame, opacity: pinSettings.defaultOpacity,
-                           isAlwaysOnTop: pinSettings.alwaysOnTop, scale: scale, group: group)
+                           isAlwaysOnTop: pinSettings.alwaysOnTop, scale: scale, group: group, sourceText: sourceText)
         add(item)
         return item
     }
@@ -264,6 +266,7 @@ final class PinGroupManager: ObservableObject {
         let view = PinImageView(item: item)
         view.onClose = { [weak self] in self?.close(item.id) }
         view.onCopy = { [weak self] in self?.copyToPasteboard(item.id) }
+        view.onCopyImage = { [weak self] in self?.copyImageToPasteboard(item.id) }
         view.onSave = { [weak self] in self?.save(item.id) }
         view.onRotate = { [weak self] clockwise in self?.rotate(item.id, clockwise: clockwise) }
         view.onFlip = { [weak self] horizontal in self?.flip(item.id, horizontal: horizontal) }
@@ -464,6 +467,16 @@ final class PinGroupManager: ObservableObject {
                               hideForFullScreen: hidesForFullScreen), images: images)
     }
     func copyToPasteboard(_ id: UUID, to pasteboard: NSPasteboard = .general) {
+        guard let pin = items.first(where: { $0.id == id }) else { return }
+        if let text = pin.sourceText {
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+            return
+        }
+        copyImageToPasteboard(id, to: pasteboard)
+    }
+
+    func copyImageToPasteboard(_ id: UUID, to pasteboard: NSPasteboard = .general) {
         guard let pin = items.first(where: { $0.id == id }),
               let item = PinTransfer.pasteboardItem(for: pin.image, metadata: pin.clipMeta) else { return }
         pasteboard.clearContents()

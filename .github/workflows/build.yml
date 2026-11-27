@@ -103,7 +103,7 @@ jobs:
         run: |
           swift --version
           # These tests require a desktop session or native encoders and recognition hardware.
-          desktop='CaptureModeHandoffTests|ClipboardHistoryPersistenceTests|EditFeatureCompletionTests|EditorDockLayoutTests|GlobalShortcutTests|PrivacyCaptureTests|PrivacyVisualAITests|RecordingClipboardTests|UIRegionDetectorTests'
+          desktop='CaptureModeHandoffTests|ClipboardHistoryPersistenceTests|EditFeatureCompletionTests|EditorDockLayoutTests|GlobalShortcutTests|PrivacyCaptureTests|PrivacyVisualAITests|QuickOCRAndTextPinTests|RecordingClipboardTests|UIRegionDetectorTests'
           encoder='GifExporterTests|RecordingAnnotationStyleTests|RecordingEnhancementTests|VideoEncoderTests|RecordSessionTests/test(RealEncoder|StaticScreen)'
           swift test --skip "$desktop|$encoder"
       - name: Build the macOS release with its persistent signing identity

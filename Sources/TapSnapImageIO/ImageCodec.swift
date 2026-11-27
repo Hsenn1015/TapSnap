@@ -136,33 +136,116 @@ public enum ImageCodec {
         return image
     }
 
-    /// 写到磁盘。返回实际写入的 URL（会自动补齐扩展名）。
+    /// 写到磁盘。返回实际写入的 URL（会自动补齐扩展名；默认遇重名自动递增，避免覆盖）。
     @discardableResult
     public static func write(
         _ image: CGImage,
         to directory: URL,
         fileName: String? = nil,
         format: ImageFormat,
-        quality: Double = 0.9
+        quality: Double = 0.9,
+        overwriteExisting: Bool = false
     ) throws -> URL {
         try AppPathsBridge.ensureDirectory(directory)
-        let name = fileName ?? Self.defaultFileName()
-        let url = directory.appendingPathComponent("\(name).\(format.fileExtension)")
+        let baseName = fileName ?? Self.defaultFileName()
+        let ext = format.fileExtension
         let data = try encode(image, as: format, quality: quality)
-        do {
-            try data.write(to: url, options: .atomic)
-        } catch {
-            throw ImageIOError.writeFailed(url)
+        if overwriteExisting {
+            let url = directory.appendingPathComponent("\(baseName).\(ext)")
+            do {
+                try data.write(to: url, options: .atomic)
+            } catch {
+                throw ImageIOError.writeFailed(url)
+            }
+            return url
         }
-        return url
+
+        let fileManager = FileManager.default
+        for attempt in 1...10_000 {
+            let candidateName = attempt == 1 ? baseName : "\(baseName)_\(attempt)"
+            let candidate = directory.appendingPathComponent("\(candidateName).\(ext)")
+            if fileManager.fileExists(atPath: candidate.path) { continue }
+            do {
+                try data.write(to: candidate, options: .withoutOverwriting)
+                return candidate
+            } catch where isFileExistsError(error) {
+                continue
+            } catch {
+                throw ImageIOError.writeFailed(candidate)
+            }
+        }
+
+        let fallback = directory.appendingPathComponent("\(baseName)_\(UUID().uuidString).\(ext)")
+        do {
+            try data.write(to: fallback, options: .withoutOverwriting)
+            return fallback
+        } catch {
+            throw ImageIOError.writeFailed(fallback)
+        }
+    }
+
+    private static func isFileExistsError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == NSCocoaErrorDomain && nsError.code == CocoaError.fileWriteFileExists.rawValue {
+            return true
+        }
+        if nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(EEXIST) {
+            return true
+        }
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+            return isFileExistsError(underlying)
+        }
+        return false
     }
 
     /// 默认命名示例 TapSnap_2026-01-30_14-05-33。
     public static func defaultFileName(now: Date = Date()) -> String {
+        "TapSnap_\(timestampString(now: now))"
+    }
+
+    /// 仅时间戳命名示例 2026-01-30_14-05-33。
+    public static func timestampString(now: Date = Date()) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        return "TapSnap_\(formatter.string(from: now))"
+        return formatter.string(from: now)
+    }
+
+    /// 清洗文件名片段，移除路径分隔符、控制字符和首尾空白/点号，并限制长度。
+    public static func sanitizedFileNameComponent(_ raw: String, maxLength: Int = 40) -> String {
+        let invalid = CharacterSet(charactersIn: "/\\:*?\"<>|").union(.controlCharacters).union(.newlines)
+        var cleaned = raw.components(separatedBy: invalid).joined(separator: "-")
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ".")))
+        while cleaned.contains("--") {
+            cleaned = cleaned.replacingOccurrences(of: "--", with: "-")
+        }
+        cleaned = cleaned.trimmingCharacters(in: CharacterSet(charactersIn: "- "))
+        if cleaned.count > maxLength {
+            cleaned = String(cleaned.prefix(maxLength)).trimmingCharacters(in: CharacterSet(charactersIn: "- ."))
+        }
+        return cleaned
+    }
+
+    /// 按「前缀-001」扫描目录中的最大序号并递增，例如 `退款流程-001`、`退款流程-002`。
+    public static func nextSequentialFileName(prefix: String, in directory: URL, format: ImageFormat) -> String {
+        let safePrefix = sanitizedFileNameComponent(prefix)
+        let effectivePrefix = safePrefix.isEmpty ? "TapSnap" : safePrefix
+        let ext = format.fileExtension.lowercased()
+        let prefixWithDash = "\(effectivePrefix)-"
+        var maxIndex = 0
+        if let entries = try? FileManager.default.contentsOfDirectory(atPath: directory.path) {
+            for entry in entries {
+                let url = URL(fileURLWithPath: entry)
+                guard url.pathExtension.lowercased() == ext else { continue }
+                let stem = url.deletingPathExtension().lastPathComponent
+                guard stem.hasPrefix(prefixWithDash) else { continue }
+                let remainder = stem.dropFirst(prefixWithDash.count)
+                if !remainder.isEmpty, remainder.allSatisfy(\.isASCII), let number = Int(remainder), number > maxIndex {
+                    maxIndex = number
+                }
+            }
+        }
+        return "\(effectivePrefix)-\(String(format: "%03d", maxIndex + 1))"
     }
 }
 

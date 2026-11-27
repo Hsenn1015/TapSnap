@@ -76,9 +76,12 @@ public final class ToastPresenter {
         guard let screen = activeScreen() else { return }
         let panel = self.panel ?? makePanel()
         self.panel = panel
-        let root = ToastStackView(messages: messages, theme: theme()) { [weak center] id in
-            center?.dismiss(id)
-        }
+        let root = ToastStackView(
+            messages: messages,
+            theme: theme(),
+            onAction: { [weak center] id in center?.performAction(for: id) },
+            onDismiss: { [weak center] id in center?.dismiss(id) }
+        )
         let host: NSHostingController<ToastStackView>
         if let existing = panel.contentViewController as? NSHostingController<ToastStackView> {
             existing.rootView = root

@@ -62,6 +62,8 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
     private var syncingAppearance = false
     private var styleAdjustment: (item: any EditItem, original: AppearanceState)?
     private var mosaicTasks: [UUID: Task<Void, Never>] = [:]
+    /// 用户手动指定的下一次落点序号；nil 时按画布已有最大序号 + 1 自动递增。
+    @Published private var serialNextOverride: Int?
 
     init(environment: AppEnvironment, image: CGImage, scale: CGFloat, style: EditItemStyle,
          captureRect: CGRect? = nil, captureScreen: ScreenDescriptor? = nil,
@@ -92,8 +94,31 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
     var theme: Theme { environment.theme }
     var outputTopLeft: CGPoint? { document.outputTopLeft }
 
+    var confirmationTitle: String {
+        guard let reviewedAction else { return "完成" }
+        if reviewedAction == .confirm {
+            let settings = environment.config.settings.capture
+            let autoSave = outputOptions?.autoSave ?? settings.autoSaveToFile
+            let autoCopy = settings.autoCopyToClipboard
+            if autoSave && autoCopy { return "保存并复制" }
+            if autoSave { return "保存" }
+            if autoCopy { return "复制" }
+            return "完成"
+        }
+        return reviewedAction.title
+    }
+
     var nextSerialIndex: Int {
-        (document.items.compactMap { ($0 as? SerialItem)?.index }.max() ?? 0) + 1
+        get {
+            if let serialNextOverride { return serialNextOverride }
+            return (document.items.compactMap { ($0 as? SerialItem)?.index }.max() ?? 0) + 1
+        }
+        set {
+            let clamped = min(max(1, newValue), 999)
+            guard clamped != nextSerialIndex else { return }
+            serialNextOverride = clamped
+            revision += 1
+        }
     }
 
     func present() {
@@ -288,7 +313,13 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
             return
         }
         if let serial = item as? SerialItem {
+            let previousOverride = serialNextOverride
             serial.index = nextSerialIndex
+            let updatedOverride = serialNextOverride.map { min(999, $0 + 1) }
+            serialNextOverride = updatedOverride
+            document.append(serial)
+            registerSerialUndo(for: serial, previousOverride: previousOverride, updatedOverride: updatedOverride)
+            return
         }
         if let mosaic = item as? MosaicItem, mosaic.autoDetect {
             addDetectedMosaics(for: mosaic)
@@ -353,11 +384,41 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
     func remove(_ item: any EditItem) {
         let id = item.id
         guard document.items.contains(where: { $0.id == id }) else { return }
+        let previousOverride = serialNextOverride
+        if let serial = item as? SerialItem, serialNextOverride == serial.index + 1 {
+            serialNextOverride = max(1, serial.index)
+        }
+        let updatedOverride = serialNextOverride
         document.remove(id: id)
+        registerRemoveUndo(for: item, previousOverride: previousOverride, updatedOverride: updatedOverride)
+    }
+
+    private func registerRemoveUndo(for item: any EditItem, previousOverride: Int?, updatedOverride: Int?) {
+        let id = item.id
         undoManager.registerUndo(withTarget: self) { target in
             target.document.append(item)
+            target.serialNextOverride = previousOverride
             target.undoManager.registerUndo(withTarget: target) { inner in
-                inner.remove(item)
+                inner.document.remove(id: id)
+                inner.serialNextOverride = updatedOverride
+                inner.registerRemoveUndo(for: item, previousOverride: previousOverride, updatedOverride: updatedOverride)
+            }
+            target.revision += 1
+            target.updateUndoState()
+        }
+        revision += 1
+        updateUndoState()
+    }
+
+    private func registerSerialUndo(for item: SerialItem, previousOverride: Int?, updatedOverride: Int?) {
+        let id = item.id
+        undoManager.registerUndo(withTarget: self) { target in
+            target.document.remove(id: id)
+            target.serialNextOverride = previousOverride
+            target.undoManager.registerUndo(withTarget: target) { inner in
+                inner.document.append(item)
+                inner.serialNextOverride = updatedOverride
+                inner.registerSerialUndo(for: item, previousOverride: previousOverride, updatedOverride: updatedOverride)
             }
             target.revision += 1
             target.updateUndoState()
@@ -686,8 +747,19 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
         case .cancel:
             close()
         case .confirm:
-            if Self.completeOutputs(autoCopy: autoCopy, autoSave: autoSave,
-                                    copy: { self.copyToPasteboard() }, save: { self.save() }) {
+            guard let image = (autoSave || autoCopy) ? renderedImage() : nil else {
+                if !autoSave && !autoCopy { close() }
+                return
+            }
+            if environment.completeScreenshotOutputs(
+                image,
+                scale: document.scale,
+                sourceTopLeft: outputTopLeft,
+                sourceAppName: document.sourceAppName,
+                kind: .annotatedScreenshot,
+                formatOverride: outputOptions?.format,
+                autoSaveOverride: autoSave
+            ) {
                 close()
             }
         case .copy:
@@ -895,7 +967,8 @@ final class EditController: NSObject, ObservableObject, NSWindowDelegate {
     @discardableResult
     private func save(chooseLocation: Bool = false) -> Bool {
         guard let image = renderedImage() else { return false }
-        return environment.saveScreenshot(image, formatOverride: outputOptions?.format, chooseLocation: chooseLocation)
+        return environment.saveScreenshot(image, formatOverride: outputOptions?.format,
+                                          chooseLocation: chooseLocation, sourceAppName: document.sourceAppName)
     }
 
     /// 打印当前合成结果。

@@ -239,6 +239,10 @@ final class ShortcutCenter: ObservableObject {
         switch action {
         case .screenshot:
             environment.captureCoordinator.start(.edit)
+        case .quickCapture:
+            environment.captureCoordinator.start(.quickCapture)
+        case .captureLastRegion:
+            environment.captureCoordinator.recaptureLastSelection()
         case .screenshotAndPin:
             environment.captureCoordinator.start(.pin)
         case .pinFromClipboard:
@@ -249,6 +253,8 @@ final class ShortcutCenter: ObservableObject {
             environment.record.start()
         case .ocrRegion:
             environment.ocrCoordinator.captureAndRecognize()
+        case .quickOCR:
+            environment.ocrCoordinator.captureAndCopySilently()
         case .ocrFullScreen:
             environment.ocrCoordinator.recognizeFullScreen()
         case .quickTranslate:

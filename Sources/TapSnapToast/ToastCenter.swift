@@ -34,11 +34,16 @@ public final class ToastCenter: ObservableObject {
     @Published public private(set) var messages: [ToastMessage] = []
     /// 同时最多显示几条，超出时挤掉最早的。
     public var maxVisible = 3
+    private var actions: [UUID: () -> Void] = [:]
 
     public init() {}
 
-    public func show(_ message: ToastMessage) {
-        messages = Array((messages + [message]).suffix(max(0, maxVisible)))
+    public func show(_ message: ToastMessage, action: (() -> Void)? = nil) {
+        if let action { actions[message.id] = action }
+        let updated = Array((messages + [message]).suffix(max(0, maxVisible)))
+        let retainedIDs = Set(updated.map(\.id))
+        actions = actions.filter { retainedIDs.contains($0.key) }
+        messages = updated
         let id = message.id
         DispatchQueue.main.asyncAfter(deadline: .now() + max(0, message.duration)) { [weak self] in
             self?.dismiss(id)
@@ -50,12 +55,20 @@ public final class ToastCenter: ObservableObject {
     public func warning(_ text: String) { show(ToastMessage(text: text, style: .warning)) }
     public func error(_ text: String) { show(ToastMessage(text: text, style: .error, duration: 3.5)) }
 
+    public func performAction(for id: UUID) {
+        let handler = actions.removeValue(forKey: id)
+        dismiss(id)
+        handler?()
+    }
+
     public func dismiss(_ id: UUID) {
+        actions.removeValue(forKey: id)
         guard messages.contains(where: { $0.id == id }) else { return }
         messages.removeAll { $0.id == id }
     }
 
     public func dismissAll() {
+        actions.removeAll()
         messages.removeAll()
     }
 }

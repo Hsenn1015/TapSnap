@@ -97,6 +97,7 @@ final class PinImageView: NSView {
     }
     var onClose: (() -> Void)?
     var onCopy: (() -> Void)?
+    var onCopyImage: (() -> Void)?
     var onSave: (() -> Void)?
     var onRotate: ((Bool) -> Void)?
     var onFlip: ((Bool) -> Void)?
@@ -152,8 +153,12 @@ final class PinImageView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
-    /// 点中贴图后按 Delete / 退格删掉它，Esc 也能关。
+    /// 点中贴图后按 Delete / 退格删掉它，Esc 也能关；⌘C 复制当前贴图（文字贴图复制原文）。
     override func keyDown(with event: NSEvent) {
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command, event.keyCode == 8 {
+            onCopy?()
+            return
+        }
         switch event.keyCode {
         case 51, 117, 53:
             onClose?()
@@ -164,15 +169,18 @@ final class PinImageView: NSView {
 
     override func rightMouseDown(with event: NSEvent) {
         let menu = NSMenu()
-        for (title, action) in [
-            ("复制", #selector(copyAction)),
+        var primaryEntries: [(String, Selector)] = item.sourceText == nil
+            ? [("复制", #selector(copyAction))]
+            : [("复制文字", #selector(copyAction)), ("复制为图片", #selector(copyImageAction))]
+        primaryEntries.append(contentsOf: [
             ("另存为…", #selector(saveAction)),
             ("向左旋转", #selector(rotateLeftAction)),
             ("向右旋转", #selector(rotateRightAction)),
             ("水平翻转", #selector(flipHorizontalAction)),
             ("垂直翻转", #selector(flipVerticalAction)),
             ("关闭", #selector(closeAction)),
-        ] {
+        ])
+        for (title, action) in primaryEntries {
             let entry = NSMenuItem(title: title, action: action, keyEquivalent: "")
             entry.target = self
             menu.addItem(entry)
@@ -234,6 +242,7 @@ final class PinImageView: NSView {
         onMoveToGroup?(name?.isEmpty == false ? name : nil)
     }
     @objc private func copyAction() { onCopy?() }
+    @objc private func copyImageAction() { onCopyImage?() }
     @objc private func closeAction() { onClose?() }
     @objc private func saveAction() { onSave?() }
     @objc private func rotateLeftAction() { onRotate?(false) }

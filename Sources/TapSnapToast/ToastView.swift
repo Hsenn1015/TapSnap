@@ -8,12 +8,20 @@ import SwiftUI
 struct ToastStackView: View {
     let messages: [ToastMessage]
     let theme: Theme
+    var onAction: ((UUID) -> Void)? = nil
     let onDismiss: (UUID) -> Void
 
     var body: some View {
         VStack(spacing: 8) {
             ForEach(messages) { message in
-                ToastRow(theme: theme, message: message) { onDismiss(message.id) }
+                ToastRow(
+                    theme: theme,
+                    message: message,
+                    onAction: {
+                        if let onAction { onAction(message.id) } else { onDismiss(message.id) }
+                    },
+                    onDismiss: { onDismiss(message.id) }
+                )
             }
         }
         .padding(14)
@@ -23,42 +31,53 @@ struct ToastStackView: View {
 private struct ToastRow: View {
     let theme: Theme
     let message: ToastMessage
+    let onAction: () -> Void
     let onDismiss: () -> Void
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
         let (symbol, accent) = statusAppearance
-        Button(action: onDismiss) {
-            HStack(spacing: 9) {
-                Image(systemName: symbol)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(accent)
-                    .frame(width: 24, height: 24)
-                    .background(accent.opacity(theme.isDark ? 0.17 : 0.10), in: Circle())
-                    .accessibilityHidden(true)
-                Text(message.text)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(theme.token(.popoverForeground))
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let actionTitle = message.actionTitle {
-                    Text(actionTitle)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(theme.token(.primary))
+        HStack(spacing: 9) {
+            Button(action: onDismiss) {
+                HStack(spacing: 9) {
+                    Image(systemName: symbol)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(accent)
+                        .frame(width: 24, height: 24)
+                        .background(accent.opacity(theme.isDark ? 0.17 : 0.10), in: Circle())
+                        .accessibilityHidden(true)
+                    Text(message.text)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(theme.token(.popoverForeground))
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .contentShape(Rectangle())
             }
-            .padding(.leading, 8)
-            .padding(.trailing, 15)
-            .padding(.vertical, 8)
-            .background {
-                shape.fill(surface)
-                    .overlay { shape.strokeBorder(theme.token(.foreground).opacity(0.11), lineWidth: 1) }
-                    .shadow(color: .black.opacity(0.19), radius: 8, y: 3)
+            .buttonStyle(.plain)
+            .accessibilityHint("关闭提示")
+            if let actionTitle = message.actionTitle {
+                Button(action: onAction) {
+                    Text(actionTitle)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(theme.token(.primary))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(theme.token(.primary).opacity(theme.isDark ? 0.16 : 0.10), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(actionTitle)
             }
-            .contentShape(shape)
         }
-        .buttonStyle(.plain)
-        .accessibilityHint("关闭提示")
+        .padding(.leading, 8)
+        .padding(.trailing, message.actionTitle == nil ? 15 : 10)
+        .padding(.vertical, 8)
+        .background {
+            shape.fill(surface)
+                .overlay { shape.strokeBorder(theme.token(.foreground).opacity(0.11), lineWidth: 1) }
+                .shadow(color: .black.opacity(0.19), radius: 8, y: 3)
+        }
+        .contentShape(shape)
     }
 
     private var surface: LinearGradient {

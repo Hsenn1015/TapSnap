@@ -460,6 +460,23 @@ public struct SelectionBorderConfiguration: Equatable, Hashable, Sendable {
     }
 }
 
+/// 截图自动保存和默认另存为时的文件命名方式。
+public enum CaptureFileNamingMode: String, CaseIterable, Codable, Hashable, Sendable {
+    case defaultTimestamp
+    case timestampOnly
+    case customPrefixSequence
+    case sourceAppTimestamp
+
+    public var displayName: String {
+        switch self {
+        case .defaultTimestamp: return "TapSnap_日期时间"
+        case .timestampOnly: return "仅日期时间"
+        case .customPrefixSequence: return "自定义前缀 + 序号"
+        case .sourceAppTimestamp: return "来源应用 + 日期时间"
+        }
+    }
+}
+
 /// 全部可持久化配置。字段按功能分组，字段名即 JSON key。
 ///
 /// 按功能分组的 Codable 数据模型，可一次性读写。
@@ -472,6 +489,19 @@ public struct Settings: Codable, Hashable, Sendable {
         public var saveDirectory = AppPaths.defaultSaveDirectory.path
         public var saveFormat = "png"
         public var jpegQuality = 0.9
+        private var fileNamingModeRaw: String?
+        private var fileNamePrefixRaw: String?
+        public var fileNamingMode: CaptureFileNamingMode {
+            get { fileNamingModeRaw.flatMap(CaptureFileNamingMode.init(rawValue:)) ?? .defaultTimestamp }
+            set { fileNamingModeRaw = newValue == .defaultTimestamp ? nil : newValue.rawValue }
+        }
+        public var fileNamePrefix: String {
+            get { fileNamePrefixRaw ?? "" }
+            set {
+                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                fileNamePrefixRaw = trimmed.isEmpty ? nil : trimmed
+            }
+        }
         public var showMagnifier = true
         public var showSelectionSize = true
         private var allowDemoCapture: Bool?

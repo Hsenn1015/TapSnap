@@ -208,18 +208,157 @@ final class SelectionModeToolbarTests: XCTestCase {
         XCTAssertEqual(frames.first, frames.last)
     }
 
-    func testQuickToolbarMovesInsideBottomWhenSelectionTouchesScreenBottom() throws {
+    func testQuickToolbarFlipsAboveBottomSelectionAndFallsBackInsideFullHeight() throws {
         let view = makeView(size: CGSize(width: 800, height: 720))
+        view.screenImage = CGContext(data: nil, width: 800, height: 720, bitsPerComponent: 8,
+                                     bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                     bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)?.makeImage()
         view.onQuickAction = { _, _ in }
-        let selected = CGRect(x: 160, y: 0, width: 480, height: 360)
-        try drag(view, from: selected.origin, to: CGPoint(x: selected.maxX, y: selected.maxY))
 
-        let layout = try XCTUnwrap(view.quickToolbarLayout())
-        let outline = SelectionBorderView.outlineRect(for: selected, in: view.bounds)
-        XCTAssertTrue(view.bounds.contains(layout.background))
-        XCTAssertGreaterThan(layout.background.minY, outline.minY)
-        XCTAssertLessThan(layout.background.maxY, outline.midY)
-        XCTAssertEqual(layout.background.midX, selected.midX, accuracy: 0.5)
+        // 选区贴近屏幕底部但上方有充足空间时，工具栏应翻到选区上方，且避开左上角尺寸标签。
+        let bottomTarget = CGRect(x: 160, y: 0, width: 480, height: 44)
+        try drag(view, from: bottomTarget.origin, to: CGPoint(x: bottomTarget.maxX, y: bottomTarget.maxY))
+        let flipped = try XCTUnwrap(view.quickToolbarLayout())
+        let bottomOutline = SelectionBorderView.outlineRect(for: bottomTarget, in: view.bounds)
+        XCTAssertTrue(view.bounds.contains(flipped.background))
+        XCTAssertGreaterThanOrEqual(flipped.background.minY, bottomOutline.maxY + 24,
+                                    "贴底选区上方有空间时，工具栏应翻到上方并给尺寸标签留出空间")
+        XCTAssertFalse(flipped.background.intersects(bottomTarget))
+        XCTAssertEqual(flipped.background.midX, bottomTarget.midX, accuracy: 0.5)
+
+        // 全高选区上下都没有外部空间时，才退回选区内部下方。
+        let tall = CGRect(x: 160, y: 0, width: 480, height: 700)
+        try drag(view, from: tall.origin, to: CGPoint(x: tall.maxX, y: tall.maxY))
+        let inside = try XCTUnwrap(view.quickToolbarLayout())
+        let tallOutline = SelectionBorderView.outlineRect(for: tall, in: view.bounds)
+        XCTAssertTrue(view.bounds.contains(inside.background))
+        XCTAssertGreaterThan(inside.background.minY, tallOutline.minY)
+        XCTAssertLessThan(inside.background.maxY, tallOutline.midY)
+        XCTAssertEqual(inside.background.midX, tall.midX, accuracy: 0.5)
+    }
+
+    func testQuickToolbarAndActionBarAvoidDockVisibleBounds() throws {
+        let visible = CGRect(x: 0, y: 72, width: 800, height: 620)
+        let target = CGRect(x: 200, y: 76, width: 320, height: 32)
+
+        let quickView = makeView(size: CGSize(width: 800, height: 720))
+        quickView.visibleBarBoundsOverride = visible
+        quickView.onQuickAction = { _, _ in }
+        try drag(quickView, from: target.origin, to: CGPoint(x: target.maxX, y: target.maxY))
+        let quickLayout = try XCTUnwrap(quickView.quickToolbarLayout())
+        XCTAssertTrue(visible.contains(quickLayout.background), "快捷工具栏不应落入底部 Dock 区域")
+        XCTAssertGreaterThan(quickLayout.background.minY, target.maxY)
+
+        let barView = makeView(size: CGSize(width: 800, height: 720))
+        barView.visibleBarBoundsOverride = visible
+        barView.onLongShot = { _ in }
+        barView.onRecord = { _ in }
+        try drag(barView, from: target.origin, to: CGPoint(x: target.maxX, y: target.maxY))
+        let barLayout = try XCTUnwrap(barView.barLayout())
+        XCTAssertTrue(visible.contains(barLayout.background), "普通确认条也不应落入底部 Dock 区域")
+        XCTAssertGreaterThan(barLayout.background.minY, target.maxY)
+    }
+
+    func testQuickToolbarCheckmarkCanDispatchSaveAndCopyConfirmWhileCommandCStaysCopyOnly() throws {
+        let view = makeView()
+        var results: [ActionKind] = []
+        view.quickConfirmationAction = .confirm
+        view.onQuickAction = { action, _ in results.append(action) }
+        try drag(view, from: CGPoint(x: 100, y: 100), to: CGPoint(x: 350, y: 250))
+
+        XCTAssertTrue(view.performQuickAction(.confirm))
+        XCTAssertTrue(view.performKeyEquivalent(with: try key(8, .command, characters: "c")))
+        XCTAssertEqual(results, [.confirm, .copy])
+    }
+
+    func testConfirmsOnReleaseFinishesImmediatelyWithoutShowingToolbar() throws {
+        let view = makeView()
+        view.confirmsOnRelease = true
+        var finished: [CGRect?] = []
+        view.onFinish = { finished.append($0) }
+        let selected = CGRect(x: 80, y: 120, width: 260, height: 90)
+
+        view.mouseDown(with: try mouse(.leftMouseDown, at: selected.origin))
+        view.mouseDragged(with: try mouse(.leftMouseDragged, at: CGPoint(x: selected.maxX, y: selected.maxY)))
+        XCTAssertNil(view.barLayout())
+        XCTAssertNil(view.quickToolbarLayout())
+        XCTAssertTrue(finished.isEmpty)
+
+        view.mouseUp(with: try mouse(.leftMouseUp, at: CGPoint(x: selected.maxX, y: selected.maxY)))
+        XCTAssertEqual(finished, [selected])
+        XCTAssertNil(view.barLayout())
+        XCTAssertNil(view.quickToolbarLayout())
+    }
+
+    func testArrowKeysNudgeAndResizeSelectionByExactPixelsOnRetina() throws {
+        let view = makeView(size: CGSize(width: 600, height: 400))
+        view.screenImage = CGContext(data: nil, width: 1200, height: 800, bitsPerComponent: 8,
+                                     bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                     bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)?.makeImage()
+        var latest: CGRect?
+        view.onSelectionChange = { rect, _, _ in latest = rect }
+        try drag(view, from: CGPoint(x: 100, y: 100), to: CGPoint(x: 300, y: 220))
+        XCTAssertEqual(latest, CGRect(x: 100, y: 100, width: 200, height: 120))
+
+        // 2x Retina 下方向键移动 1 物理像素（0.5pt），Shift+方向键移动 10 物理像素（5pt）
+        view.keyDown(with: try key(124)) // Right
+        XCTAssertEqual(latest, CGRect(x: 100.5, y: 100, width: 200, height: 120))
+        view.keyDown(with: try key(126, .shift)) // Shift + Up
+        XCTAssertEqual(latest, CGRect(x: 100.5, y: 105, width: 200, height: 120))
+
+        // Option + 方向键以左上角为锚点精确增减 1 物理像素宽高
+        let beforeMaxY = try XCTUnwrap(latest).maxY
+        view.keyDown(with: try key(124, .option)) // Option + Right -> width + 0.5pt (+1px)
+        view.keyDown(with: try key(125, .option)) // Option + Down -> height + 0.5pt (+1px)
+        XCTAssertEqual(try XCTUnwrap(latest).width, 200.5, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(latest).height, 120.5, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(latest).maxY, beforeMaxY, accuracy: 0.001)
+    }
+
+    func testClickingSizeLabelOpensInlineEditorAndAppliesExactRetinaPixelDimensions() throws {
+        let view = makeView(size: CGSize(width: 800, height: 600))
+        view.screenImage = CGContext(data: nil, width: 1600, height: 1200, bitsPerComponent: 8,
+                                     bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                     bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)?.makeImage()
+        var latest: CGRect?
+        view.onSelectionChange = { rect, _, _ in latest = rect }
+        let initial = CGRect(x: 80, y: 120, width: 240, height: 180)
+        try drag(view, from: initial.origin, to: CGPoint(x: initial.maxX, y: initial.maxY))
+
+        let labelRect = try XCTUnwrap(view.sizeLabelRect(for: initial))
+        let labelCenter = CGPoint(x: labelRect.midX, y: labelRect.midY)
+        XCTAssertEqual(view.cursorForPoint(labelCenter), .pointingHand)
+
+        view.mouseDown(with: try mouse(.leftMouseDown, at: labelCenter))
+        XCTAssertTrue(view.isEditingSize)
+        XCTAssertTrue(view.applyPixelSize(width: 800, height: 600))
+        view.dismissSizeEditor(commit: false)
+        XCTAssertFalse(view.isEditingSize)
+
+        let updated = try XCTUnwrap(latest)
+        XCTAssertEqual(updated.width, 400, accuracy: 0.001, "2x 屏输入 800px 应对应 400pt，导出恰为 800px")
+        XCTAssertEqual(updated.height, 300, accuracy: 0.001, "2x 屏输入 600px 应对应 300pt，导出恰为 600px")
+        XCTAssertEqual(updated.minX, initial.minX, accuracy: 0.001)
+        XCTAssertEqual(updated.maxY, initial.maxY, accuracy: 0.001)
+    }
+
+    func testPressingRBeforeDraggingRestoresLastSelectionWithoutConflictingWithRectangleShortcut() throws {
+        let view = makeView(size: CGSize(width: 600, height: 400))
+        let previous = CGRect(x: 60, y: 90, width: 220, height: 140)
+        view.lastSelectionRect = previous
+        var restored: CGRect?
+        var actions: [ActionKind] = []
+        view.onSelectionChange = { rect, _, _ in restored = rect }
+        view.onQuickAction = { action, _ in actions.append(action) }
+
+        // 尚未框选时按 R 恢复上次选区
+        view.keyDown(with: try key(15, characters: "r"))
+        XCTAssertEqual(restored, previous)
+        XCTAssertTrue(actions.isEmpty)
+
+        // 已有选区后再按 R 仍触发矩形标注快捷键
+        view.keyDown(with: try key(15, characters: "r"))
+        XCTAssertEqual(actions, [.rectangle])
     }
 
     func testQuickToolbarDisplaysAVisibleHintWithShortcutAndHidesItOnExit() async throws {

@@ -3,6 +3,7 @@ import Foundation
 import TapSnapCore
 import TapSnapOCR
 import TapSnapScreen
+import TapSnapToast
 
 /// 文字识别的入口。
 ///
@@ -18,6 +19,12 @@ final class OCRCoordinator {
     func captureAndRecognize() {
         environment.captureCoordinator.start(.ocr)
         environment.toast.info("框选需要识别的区域")
+    }
+
+    /// 极速取字：框选松手后静默识别并复制，不弹结果窗、不抢焦点。
+    func captureAndCopySilently() {
+        environment.captureCoordinator.start(.quickOCR)
+        environment.toast.info("框选文字区域，松手即复制")
     }
 
     /// 直接识别整屏（菜单「全屏文字识别」）。
@@ -51,6 +58,43 @@ final class OCRCoordinator {
         }
     }
 
+    /// 静默识别并按段落复制，不主动弹出结果窗；Toast 上保留「查看结果」兜底入口。
+    func recognizeSilently(_ image: CGImage, to pasteboard: NSPasteboard = .general) {
+        Task { @MainActor in
+            do {
+                _ = try await runSilently(image, to: pasteboard)
+            } catch {
+                environment.toast.error("识别失败：\(error.localizedDescription)")
+            }
+        }
+    }
+
+    @MainActor
+    @discardableResult
+    func runSilently(_ image: CGImage, to pasteboard: NSPasteboard = .general) async throws -> String? {
+        let settings = environment.config.settings.ocr
+        let options = OCRService.Options(languages: settings.languages)
+        let result = try await environment.ocr.recognize(image, options: options)
+
+        guard !result.isEmpty else {
+            environment.toast.warning("没有识别到文字")
+            return nil
+        }
+
+        let text = OCRResultDisplayMode.paragraphs.copyText(in: result)
+        environment.pinTransfer.copy(text, to: pasteboard)
+        let message = ToastMessage(
+            text: "已复制 \(text.count) 个字符",
+            style: .success,
+            duration: 3.5,
+            actionTitle: "查看结果"
+        )
+        environment.toast.show(message) { [weak self] in
+            self?.presentResult(result, image: image)
+        }
+        return text
+    }
+
     @MainActor
     private func run(_ image: CGImage) async throws {
         let settings = environment.config.settings.ocr
@@ -68,6 +112,11 @@ final class OCRCoordinator {
             environment.toast.success("已复制 \(text.count) 个字符")
         }
 
+        presentResult(result, image: image)
+    }
+
+    @MainActor
+    private func presentResult(_ result: OCRDocument, image: CGImage) {
         environment.ocrResultPanel.show(document: result, image: image, markdownSource: { [ocr = environment.ocr] in
             let tables = await ocr.recognizeTables(in: result, image: image)
             return await Task.detached(priority: .userInitiated) {

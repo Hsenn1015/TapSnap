@@ -86,6 +86,16 @@ final class AnnotationCursorTests: XCTestCase {
         XCTAssertEqual(try refreshWithoutEditing(view, controller: controller), second)
     }
 
+    func testCursorUpdatesImmediatelyWhenNextSerialIndexIsCustomized() throws {
+        let (controller, view) = fixture()
+        let initial = try refreshWithoutEditing(view, controller: controller)
+        controller.nextSerialIndex = 4
+        let custom = try refreshWithoutEditing(view, controller: controller)
+        XCTAssertNotEqual(initial, custom)
+        XCTAssertTrue(controller.document.items.isEmpty)
+        XCTAssertFalse(controller.canUndo)
+    }
+
     func testCursorStyleRefreshDoesNotCreateAnAnnotationOrUndoStep() throws {
         let (controller, view) = fixture()
         let red = try refreshWithoutEditing(view, controller: controller)

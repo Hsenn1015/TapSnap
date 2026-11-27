@@ -569,6 +569,25 @@ private struct CaptureSettings: View {
                     ) { $0.uppercased() }
                 }
                 SnapRowDivider(theme: theme)
+                SnapSettingRow("文件命名", subtitle: fileNamingPreview, theme: theme) {
+                    Picker("文件命名", selection: bind(\.capture.fileNamingMode)) {
+                        ForEach(CaptureFileNamingMode.allCases, id: \.self) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(width: 176)
+                }
+                if config.settings.capture.fileNamingMode == .customPrefixSequence {
+                    SnapRowDivider(theme: theme)
+                    SnapSettingRow("文件名前缀", subtitle: "留空时默认使用 TapSnap", theme: theme) {
+                        TextField("如：退款流程", text: bind(\.capture.fileNamePrefix))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 176)
+                    }
+                }
+                SnapRowDivider(theme: theme)
                 SnapSettingRow("保存目录", theme: theme) {
                     HStack(spacing: 8) {
                         Button {
@@ -656,6 +675,22 @@ private struct CaptureSettings: View {
 
     private var abbreviatedSaveDirectory: String {
         (config.settings.capture.saveDirectory as NSString).abbreviatingWithTildeInPath
+    }
+
+    private var fileNamingPreview: String {
+        let capture = config.settings.capture
+        let ext = capture.saveFormat == "jpeg" ? "jpg" : capture.saveFormat
+        switch capture.fileNamingMode {
+        case .defaultTimestamp:
+            return "示例：TapSnap_2026-11-27_14-05-33.\(ext)"
+        case .timestampOnly:
+            return "示例：2026-11-27_14-05-33.\(ext)"
+        case .customPrefixSequence:
+            let prefix = capture.fileNamePrefix.isEmpty ? "TapSnap" : capture.fileNamePrefix
+            return "示例：\(prefix)-001.\(ext)"
+        case .sourceAppTimestamp:
+            return "示例：Safari_2026-11-27_14-05-33.\(ext)"
+        }
     }
 
     private func revealSaveDirectory() {

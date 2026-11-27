@@ -68,7 +68,12 @@ final class SelectionOverlayView: NSView {
     var quickToolbarToolTip: (ActionKind) -> String = { $0.title } { didSet { hideQuickToolbarTip() } }
     var config: ConfigStore?
     var quickConfirmationCopies = true { didSet { updateBar() } }
+    var quickConfirmationAction: ActionKind = .copy
     var confirmationTitle = "确认 ⏎" { didSet { updateBar() } }
+    /// 测试可覆盖此值模拟 Dock / 菜单栏占用的可见区。
+    var visibleBarBoundsOverride: CGRect?
+    /// 上一次截图的选区（视图坐标）；在尚未框选时按 R 可一键恢复。
+    var lastSelectionRect: CGRect?
 
     /// 该屏的冻结截图，铺在压暗层下面。
     var screenImage: CGImage? { didSet { updateBar() } }
@@ -80,11 +85,18 @@ final class SelectionOverlayView: NSView {
     var accessibilitySnapLookup: (@Sendable (CGPoint) -> CGRect?)?
     /// 窗口模式使用系统给出的前后顺序，不能按面积选到后方窗口。
     var windowRegions: [CGRect] = []
-    var selectsWindows = false { didSet { borderView.showsResizeHandles = !selectsWindows && quickTranslateStyle == nil } }
+    var selectsWindows = false { didSet { updateResizeHandleVisibility() } }
+    /// 为 true 时松手立即确认选区，不展示工具栏与缩放手柄（用于极速取字等直出流程）。
+    var confirmsOnRelease = false {
+        didSet {
+            updateResizeHandleVisibility()
+            updateBar()
+        }
+    }
     /// 非 nil 时启用「截图秒译」专属框选外观，并在松手后立即触发翻译，无需二次确认。
     var quickTranslateStyle: QuickTranslateStyle? {
         didSet {
-            borderView.showsResizeHandles = !selectsWindows && quickTranslateStyle == nil
+            updateResizeHandleVisibility()
             if let style = quickTranslateStyle {
                 borderConfiguration = Self.quickTranslateBorderConfiguration(for: style)
             }
@@ -92,6 +104,10 @@ final class SelectionOverlayView: NSView {
             needsDisplay = true
             controlsView.needsDisplay = true
         }
+    }
+
+    private func updateResizeHandleVisibility() {
+        borderView.showsResizeHandles = !selectsWindows && quickTranslateStyle == nil && !confirmsOnRelease
     }
     /// 截图秒译目标语言显示名（如「简体中文」「英语」）。
     var quickTranslateTargetLanguage: String = "简体中文" {
@@ -158,6 +174,7 @@ final class SelectionOverlayView: NSView {
     private var editorDock: SelectionEditorDockHost?
     private var editorDockActions: ActionsBarLayout?
     private let editorDockTip = SelectionEditorDockTip(frame: .zero)
+    private var sizeEditor: SelectionSizeEditorView?
     private var hoveredEditorButton: EditorDockHover?
     private var editorHoverTip: DispatchWorkItem?
 
@@ -190,6 +207,7 @@ final class SelectionOverlayView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func stopBorderAnimation() {
+        dismissSizeEditor(commit: false)
         clearSnapPreview()
         hoverTip?.cancel()
         hoverTip = nil
@@ -330,6 +348,10 @@ final class SelectionOverlayView: NSView {
         cursor = point
         dragDistance = 0
 
+        if let sizeEditor, !sizeEditor.isHidden {
+            if sizeEditor.frame.contains(point) { return }
+            dismissSizeEditor(commit: true)
+        }
         if let action = barButton(at: point) {
             pressedBarButton = action
             setBarHover(action, showsTip: false)
@@ -338,6 +360,10 @@ final class SelectionOverlayView: NSView {
         }
         // 工具栏的留白也不能穿透并开始一个新选区。
         if barLayout()?.background.contains(point) == true || quickToolbarLayout()?.background.contains(point) == true { return }
+        if canEditSizeLabel, let selection, let labelRect = sizeLabelRect(for: selection), labelRect.contains(point) {
+            openSizeEditor(near: labelRect, selection: selection)
+            return
+        }
         if event.clickCount == 2, let selection, selection.contains(point) {
             performBarAction(.confirm)
             return
@@ -434,7 +460,7 @@ final class SelectionOverlayView: NSView {
                 selection = rect.width >= 2 && rect.height >= 2 ? rect : nil
             }
             pressedSnap = nil
-            completedQuickCreate = quickTranslateStyle != nil
+            completedQuickCreate = quickTranslateStyle != nil || confirmsOnRelease
         }
         mode = .idle
         onSelectionChange?(selection, cursor, false)
@@ -448,11 +474,30 @@ final class SelectionOverlayView: NSView {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        handleDockShortcut(event) || super.performKeyEquivalent(with: event)
+        if isEditingSize { return super.performKeyEquivalent(with: event) }
+        return handleDockShortcut(event) || super.performKeyEquivalent(with: event)
     }
 
     override func keyDown(with event: NSEvent) {
         guard pendingAction == nil else { return }
+        if isEditingSize {
+            if event.keyCode == 53 { dismissSizeEditor(commit: false); return }
+            super.keyDown(with: event)
+            return
+        }
+        if handleArrowKey(event) { return }
+        if selection == nil, !isDragging, !selectsWindows, !confirmsOnRelease, quickTranslateStyle == nil,
+           event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty,
+           event.keyCode == 15, let last = lastSelectionRect {
+            let restored = Self.clamp(last, to: dragBounds)
+            if restored.width >= 2, restored.height >= 2 {
+                clearSnapPreview()
+                selection = restored
+                onSelectionChange?(selection, cursor, false)
+                needsDisplay = true
+                return
+            }
+        }
         if handleDockShortcut(event) { return }
         switch event.keyCode {
         case 48: // Tab — 截图秒译期间快速切换目标语言
@@ -471,6 +516,118 @@ final class SelectionOverlayView: NSView {
         default:
             super.keyDown(with: event)
         }
+    }
+
+    var isEditingSize: Bool { sizeEditor?.isHidden == false }
+
+    private var activePixelScale: CGFloat {
+        if let selectionScale, selectionScale > 0 { return selectionScale }
+        if let image = screenImage, bounds.width > 0 {
+            return max(1, CGFloat(image.width) / bounds.width)
+        }
+        return 1
+    }
+
+    private var canEditSizeLabel: Bool {
+        showsSizeLabel && screenImage != nil && !isDragging && !selectsWindows && !confirmsOnRelease && quickTranslateStyle == nil
+    }
+
+    @discardableResult
+    func applyPixelSize(width: Int, height: Int) -> Bool {
+        guard let current = selection, width >= 2, height >= 2, !selectsWindows else { return false }
+        let scale = max(1, activePixelScale)
+        let logicalWidth = min(dragBounds.width, CGFloat(width) / scale)
+        let logicalHeight = min(dragBounds.height, CGFloat(height) / scale)
+        guard logicalWidth >= 1, logicalHeight >= 1 else { return false }
+        let proposed = CGRect(
+            x: current.minX,
+            y: current.maxY - logicalHeight,
+            width: logicalWidth,
+            height: logicalHeight
+        )
+        selection = Self.clamp(proposed, to: dragBounds)
+        onSelectionChange?(selection, cursor, false)
+        needsDisplay = true
+        return true
+    }
+
+    @discardableResult
+    func nudgeSelection(dx: CGFloat, dy: CGFloat, resize: Bool) -> Bool {
+        guard let current = selection, !isDragging, !selectsWindows, !confirmsOnRelease, quickTranslateStyle == nil else {
+            return false
+        }
+        let updated: CGRect
+        if resize {
+            let minSide = 2 / max(1, activePixelScale)
+            let maxWidth = max(minSide, dragBounds.maxX - current.minX)
+            let maxHeight = max(minSide, current.maxY - dragBounds.minY)
+            let newWidth = min(maxWidth, max(minSide, current.width + dx))
+            let newHeight = min(maxHeight, max(minSide, current.height - dy))
+            updated = Self.clamp(
+                CGRect(x: current.minX, y: current.maxY - newHeight, width: newWidth, height: newHeight),
+                to: dragBounds
+            )
+        } else {
+            updated = Self.clamp(current.offsetBy(dx: dx, dy: dy), to: dragBounds)
+        }
+        selection = updated
+        onSelectionChange?(selection, cursor, false)
+        needsDisplay = true
+        return true
+    }
+
+    private func handleArrowKey(_ event: NSEvent) -> Bool {
+        guard selection != nil, !isDragging, !selectsWindows, !confirmsOnRelease, quickTranslateStyle == nil else {
+            return false
+        }
+        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let allowed: NSEvent.ModifierFlags = [.shift, .option, .numericPad, .function]
+        guard mods.subtracting(allowed).isEmpty else { return false }
+        let multiplier: CGFloat = mods.contains(.shift) ? 10 : 1
+        let step = multiplier / max(1, activePixelScale)
+        let resize = mods.contains(.option)
+        switch event.keyCode {
+        case 123: return nudgeSelection(dx: -step, dy: 0, resize: resize) // Left
+        case 124: return nudgeSelection(dx: step, dy: 0, resize: resize)  // Right
+        case 125: return nudgeSelection(dx: 0, dy: -step, resize: resize) // Down
+        case 126: return nudgeSelection(dx: 0, dy: step, resize: resize)  // Up
+        default: return false
+        }
+    }
+
+    private func openSizeEditor(near labelRect: CGRect, selection: CGRect) {
+        let scale = max(1, activePixelScale)
+        let pixelWidth = max(2, Int((selection.width * scale).rounded()))
+        let pixelHeight = max(2, Int((selection.height * scale).rounded()))
+        let editor = sizeEditor ?? SelectionSizeEditorView(frame: .zero)
+        if sizeEditor == nil {
+            editor.onApply = { [weak self] width, height in
+                self?.applyPixelSize(width: width, height: height)
+                self?.dismissSizeEditor(commit: false)
+            }
+            editor.onCancel = { [weak self] in
+                self?.dismissSizeEditor(commit: false)
+            }
+            sizeEditor = editor
+            addSubview(editor)
+        }
+        let area = barBounds.insetBy(dx: 8, dy: 8)
+        let size = SelectionSizeEditorView.preferredSize
+        let x = min(max(area.minX, labelRect.minX), area.maxX - size.width)
+        let y = min(max(area.minY, labelRect.minY - 4), area.maxY - size.height)
+        editor.frame = CGRect(x: x, y: y, width: size.width, height: size.height)
+        editor.configure(width: pixelWidth, height: pixelHeight)
+        editor.isHidden = false
+        editor.focusWidthField()
+    }
+
+    func dismissSizeEditor(commit: Bool) {
+        guard let editor = sizeEditor, !editor.isHidden else { return }
+        if commit, let parsed = editor.parsedDimensions() {
+            applyPixelSize(width: parsed.width, height: parsed.height)
+        }
+        editor.isHidden = true
+        window?.makeFirstResponder(self)
     }
 
     private func handleDockShortcut(_ event: NSEvent) -> Bool {
@@ -524,7 +681,7 @@ final class SelectionOverlayView: NSView {
                 // 贴图在本次事件里直接交接，避免工具栏先闪出一次禁用状态。
                 if action != .pin { updateBar() }
             }
-            onQuickAction(action == .confirm ? .copy : action, selection)
+            onQuickAction(action == .confirm ? quickConfirmationAction : action, selection)
         }
         return true
     }
@@ -939,28 +1096,31 @@ final class SelectionOverlayView: NSView {
         return CGSize(width: ceil(bounds.width), height: ceil(bounds.height))
     }
 
-    private func sizeLabel(_ selection: CGRect, context: CGContext) {
-        guard let image = screenImage else { return }
+    func sizeLabelRect(for selection: CGRect) -> CGRect? {
+        guard let image = screenImage else { return nil }
         let scale = selectionScale ?? CGFloat(image.width) / max(1, bounds.width)
         let text = "\(Int((selection.width * scale).rounded())) × \(Int((selection.height * scale).rounded()))"
         let measured = measure(text, fontSize: 11, color: .white)
         let outline = SelectionBorderView.outlineRect(for: selection, in: bounds)
-
         let origin = CGPoint(
             x: min(max(8, outline.minX), bounds.maxX - measured.width - 8),
             y: min(outline.maxY + 6, bounds.maxY - measured.height - 6)
         )
+        return CGRect(
+            x: origin.x - 4,
+            y: origin.y - 2,
+            width: measured.width + 8,
+            height: measured.height + 4
+        )
+    }
+
+    private func sizeLabel(_ selection: CGRect, context: CGContext) {
+        guard let image = screenImage, let box = sizeLabelRect(for: selection) else { return }
+        let scale = selectionScale ?? CGFloat(image.width) / max(1, bounds.width)
+        let text = "\(Int((selection.width * scale).rounded())) × \(Int((selection.height * scale).rounded()))"
+        let origin = CGPoint(x: box.minX + 4, y: box.minY + 2)
         NSColor.black.withAlphaComponent(0.6).setFill()
-        NSBezierPath(
-            roundedRect: CGRect(
-                x: origin.x - 4,
-                y: origin.y - 2,
-                width: measured.width + 8,
-                height: measured.height + 4
-            ),
-            xRadius: 4,
-            yRadius: 4
-        ).fill()
+        NSBezierPath(roundedRect: box, xRadius: 4, yRadius: 4).fill()
         drawText(text, at: origin, fontSize: 11, color: .white, context: context)
     }
 
@@ -1041,13 +1201,17 @@ final class SelectionOverlayView: NSView {
     // MARK: - 布局与命中
 
     private var barBounds: CGRect {
-        guard onQuickAction != nil, let window, let screen = window.screen else { return bounds }
+        if let override = visibleBarBoundsOverride {
+            let clipped = override.intersection(bounds)
+            return clipped.isNull || clipped.isEmpty ? bounds : clipped
+        }
+        guard let window, let screen = window.screen else { return bounds }
         let visible = convert(window.convertFromScreen(screen.visibleFrame), from: nil).intersection(bounds)
         return visible.isNull || visible.isEmpty ? bounds : visible
     }
 
     func quickToolbarLayout() -> (background: CGRect, actions: ActionsBarLayout)? {
-        guard quickTranslateStyle == nil, displaysToolbar, onQuickAction != nil, !isDragging, (!selectsWindows || lockedWindowSelection),
+        guard quickTranslateStyle == nil, !confirmsOnRelease, displaysToolbar, onQuickAction != nil, !isDragging, (!selectsWindows || lockedWindowSelection),
               let selected = selection, selected.width >= 1, selected.height >= 1 else { return nil }
         let selection = SelectionBorderView.outlineRect(for: selected, in: bounds).intersection(bounds)
         let area = barBounds.insetBy(dx: 8, dy: 8)
@@ -1066,35 +1230,43 @@ final class SelectionOverlayView: NSView {
         guard width <= area.width, thickness <= area.height else { return nil }
         let x = min(max(area.minX, selected.midX - width / 2), area.maxX - width)
         let below = selection.minY - thickness - gap
-        let preferredY = below >= area.minY ? below : selected.minY + gap
+        let preferredY: CGFloat
+        if below >= area.minY {
+            preferredY = below
+        } else {
+            // 下方放不下时优先翻到选区上方，并给左上角尺寸标签留出空间。
+            let above = selection.maxY + (showsSizeLabel && screenImage != nil ? 28 : gap)
+            preferredY = above + thickness <= area.maxY ? above : selected.minY + gap
+        }
         let y = min(max(area.minY, preferredY), area.maxY - thickness)
         return (CGRect(x: x, y: y, width: width, height: thickness), actions)
     }
 
     func barLayout() -> (background: CGRect, buttons: [(action: BarButton, rect: CGRect)], primaryAction: BarButton)? {
-        guard quickTranslateStyle == nil, displaysToolbar, onQuickAction == nil, !isDragging, (!selectsWindows || lockedWindowSelection),
+        guard quickTranslateStyle == nil, !confirmsOnRelease, displaysToolbar, onQuickAction == nil, !isDragging, (!selectsWindows || lockedWindowSelection),
               let selected = selection, selected.width >= 1, selected.height >= 1 else { return nil }
         let selection = SelectionBorderView.outlineRect(for: selected, in: bounds)
+        let area = barBounds.insetBy(dx: 8, dy: 8)
         var actions: [BarButton] = [.cancel]
         if onLongShot != nil { actions.append(.longShot) }
         if onRecord != nil { actions.append(.record) }
         actions.append(.confirm)
         let primaryAction: BarButton = onCopy == nil ? .confirm : .copy
         if onCopy != nil { actions.append(.copy) }
-        let buttonWidth: CGFloat = min(64, max(1, bounds.width - 32))
-        let columns = min(actions.count, max(1, Int((bounds.width - 24) / (buttonWidth + 4))))
+        let buttonWidth: CGFloat = min(64, max(1, area.width - 16))
+        let columns = min(actions.count, max(1, Int((area.width - 8) / (buttonWidth + 4))))
         let rows = (actions.count + columns - 1) / columns
         let width = CGFloat(columns) * (buttonWidth + 4) + 8
         let height = CGFloat(rows) * 36 + 4
         let gap: CGFloat = 10
-        let x = min(max(8, selection.midX - width / 2), bounds.maxX - width - 8)
+        let x = min(max(area.minX, selection.midX - width / 2), area.maxX - width)
         var y = selection.minY - height - gap
-        if y < 8 {
+        if y < area.minY {
             let above = selection.maxY + (showsSizeLabel && screenImage != nil ? 28 : gap)
             // 上方需要留出尺寸标签；全屏等没有外部空间的选区，把工具栏放在内部下方。
-            y = above + height <= bounds.maxY - 8 ? above : selection.minY + gap
+            y = above + height <= area.maxY ? above : selection.minY + gap
         }
-        y = min(max(8, y), bounds.maxY - height - 8)
+        y = min(max(area.minY, y), area.maxY - height)
 
         let buttons = actions.enumerated().map { index, action in
             (action: action, rect: CGRect(x: x + 6 + CGFloat(index % columns) * (buttonWidth + 4),
@@ -1228,7 +1400,7 @@ final class SelectionOverlayView: NSView {
         let task = DispatchWorkItem { [weak self] in
             guard let self, self.hoveredBarButton == action, self.pendingAction == nil,
                   let rect = self.barLayout()?.buttons.first(where: { $0.action == action })?.rect else { return }
-            self.actionBar.showTip(for: action, at: rect, within: self.bounds)
+            self.actionBar.showTip(for: action, at: rect, within: self.barBounds)
         }
         hoverTip = task
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: task)
@@ -1259,6 +1431,9 @@ final class SelectionOverlayView: NSView {
         }
         if barLayout()?.background.contains(point) == true || quickToolbarLayout()?.background.contains(point) == true {
             return .arrow
+        }
+        if canEditSizeLabel, let selection, let labelRect = sizeLabelRect(for: selection), labelRect.contains(point) {
+            return .pointingHand
         }
         if !selectsWindows, let selection, selection.width >= 1, selection.height >= 1 {
             if let handle = handleHit(at: point, in: selection) {
@@ -1508,5 +1683,102 @@ private final class SelectionControlsView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         owner?.drawControls(in: context)
+    }
+}
+
+/// 点击选区左上角尺寸胶囊后弹出的轻量像素宽高编辑器。
+private final class SelectionSizeEditorView: NSView, NSTextFieldDelegate {
+    static let preferredSize = CGSize(width: 176, height: 30)
+
+    var onApply: ((Int, Int) -> Void)?
+    var onCancel: (() -> Void)?
+
+    private let widthField = NSTextField()
+    private let heightField = NSTextField()
+    private let multiplyLabel = NSTextField(labelWithString: "×")
+    private let applyButton = NSButton(title: "确定", target: nil, action: nil)
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor(srgbRed: 0.11, green: 0.12, blue: 0.15, alpha: 0.96).cgColor
+        layer?.cornerRadius = 7
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.22).cgColor
+
+        for field in [widthField, heightField] {
+            field.font = .monospacedDigitSystemFont(ofSize: 11.5, weight: .medium)
+            field.alignment = .right
+            field.isBordered = true
+            field.isBezeled = true
+            field.bezelStyle = .roundedBezel
+            field.focusRingType = .none
+            field.delegate = self
+            addSubview(field)
+        }
+        widthField.placeholderString = "宽"
+        heightField.placeholderString = "高"
+        widthField.nextKeyView = heightField
+        heightField.nextKeyView = widthField
+
+        multiplyLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        multiplyLabel.textColor = .white.withAlphaComponent(0.75)
+        multiplyLabel.alignment = .center
+        addSubview(multiplyLabel)
+
+        applyButton.bezelStyle = .rounded
+        applyButton.controlSize = .mini
+        applyButton.font = .systemFont(ofSize: 11, weight: .medium)
+        applyButton.target = self
+        applyButton.action = #selector(confirmClicked)
+        addSubview(applyButton)
+        isHidden = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layout() {
+        super.layout()
+        widthField.frame = CGRect(x: 6, y: 4, width: 52, height: 22)
+        multiplyLabel.frame = CGRect(x: 59, y: 7, width: 12, height: 16)
+        heightField.frame = CGRect(x: 72, y: 4, width: 52, height: 22)
+        applyButton.frame = CGRect(x: 128, y: 5, width: 42, height: 20)
+    }
+
+    func configure(width: Int, height: Int) {
+        widthField.stringValue = "\(width)"
+        heightField.stringValue = "\(height)"
+    }
+
+    func focusWidthField() {
+        window?.makeFirstResponder(widthField)
+        widthField.selectText(nil)
+    }
+
+    func parsedDimensions() -> (width: Int, height: Int)? {
+        let w = Int(widthField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines))
+        let h = Int(heightField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard let w, let h, w >= 2, h >= 2 else { return nil }
+        return (w, h)
+    }
+
+    @objc private func confirmClicked() {
+        if let dims = parsedDimensions() {
+            onApply?(dims.width, dims.height)
+        } else {
+            onCancel?()
+        }
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            confirmClicked()
+            return true
+        }
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            onCancel?()
+            return true
+        }
+        return false
     }
 }

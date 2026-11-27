@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import TapSnapActionsBar
+import TapSnapConfig
 import TapSnapCore
 import TapSnapScreen
 import TapSnapTheme
@@ -12,14 +13,20 @@ final class CaptureCoordinator {
     enum Outcome: String, Codable {
         /// 进编辑窗口
         case edit
+        /// 极速截图：松手即按默认设置输出（复制/保存），开启隐私检查时仍进入复核
+        case quickCapture
         /// 仅复制当前选区
         case copy
+        /// 按默认输出设置完成（复制、保存或保存并复制）
+        case quickComplete
         /// 直接贴到屏幕上
         case pin
         /// 保存当前选区
         case save
         /// 交给文字识别
         case ocr
+        /// 极速取字：松手静默识别并复制，不弹结果窗、不抢焦点
+        case quickOCR
         /// 交给表格识别
         case table
         case translate
@@ -37,6 +44,7 @@ final class CaptureCoordinator {
     private var session: ScreenshotSession?
     private var overlayWindows: [SelectionOverlayWindow] = []
     private var overlayViews: [SelectionOverlayView] = []
+    private var sessionWindows: [VisibleWindow] = []
     private var isPreparingHandoff = false
     private var shutterSound: NSSound?
     private var forcePrivacy = false
@@ -110,12 +118,13 @@ final class CaptureCoordinator {
 
         // 在覆盖层出现前记住真实窗口顺序，界面检测慢时也能立即给出窗口选区。
         let windows = Self.visibleWindows(excludingCurrentApplication: outcome == .longShot)
+        sessionWindows = windows
         let captureSettings = environment.config.settings.capture
         for screen in screens {
             let window = SelectionOverlayWindow(screen: screen)
             let view = SelectionOverlayView(frame: CGRect(origin: .zero, size: screen.frame.size))
             view.screenImage = session?.frame(for: screen)?.image
-            view.showsFrozenSelection = outcome == .edit || outcome == .pin
+            view.showsFrozenSelection = outcome == .edit || outcome == .pin || outcome == .quickCapture
             view.selectsWindows = session?.mode == .window
             if screens.count > 1, !view.selectsWindows, outcome != .longShot, outcome != .record,
                let desktop = Geometry.boundingBox(of: screens.map(\.frame)) {
@@ -158,6 +167,16 @@ final class CaptureCoordinator {
             view.showsMagnifier = captureSettings.showMagnifier
             view.showsSizeLabel = captureSettings.showSelectionSize
             view.config = environment.config
+            if outcome == .quickOCR {
+                view.confirmsOnRelease = true
+                view.showsMagnifier = false
+            }
+            if outcome == .quickCapture {
+                view.confirmsOnRelease = true
+            }
+            if outcome == .edit, let last = captureSettings.lastSelection {
+                view.lastSelectionRect = Self.viewRect(for: last, on: screen)
+            }
             if outcome == .quickTranslate {
                 let translationSettings = environment.config.settings.translation
                 view.quickTranslateStyle = translationSettings.quickTranslateStyle
@@ -178,11 +197,18 @@ final class CaptureCoordinator {
                 self?.finish(rect: rect, screen: screen, sessionID: id)
             }
             if outcome == .edit {
-                let copiesOnConfirm = session?.outputOptions == nil && !forcePrivacy
-                view.quickConfirmationCopies = copiesOnConfirm
-                if copiesOnConfirm {
-                    let title = environment.config.settings.privacy.enabled ? "检查后复制" : "复制"
-                    view.confirmationTitle = OperationShortcut.action(.copy).displayTitle(in: environment.config.settings, title: title)
+                let autoCopy = captureSettings.autoCopyToClipboard
+                let autoSave = session?.outputOptions?.autoSave ?? captureSettings.autoSaveToFile
+                let completesOnConfirm = session?.outputOptions == nil && !forcePrivacy && (autoCopy || autoSave)
+                view.quickConfirmationCopies = completesOnConfirm
+                view.quickConfirmationAction = autoSave ? .confirm : .copy
+                if completesOnConfirm {
+                    view.confirmationTitle = Self.quickConfirmationTitle(
+                        autoCopy: autoCopy,
+                        autoSave: autoSave,
+                        privacyEnabled: environment.config.settings.privacy.enabled,
+                        settings: environment.config.settings
+                    )
                 } else {
                     view.confirmationTitle = "编辑 ⏎"
                 }
@@ -246,6 +272,7 @@ final class CaptureCoordinator {
         case .edit:
             finish(rect: rect, screen: screen, sessionID: sessionID, switchingTo: .edit)
             return
+        case .confirm: destination = .quickComplete
         case .copy: destination = .copy
         case .pin: destination = .pin
         case .save: destination = .save
@@ -282,7 +309,9 @@ final class CaptureCoordinator {
         isPreparingHandoff = true
         Task { @MainActor in
             // 留一帧让松手与处理中状态上屏，避免刚点完就突然切走。
-            if selectedOutcome != .copy, selectedOutcome != .quickTranslate, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            if selectedOutcome != .copy, selectedOutcome != .quickComplete, selectedOutcome != .quickCapture,
+               selectedOutcome != .quickOCR, selectedOutcome != .quickTranslate,
+               !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
                 try? await Task.sleep(for: .milliseconds(65))
             }
             guard self.session?.id == id, isPreparingHandoff else { return }
@@ -311,9 +340,12 @@ final class CaptureCoordinator {
     private func complete(_ session: ScreenshotSession, outcome: Outcome, initialAction: ActionKind? = nil) {
         guard let globalRect = session.selectionRect, let screen = session.targetScreen else { return }
         let cropped = session.croppedImage()
+        let windows = sessionWindows.isEmpty ? Self.visibleWindows(excludingCurrentApplication: true) : sessionWindows
+        let sourceAppName = Self.sourceAppName(for: globalRect, among: windows)
         let forcePrivacy = self.forcePrivacy
         self.forcePrivacy = false
         self.session = nil
+        self.sessionWindows = []
         isPreparingHandoff = false
 
         guard let cropped else {
@@ -333,7 +365,8 @@ final class CaptureCoordinator {
         let checksPrivacy = forcePrivacy || environment.config.settings.privacy.enabled
         let document = EditDocument(baseImage: cropped, scale: session.outputScale,
                                     capturedAt: session.frame(for: screen)?.timestamp ?? session.startedAt,
-                                    sourceTopLeft: globalRect.origin.rounded(to: session.outputScale))
+                                    sourceTopLeft: globalRect.origin.rounded(to: session.outputScale),
+                                    sourceAppName: sourceAppName)
         if outcome != .longShot && outcome != .record {
             environment.rememberCapture(document, privateCapture: checksPrivacy)
         }
@@ -353,17 +386,32 @@ final class CaptureCoordinator {
             break
         case .copy:
             environment.pinTransfer.copy(cropped, scale: document.scale, sourceTopLeft: document.sourceTopLeft)
+        case .quickComplete, .quickCapture:
+            if !environment.completeScreenshotOutputs(
+                cropped,
+                scale: document.scale,
+                sourceTopLeft: document.sourceTopLeft,
+                sourceAppName: document.sourceAppName,
+                formatOverride: session.outputOptions?.format,
+                autoSaveOverride: session.outputOptions?.autoSave
+            ) {
+                environment.openEditor(image: cropped, scale: document.scale, captureRect: globalRect, captureScreen: screen,
+                                       outputOptions: session.outputOptions, restoring: document)
+            }
         case .pin:
             environment.pinGroups.show(cropped, from: document.sourceTopLeft, scale: document.scale) {
                 self.dismissOverlays(afterPin: true)
             }
         case .save:
-            if !environment.saveScreenshot(cropped, formatOverride: session.outputOptions?.format, chooseLocation: true) {
+            if !environment.saveScreenshot(cropped, formatOverride: session.outputOptions?.format,
+                                           chooseLocation: true, sourceAppName: document.sourceAppName) {
                 environment.openEditor(image: cropped, scale: document.scale, captureRect: globalRect, captureScreen: screen,
                                        outputOptions: session.outputOptions, restoring: document)
             }
         case .ocr:
             environment.ocrCoordinator.recognize(cropped)
+        case .quickOCR:
+            environment.ocrCoordinator.recognizeSilently(cropped)
         case .translate:
             environment.translateImage(cropped, captureRect: globalRect)
         case .quickTranslate:
@@ -390,9 +438,26 @@ final class CaptureCoordinator {
         }
     }
 
+    static func quickConfirmationTitle(
+        autoCopy: Bool,
+        autoSave: Bool,
+        privacyEnabled: Bool,
+        settings: Settings
+    ) -> String {
+        if autoSave && autoCopy {
+            return privacyEnabled ? "检查后保存并复制" : "保存并复制"
+        }
+        if autoSave {
+            return privacyEnabled ? "检查后保存" : "保存"
+        }
+        let title = privacyEnabled ? "检查后复制" : "复制"
+        return OperationShortcut.action(.copy).displayTitle(in: settings, title: title)
+    }
+
     static func reviewedAction(for outcome: Outcome) -> ActionKind? {
         switch outcome {
         case .copy: return .copy
+        case .quickComplete, .quickCapture: return .confirm
         case .pin: return .pin
         case .save: return .save
         case .ocr: return .ocr
@@ -446,6 +511,51 @@ final class CaptureCoordinator {
         }
     }
 
+    /// 直接按上一次确认的选区重新截一张，便于界面改动前后像素级对齐对比。
+    func recaptureLastSelection() {
+        guard let last = environment.config.settings.capture.lastSelection,
+              last.width >= 2, last.height >= 2 else {
+            environment.toast.info("还没有上次截图区域")
+            return
+        }
+        let screens = ScreenLayout.current()
+        let intersecting = screens.filter { !$0.frame.intersection(last).isEmpty }
+        guard let primary = screens.first(where: { $0.frame.contains(last) }) ?? intersecting.first else {
+            environment.toast.warning("上次选区不在当前屏幕，请重新框选")
+            start(.edit)
+            return
+        }
+        if primary.frame.contains(last) {
+            startFromEditor(.edit, rect: last, screen: primary)
+            return
+        }
+        guard session == nil else { return }
+        var pending = ScreenshotSession(mode: .region)
+        pending.selectionRect = last
+        pending.targetScreen = primary
+        session = pending
+        Task { @MainActor in
+            do {
+                let allowSelfCapture = environment.config.settings.capture.allowSelfCapture
+                let excludedWindowIDs = allowSelfCapture
+                    ? [environment.record.borderWindowID].compactMap { $0 }
+                    : [environment.record.borderWindowID, environment.toastPresenter.windowID].compactMap { $0 }
+                let frames = try await environment.capture.captureAllScreens(options: .init(
+                    excludingCurrentApplication: false,
+                    excludedWindowIDs: excludedWindowIDs,
+                    hideDesktopIcons: environment.config.settings.capture.hideDesktopIcons
+                ))
+                guard session?.id == pending.id else { return }
+                pending.frames = frames
+                complete(pending, outcome: .edit)
+            } catch {
+                guard session?.id == pending.id else { return }
+                cancel()
+                handleCaptureFailure(error, resuming: .init(outcome: .edit, rect: last, displayID: primary.id))
+            }
+        }
+    }
+
     func startPreset(_ preset: ScreenshotPreset) {
         let options = ScreenshotOutputOptions(format: preset.format, autoSave: preset.autoSave)
         guard let rect = preset.rect else { start(.edit, outputOptions: options); return }
@@ -468,6 +578,15 @@ final class CaptureCoordinator {
     private struct VisibleWindow: Sendable {
         let bounds: CGRect
         let processID: pid_t?
+        let ownerName: String?
+    }
+
+    private static func sourceAppName(for rect: CGRect, among windows: [VisibleWindow]) -> String? {
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        if let hit = windows.first(where: { $0.bounds.contains(center) && ($0.ownerName?.isEmpty == false) }) {
+            return hit.ownerName
+        }
+        return windows.first(where: { !$0.bounds.intersection(rect).isEmpty && ($0.ownerName?.isEmpty == false) })?.ownerName
     }
 
     private static func viewRect(for rect: CGRect, on screen: ScreenDescriptor) -> CGRect? {
@@ -490,7 +609,8 @@ final class CaptureCoordinator {
                   let raw = entry[kCGWindowBounds as String] as? [String: Any],
                   let rect = CGRect(dictionaryRepresentation: raw as CFDictionary),
                   rect.width > 2, rect.height > 2 else { return nil }
-            return VisibleWindow(bounds: rect, processID: processID)
+            let ownerName = entry[kCGWindowOwnerName as String] as? String
+            return VisibleWindow(bounds: rect, processID: processID, ownerName: ownerName)
         }
     }
 
@@ -520,6 +640,7 @@ final class CaptureCoordinator {
     func cancel() {
         dismissOverlays()
         session = nil
+        sessionWindows = []
         isPreparingHandoff = false
         forcePrivacy = false
     }
